@@ -10,18 +10,23 @@ import { CX, CY, GROUND, rng, TILE_H, TILE_W, tileSprite } from "@/lib/iso";
 import { layout } from "@/lib/mondrian";
 import { LANDMARKS, ZONE_ORDER, ZONES, zoneOf, type Zone } from "@/lib/zones";
 
-// Blocks are laid out row by row, COLS to a row, on a staggered isometric grid: odd rows
-// shift half a tile right, so consecutive blocks run left to right and the map fills a rectangle.
-const COLS = 48;
+// Blocks are grouped into quarters of 8 x 8, laid out like a city's street grid: inside a
+// quarter consecutive blocks run along its rows, and every quarter has a street along two of its
+// edges, so neighbouring quarters are always a street apart and four streets meet at a small
+// park. Quarters sit on a staggered grid, QUARTERS to a row.
+const SIDE = 8; // blocks along a quarter's edge
+const CELL = SIDE + 1; // cells along its edge, with the street
+const QUARTERS = 24;
+const QW = CELL * 128; // a quarter's width, and its rows' half height and pitch:
+const QH = CELL * 32;
+const PER_Q = SIDE * SIDE;
 const CHUNK = 1000; // blocks per /v1/land request (the API's maximum)
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 4;
-// Three levels of detail. Zoomed out, the city is drawn as big tiles AREA times a block's
-// size, each holding about AREA² blocks and shown as a 3 x 3 cluster of buildings in the mix
-// of zones those blocks are in. In the middle each block is a building tile. Zoomed right in,
+// Three levels of detail. Zoomed out, each quarter of SIDE x SIDE blocks is drawn as one
+// cluster of 3 x 3 buildings in the mix of zones those blocks are in. In the middle each block is a building tile. Zoomed right in,
 // the buildings fade into the block's parcels (one plot per transaction, as on the district page).
 const AREA_SCALE = 0.3;
-const AREA = 8;
 const SLOTS = 3;
 const COMPACT_SCALE = 0.11; // below this an area tile is a single building
 const PARCEL_FADE = [1.9, 2.5] as const;
@@ -73,26 +78,98 @@ function parcelPlan(txValues: number[], claimed: Set<number>, zone: Zone | null)
   return { ground: cv, claimed: boxes, colors: [shade(base, 0.1), shade(base, -0.3), shade(base, -0.15)] };
 }
 
-type View = { x: number; y: number; s: number }; // world point at the canvas centre, and zoom
+type View = { x: number; y: number; s: number };
 
-const origin = (n: number): [number, number] => {
-  const r = Math.floor(n / COLS), c = n % COLS;
-  return [c * 128 + (r & 1) * 64, r * 32];
+const STREET = "#2E2C28";
+const AREA_LABEL = 1;
+
+/** A street cell: asphalt a little below the blocks' ground, with a dashed centre line along it
+ * (road 1 runs along a quarter's v axis, 2 along its u axis); where streets cross (3), a small
+ * park with a tree. */
+/** A street cell (1: along u, 2: along v, 3: the park where they cross), or 4: a lot for a
+ * block that hasn't been mined yet. */
+function drawStreet(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, road: 1 | 2 | 3 | 4) {
+  const d = (hw: number, hh: number, dy = 0) => {
+    ctx.beginPath();
+    ctx.moveTo(x, y - hh + dy);
+    ctx.lineTo(x + hw, y + dy);
+    ctx.lineTo(x, y + hh + dy);
+    ctx.lineTo(x - hw, y + dy);
+    ctx.closePath();
+  };
+  if (road === 4) {
+    ctx.fillStyle = "#1A1916";
+    d(58 * s, 29 * s, 6 * s);
+    ctx.fill();
+    ctx.setLineDash([4 * s, 4 * s]);
+    ctx.strokeStyle = "#3A362F";
+    ctx.lineWidth = Math.max(1, s);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    return;
+  }
+  ctx.fillStyle = STREET;
+  d(64.5 * s, 32.5 * s, 6 * s);
+  ctx.fill();
+  if (road === 3) {
+    ctx.fillStyle = "#4C7A3C";
+    d(40 * s, 20 * s, 4 * s);
+    ctx.fill();
+    ctx.fillStyle = "rgba(0,0,0,0.28)";
+    ctx.beginPath();
+    ctx.ellipse(x + 3 * s, y + 5 * s, 9 * s, 4 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#5A3E28";
+    ctx.fillRect(x - 1.5 * s, y - 6 * s, 3 * s, 10 * s);
+    ctx.fillStyle = "#3A6E34";
+    ctx.beginPath();
+    ctx.ellipse(x, y - 13 * s, 9 * s, 10 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#5C9A4A";
+    ctx.beginPath();
+    ctx.ellipse(x - 2.5 * s, y - 16 * s, 5 * s, 5.5 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+    return;
+  }
+  // Dashes along the street's direction.
+  const [ux, uy] = road === 1 ? [-64, 32] : [64, 32];
+  ctx.strokeStyle = "rgba(230,214,170,0.55)";
+  ctx.lineWidth = Math.max(0.6, 1.6 * s);
+  ctx.setLineDash([9 * s, 9 * s]);
+  ctx.beginPath();
+  ctx.moveTo(x - ux * 0.5 * s, y + 6 * s - uy * 0.5 * s);
+  ctx.lineTo(x + ux * 0.5 * s, y + 6 * s + uy * 0.5 * s);
+  ctx.stroke();
+  ctx.setLineDash([]);
+} // world point at the canvas centre, and zoom
+
+const quarterCentre = (q: number): [number, number] => {
+  const qc = q % QUARTERS, qr = Math.floor(q / QUARTERS);
+  return [qc * QW + (qr & 1) * (QW / 2) + QW / 2, qr * QH + QH];
+};
+/** Ground centre of cell (u, v) of quarter q; cells 0..7 are blocks, 8 is the street. */
+const cellCentre = (q: number, u: number, v: number): [number, number] => {
+  const [cx, cy] = quarterCentre(q);
+  return [cx + (u - v) * 64, cy - QH + (u + v + 1) * 32];
 };
 const centre = (n: number): [number, number] => {
-  const [x, y] = origin(n);
-  return [x + CX, y + CY];
+  const i = n % PER_Q;
+  return cellCentre(Math.floor(n / PER_Q), i % SIDE, Math.floor(i / SIDE));
+};
+const origin = (n: number): [number, number] => {
+  const [x, y] = centre(n);
+  return [x - CX, y - CY];
 };
 
 /** Keep the map on screen: no panning past its edges, centred when smaller than the view. */
 function clamp(v: View, w: number, h: number, tip: number): View {
   const fit = (pos: number, half: number, lo: number, hi: number) =>
     hi - lo <= 2 * half ? (lo + hi) / 2 : Math.min(hi - half, Math.max(lo + half, pos));
-  const rows = Math.floor(tip / COLS) + 1;
+  const rows = Math.floor(Math.floor(tip / PER_Q) / QUARTERS) + 1;
   return {
     s: v.s,
-    x: fit(v.x, w / 2 / v.s, 0, COLS * 128 + 64),
-    y: fit(v.y, h / 2 / v.s, 0, rows * 32 + TILE_H - 32),
+    x: fit(v.x, w / 2 / v.s, 0, QUARTERS * QW + QW / 2),
+    y: fit(v.y, h / 2 / v.s, -120, rows * QH + QH),
   };
 }
 
@@ -104,7 +181,7 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
   const view = useRef<View>({ x: centre(focus)[0], y: centre(focus)[1] - 30, s: 0 });
   const tiles = useRef(new Map<number, Tile>());
   const chunks = useRef(new Set<number>());
-  const areas = useRef(new Map<number, (Zone | null)[]>()); // the buildings of each fully loaded area tile
+  const areas = useRef(new Map<number, { slots: (Zone | null)[]; level: number | null }>()); // each fully loaded quarter
   const plans = useRef(new Map<number, Plan | "loading" | "failed">());
   const [level, setLevel] = useState<Level>("block");
   const hover = useRef<number | null>(null);
@@ -131,162 +208,177 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
     view.current = clamp(view.current, w, h, tip);
     const { x: vx, y: vy, s } = view.current;
     const toWorld = (sx: number, sy: number): [number, number] => [vx + (sx - w / 2) / s, vy + (sy - h / 2) / s];
+    const toScreen = (wx: number, wy: number): [number, number] => [(wx - vx) * s + w / 2, (wy - vy) * s + h / 2];
     const lvl = levelOf(s);
     setLevel(lvl);
 
-    // Rows and columns on screen; buildings rise up to a tile height above their ground.
-    const [x0, y0] = toWorld(0, 0), [x1, y1] = toWorld(w, h + TILE_H * s);
-    const lastRow = Math.floor(tip / COLS);
-    const rMin = Math.max(0, Math.floor((y0 - CY) / 32) - 1), rMax = Math.min(lastRow, Math.ceil((y1 - CY) / 32) + 1);
-    const cMin = Math.max(0, Math.floor((x0 - TILE_W) / 128)), cMax = Math.min(COLS - 1, Math.ceil(x1 / 128));
+    // Quarter rows on screen; buildings rise up to a tile height above their ground.
+    const [, y0] = toWorld(0, 0), [, y1] = toWorld(w, h + TILE_H * s);
+    const lastQ = Math.floor(tip / PER_Q);
+    const qrMin = Math.max(0, Math.floor((y0 - QH) / QH) - 1), qrMax = Math.min(Math.floor(lastQ / QUARTERS), Math.ceil(y1 / QH) + 1);
+    const quarters: number[] = [];
+    for (let qr = qrMin; qr <= qrMax; qr++)
+      for (let qc = 0; qc < QUARTERS; qc++) {
+        const q = qr * QUARTERS + qc;
+        if (q > lastQ) continue;
+        const [cx, cy] = toScreen(...quarterCentre(q));
+        if (cx + (QW / 2) * s < 0 || cx - (QW / 2) * s > w || cy - QH * s > h || cy + QH * s < 0) continue;
+        quarters.push(q);
+      }
     const want = new Set<number>();
     const labels: [number, number, string][] = [];
-    const toScreen = (wx: number, wy: number): [number, number] => [(wx - vx) * s + w / 2, (wy - vy) * s + h / 2];
+    const diamond = (x: number, y: number, hw: number, hh: number) => {
+      ctx.beginPath();
+      ctx.moveTo(x, y - hh);
+      ctx.lineTo(x + hw, y);
+      ctx.lineTo(x, y + hh);
+      ctx.lineTo(x - hw, y);
+      ctx.closePath();
+    };
+    const resFor = (k: number) => (s * k * dpr > 1.2 ? 2 : s * k * dpr > 0.6 ? 1 : 0.5);
+    for (const [n, name] of Object.entries(LANDMARKS)) {
+      if (+n > tip) continue;
+      const [lx, ly] = toScreen(...centre(+n));
+      if (lx > -60 && lx < w + 60 && ly > -40 && ly < h + 40) labels.push([lx, ly - (lvl === "area" ? 46 * AREA_LABEL * s : 150 * s), name]);
+    }
 
     if (lvl === "area") {
-      // Area tiles sit on their own staggered grid, AREA times larger than the blocks': a diamond
-      // AW wide and 2 * AH tall, rows AH apart.
-      const AW = AREA * 128, AH = AREA * 32, oy = AH + CY - 32;
-      const aMin = Math.max(0, Math.floor((y0 - oy) / AH) - 1), aMax = Math.ceil((y1 - oy) / AH) + 1;
-      const aCols = Math.ceil(COLS / AREA) + 1;
-      for (let ar = aMin; ar <= aMax; ar++) {
-        for (let ac = 0; ac < aCols; ac++) {
-          const cx = ac * AW + (ar & 1) * (AW / 2) + AW / 2, cy = ar * AH + oy;
-          const [scx, scy] = toScreen(cx, cy);
-          if (scx + (AW / 2) * s < 0 || scx - (AW / 2) * s > w || scy - AH * s > h || scy + AH * s < 0) continue;
-          const key = ar * aCols + ac;
-          let slots = areas.current.get(key);
-          if (!slots) {
-            // The blocks whose ground centre falls inside this tile's diamond.
-            const count = new Map<Zone, number>();
-            let missing = false, total = 0, landmark = false;
-            for (let r = Math.max(0, ar * AREA - 1); r <= Math.min(lastRow, ar * AREA + 2 * AREA); r++) {
-              for (let c = Math.max(0, Math.floor((cx - AW / 2) / 128) - 1); c <= Math.min(COLS - 1, Math.ceil((cx + AW / 2) / 128)); c++) {
-                const n = r * COLS + c;
-                if (n > tip) continue;
-                const [bx, by] = centre(n);
-                if (Math.abs(bx - cx) / (AW / 2) + Math.abs(by - cy) / AH > 1) continue;
-                total++;
-                const t = tiles.current.get(n);
-                if (!t) {
-                  missing = true;
-                  want.add(Math.floor(n / CHUNK));
-                  continue;
-                }
-                const z = zoneOf(t.zone);
-                if (z === "landmark") landmark = true;
-                else if (z) count.set(z, (count.get(z) ?? 0) + 1);
-              }
+      // Each quarter: its streets, then nine buildings in the mix of zones of its 64 blocks.
+      for (const q of quarters) {
+        const [cx, cy] = toScreen(...quarterCentre(q));
+        ctx.fillStyle = STREET;
+        diamond(cx, cy, (QW / 2) * s, QH * s);
+        ctx.fill();
+        let info = areas.current.get(q);
+        if (!info) {
+          const count = new Map<Zone, number>();
+          let missing = false, total = 0, landmark = false, levels = 0, leveled = 0;
+          for (let n = q * PER_Q; n < (q + 1) * PER_Q && n <= tip; n++) {
+            total++;
+            const t = tiles.current.get(n);
+            if (!t) {
+              missing = true;
+              want.add(Math.floor(n / CHUNK));
+              continue;
             }
-            slots = [];
-            if (total > 0) {
-              // Share out the nine plots by largest remainder, then shuffle them into place.
-              const known = [...count.values()].reduce((x, y) => x + y, 0);
-              const n9 = Math.max(1, Math.round((SLOTS * SLOTS * total) / (AREA * AREA)));
-              const quota = ZONE_ORDER.filter((z) => count.has(z)).map((z) => ({ z, q: (count.get(z)! / known) * n9 }));
-              for (const { z, q } of quota) for (let i = 0; i < Math.floor(q); i++) slots.push(z);
-              quota.sort((p, q) => (q.q % 1) - (p.q % 1));
-              for (let i = 0; slots.length < n9 && i < quota.length; i++) slots.push(quota[i].z);
-              while (slots.length < n9) slots.push(null);
-              const rand = rng(key);
-              for (let i = slots.length - 1; i > 0; i--) {
-                const j = Math.floor(rand() * (i + 1));
-                [slots[i], slots[j]] = [slots[j], slots[i]];
-              }
-              if (landmark) slots[Math.min(4, slots.length - 1)] = "landmark";
+            const z = zoneOf(t.zone);
+            if (t.level != null) {
+              levels += t.level;
+              leveled++;
             }
-            if (!missing) areas.current.set(key, slots);
+            if (z === "landmark") landmark = true;
+            else if (z) count.set(z, (count.get(z) ?? 0) + 1);
           }
-          if (!slots.length) continue;
-          if (s < COMPACT_SCALE) {
-            // Too small for nine: one building, of the zone with the most plots.
-            const tally = new Map<Zone | null, number>();
-            for (const z of slots) tally.set(z, (tally.get(z) ?? 0) + 1);
-            const zone = slots.includes("landmark") ? "landmark" : [...tally].sort((p, q) => q[1] - p[1])[0][0];
-            const k = AREA, res = s * k * dpr > 1.2 ? 2 : s * k * dpr > 0.6 ? 1 : 0.5;
-            ctx.drawImage(tileSprite(zone, key, res), scx - CX * k * s, scy - CY * k * s, TILE_W * k * s, TILE_H * k * s);
-            continue;
+          const slots: (Zone | null)[] = [];
+          const known = [...count.values()].reduce((x, y) => x + y, 0);
+          if (known > 0) {
+            // Share out the nine plots by largest remainder, then shuffle them into place.
+            const n9 = Math.max(1, Math.round((SLOTS * SLOTS * total) / PER_Q));
+            const quota = ZONE_ORDER.filter((z) => count.has(z)).map((z) => ({ z, q: (count.get(z)! / known) * n9 }));
+            for (const { z, q: k } of quota) for (let i = 0; i < Math.floor(k); i++) slots.push(z);
+            quota.sort((a, b) => (b.q % 1) - (a.q % 1));
+            for (let i = 0; slots.length < n9 && i < quota.length; i++) slots.push(quota[i].z);
+            const rand = rng(q);
+            for (let i = slots.length - 1; i > 0; i--) {
+              const j = Math.floor(rand() * (i + 1));
+              [slots[i], slots[j]] = [slots[j], slots[i]];
+            }
+            if (landmark) slots[Math.min(4, slots.length - 1)] = "landmark";
           }
-          // Nine smaller tiles inside the diamond, back to front; plots past the map's edge stay empty.
-          const k = AREA / SLOTS, res = s * k * dpr > 1.2 ? 2 : s * k * dpr > 0.6 ? 1 : 0.5;
-          for (const idx of [0, 1, 3, 2, 4, 6, 5, 7, 8]) {
-            const i = idx % SLOTS, j = Math.floor(idx / SLOTS);
-            const zone = idx < slots.length ? slots[idx] : null;
-            if (!zone) continue;
-            const px = cx + ((i - j) * AW) / 2 / SLOTS, py = cy - AH + ((i + j + 1) * AH) / SLOTS;
-            const [qx, qy] = toScreen(px, py);
-            ctx.drawImage(tileSprite(zone, key * 9 + idx, res), qx - CX * k * s, qy - CY * k * s, TILE_W * k * s, TILE_H * k * s);
-          }
+          info = { slots, level: leveled ? Math.round(levels / leveled) : null };
+          if (!missing) areas.current.set(q, info);
         }
-      }
-      for (const [n, name] of Object.entries(LANDMARKS)) {
-        if (+n > tip) continue;
-        const [lx, ly] = toScreen(...centre(+n));
-        if (lx > -60 && lx < w + 60 && ly > -20 && ly < h + 20) labels.push([lx, ly - 40 * AREA * s, name]);
+        const [icx, icy] = toScreen(...cellCentre(q, 3.5, 3.5));
+        if (!info.slots.length) continue;
+        if (s < COMPACT_SCALE) {
+          // Too small for nine: one building, of the zone with the most plots.
+          const tally = new Map<Zone | null, number>();
+          for (const z of info.slots) tally.set(z, (tally.get(z) ?? 0) + 1);
+          const zone = info.slots.includes("landmark") ? "landmark" : [...tally].sort((a, b) => b[1] - a[1])[0][0];
+          const k = SIDE;
+          ctx.drawImage(tileSprite(zone, q, resFor(k), info.level), icx - CX * k * s, icy - CY * k * s, TILE_W * k * s, TILE_H * k * s);
+          continue;
+        }
+        const k = SIDE / SLOTS;
+        for (const idx of [0, 1, 3, 2, 4, 6, 5, 7, 8]) {
+          const i = idx % SLOTS, j = Math.floor(idx / SLOTS);
+          const zone = idx < info.slots.length ? info.slots[idx] : null;
+          if (!zone) continue;
+          const px = icx + ((i - j) * SIDE * 64 * s) / SLOTS, py = icy - SIDE * 32 * s + ((i + j + 1) * SIDE * 32 * s) / SLOTS;
+          ctx.drawImage(tileSprite(zone, q * 9 + idx, resFor(k), info.level), px - CX * k * s, py - CY * k * s, TILE_W * k * s, TILE_H * k * s);
+        }
       }
     } else {
       const fade = Math.min(1, Math.max(0, (s - PARCEL_FADE[0]) / (PARCEL_FADE[1] - PARCEL_FADE[0])));
-      const res = s * dpr > 1.2 ? 2 : s * dpr > 0.6 ? 1 : 0.5;
+      const res = resFor(1);
       const visible: number[] = [];
-      for (let r = rMin; r <= rMax; r++) {
-        for (let c = cMin; c <= cMax; c++) {
-          const n = r * COLS + c;
-          if (n > tip) continue;
-          const [ox, oy] = origin(n);
-          const [sx, sy] = toScreen(ox, oy);
-          if (sx > w || sx + TILE_W * s < 0 || sy > h || sy + TILE_H * s < 0) continue;
-          visible.push(n);
-          const t = tiles.current.get(n);
-          if (!t) want.add(Math.floor(n / CHUNK));
-          const zone = zoneOf(t?.zone);
-          const plan = fade > 0 ? plans.current.get(n) : undefined;
-          if (plan && typeof plan === "object") {
-            // A bare slab with the plots on top: map the unit square onto the ground diamond.
-            const g = GROUND[zone ?? "unknown"];
-            const P = (u: number, v: number): [number, number] => [sx + (64 + (u - v) * 60) * s, sy + (CY - 30 + (u + v) * 30) * s];
-            const poly = (pts: [number, number][], fill: string) => {
-              ctx.fillStyle = fill;
-              ctx.beginPath();
-              ctx.moveTo(...pts[0]);
-              for (const q of pts.slice(1)) ctx.lineTo(...q);
-              ctx.closePath();
-              ctx.fill();
-            };
-            const down = ([x, y]: [number, number], d: number): [number, number] => [x, y + d * s];
-            poly([P(0, 1), P(1, 1), down(P(1, 1), 8), down(P(0, 1), 8)], g.l);
-            poly([P(1, 1), P(1, 0), down(P(1, 0), 8), down(P(1, 1), 8)], g.r);
-            ctx.save();
-            ctx.setTransform((dpr * 60 * s) / PLAN, (dpr * 30 * s) / PLAN, (-dpr * 60 * s) / PLAN, (dpr * 30 * s) / PLAN, dpr * (sx + 64 * s), dpr * (sy + (CY - 30) * s));
-            ctx.drawImage(plan.ground, 0, 0);
-            ctx.restore();
-            const [top, left, right] = plan.colors;
-            for (const [u0, v0, u1, v1, hh] of plan.claimed) {
-              const up = ([x, y]: [number, number]): [number, number] => [x, y - hh * s];
-              const N = P(u0, v0), E = P(u1, v0), S = P(u1, v1), W = P(u0, v1);
-              poly([W, S, up(S), up(W)], left);
-              poly([S, E, up(E), up(S)], right);
-              poly([up(N), up(E), up(S), up(W)], top);
-            }
-            if (fade < 1) {
-              ctx.globalAlpha = 1 - fade;
-              ctx.drawImage(tileSprite(zone, n, res), sx, sy, TILE_W * s, TILE_H * s);
-              ctx.globalAlpha = 1;
-            }
-          } else {
-            ctx.drawImage(tileSprite(zone, n, res), sx, sy, TILE_W * s, TILE_H * s);
+      // Every cell on screen, blocks and streets, drawn back to front.
+      type Cell = { y: number; x: number; n: number | null; road: 0 | 1 | 2 | 3 | 4 };
+      const cells: Cell[] = [];
+      for (const q of quarters)
+        for (let v = 0; v < CELL; v++)
+          for (let u = 0; u < CELL; u++) {
+            const [wx, wy] = cellCentre(q, u, v);
+            const [x, y] = toScreen(wx, wy);
+            if (x < -64 * s || x > w + 64 * s || y < -32 * s || y - (CY - 0) * s > h) continue;
+            const n = u < SIDE && v < SIDE ? q * PER_Q + v * SIDE + u : null;
+            if (n != null && n > tip) cells.push({ x, y, n: null, road: 4 });
+            else cells.push({ x, y, n, road: n != null ? 0 : u === SIDE && v === SIDE ? 3 : u === SIDE ? 1 : 2 });
           }
-          if (n === selectedRef.current || n === hover.current) {
-            ctx.strokeStyle = n === selectedRef.current ? "#EDEAE3" : "rgba(237,234,227,0.45)";
-            ctx.lineWidth = 2;
+      cells.sort((a, b) => a.y - b.y || a.x - b.x);
+      for (const c of cells) {
+        if (c.n == null) {
+          drawStreet(ctx, c.x, c.y, s, c.road as 1 | 2 | 3 | 4);
+          continue;
+        }
+        const n = c.n;
+        const sx = c.x - CX * s, sy = c.y - CY * s;
+        visible.push(n);
+        const t = tiles.current.get(n);
+        if (!t) want.add(Math.floor(n / CHUNK));
+        const zone = zoneOf(t?.zone);
+        const plan = fade > 0 ? plans.current.get(n) : undefined;
+        const sprite = () => tileSprite(zone, n, res, t?.level ?? null);
+        if (plan && typeof plan === "object") {
+          // A bare slab with the plots on top: map the unit square onto the ground diamond.
+          const g = GROUND[zone ?? "unknown"];
+          const P = (u: number, v: number): [number, number] => [sx + (64 + (u - v) * 60) * s, sy + (CY - 30 + (u + v) * 30) * s];
+          const poly = (pts: [number, number][], fill: string) => {
+            ctx.fillStyle = fill;
             ctx.beginPath();
-            ctx.moveTo(sx + 64 * s, sy + (CY - 30) * s);
-            ctx.lineTo(sx + 124 * s, sy + CY * s);
-            ctx.lineTo(sx + 64 * s, sy + (CY + 30) * s);
-            ctx.lineTo(sx + 4 * s, sy + CY * s);
+            ctx.moveTo(...pts[0]);
+            for (const q of pts.slice(1)) ctx.lineTo(...q);
             ctx.closePath();
-            ctx.stroke();
+            ctx.fill();
+          };
+          const down = ([x, y]: [number, number], d: number): [number, number] => [x, y + d * s];
+          poly([P(0, 1), P(1, 1), down(P(1, 1), 8), down(P(0, 1), 8)], g.l);
+          poly([P(1, 1), P(1, 0), down(P(1, 0), 8), down(P(1, 1), 8)], g.r);
+          ctx.save();
+          ctx.setTransform((dpr * 60 * s) / PLAN, (dpr * 30 * s) / PLAN, (-dpr * 60 * s) / PLAN, (dpr * 30 * s) / PLAN, dpr * (sx + 64 * s), dpr * (sy + (CY - 30) * s));
+          ctx.drawImage(plan.ground, 0, 0);
+          ctx.restore();
+          const [top, left, right] = plan.colors;
+          for (const [u0, v0, u1, v1, hh] of plan.claimed) {
+            const up = ([x, y]: [number, number]): [number, number] => [x, y - hh * s];
+            const N = P(u0, v0), E = P(u1, v0), S = P(u1, v1), W = P(u0, v1);
+            poly([W, S, up(S), up(W)], left);
+            poly([S, E, up(E), up(S)], right);
+            poly([up(N), up(E), up(S), up(W)], top);
           }
-          if (LANDMARKS[n]) labels.push([sx + 64 * s, sy + (fade === 1 ? CY - 44 : 6) * s, LANDMARKS[n]]);
+          if (fade < 1) {
+            ctx.globalAlpha = 1 - fade;
+            ctx.drawImage(sprite(), sx, sy, TILE_W * s, TILE_H * s);
+            ctx.globalAlpha = 1;
+          }
+        } else {
+          ctx.drawImage(sprite(), sx, sy, TILE_W * s, TILE_H * s);
+        }
+        if (n === selectedRef.current || n === hover.current) {
+          ctx.strokeStyle = n === selectedRef.current ? "#EDEAE3" : "rgba(237,234,227,0.45)";
+          ctx.lineWidth = 2;
+          diamond(c.x, c.y, 60 * s, 30 * s);
+          ctx.stroke();
         }
       }
       if (fade > 0 && visible.length <= PARCEL_FETCH_LIMIT) for (const n of visible) loadPlan(n);
@@ -382,17 +474,20 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
       const cv = canvas.current!;
       const { x, y, s } = view.current;
       const wx = x + (sx - cv.clientWidth / 2) / s, wy = y + (sy - cv.clientHeight / 2) / s;
-      // The ground diamond containing the point, among the rows it could be in.
-      const r0 = Math.round((wy - CY) / 32);
+      // The quarter whose diamond holds the point, then the cell inside it.
+      const r0 = Math.round((wy - QH) / QH);
       for (const r of [r0, r0 - 1, r0 + 1]) {
         if (r < 0) continue;
-        const c = Math.round((wx - CX - (r & 1) * 64) / 128);
-        if (c < 0 || c >= COLS) continue;
-        const dx = wx - (c * 128 + (r & 1) * 64 + CX), dy = wy - (r * 32 + CY);
-        if (Math.abs(dx) / 64 + Math.abs(dy) / 32 <= 1) {
-          const n = r * COLS + c;
-          return n <= tip ? n : null;
-        }
+        const c = Math.round((wx - QW / 2 - (r & 1) * (QW / 2)) / QW);
+        if (c < 0 || c >= QUARTERS) continue;
+        const q = r * QUARTERS + c;
+        const [cx, cy] = quarterCentre(q);
+        if (Math.abs(wx - cx) / (QW / 2) + Math.abs(wy - cy) / QH > 1) continue;
+        const dx = (wx - cx) / 64, dy = (wy - (cy - QH)) / 32;
+        const u = Math.floor((dx + dy) / 2), v = Math.floor((dy - dx) / 2);
+        if (u < 0 || v < 0 || u >= SIDE || v >= SIDE) return null;
+        const n = q * PER_Q + v * SIDE + u;
+        return n <= tip ? n : null;
       }
       return null;
     },
@@ -456,7 +551,7 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
     }
   };
   const onKeyDown = (e: React.KeyboardEvent) => {
-    const step: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -COLS, ArrowDown: COLS };
+    const step: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -SIDE, ArrowDown: SIDE };
     if (e.key in step) {
       e.preventDefault();
       select(selected + step[e.key], true);

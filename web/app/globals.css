@@ -1241,3 +1241,108 @@ kbd {
 .demo-banner .link-btn {
   color: var(--accent);
 }
+
+/* ---------- prosperity ---------- */
+.prosperity {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+.pros-head {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.pros-head > .grow {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 200px;
+}
+.pros-looks {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pros-arrow {
+  color: var(--fg-3);
+}
+.pros-next {
+  opacity: 0.45;
+}
+.pros-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.pros-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.pros-parts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 6px 20px;
+  font-size: 13px;
+}
+.pros-parts li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* ---------- rankings ---------- */
+.rank h1 {
+  margin: 0 0 8px;
+}
+.rank-list {
+  list-style: none;
+  margin: 24px 0 0;
+  padding: 0;
+  border-top: 1px solid var(--line);
+}
+.rank-list a {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.rank-list a:hover {
+  color: inherit;
+  background: var(--surface);
+}
+.rank-list .grow,
+.rank-score {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.rank-list .grow .small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rank-score {
+  align-items: flex-end;
+  flex: none;
+}
+.rank-no {
+  width: 28px;
+  text-align: right;
+  color: var(--fg-3);
+  flex: none;
+}
+.rank-no.top {
+  color: var(--accent-text);
+}

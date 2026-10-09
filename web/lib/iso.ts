@@ -104,22 +104,54 @@ const pick = <T,>(r: () => number, xs: T[]) => xs[Math.floor(r() * xs.length)];
 const LIT = "#F6C66B";
 const OFF = "rgba(10,12,16,0.35)";
 
-const BUILD: Record<Zone, (p: Painter, r: () => number) => void> = {
-  cbd: (p, r) => {
+// Heights grow with the district's prosperity level (lib/prosperity.ts): 1 is bare land, 3 is
+// a settled block, 5 is the busiest skyline. Buildings stop below the tile's top edge.
+type Lv = 1 | 2 | 3 | 4 | 5;
+const MAX_H = 168;
+const cap = (h: number) => Math.min(MAX_H, Math.round(h));
+
+const house = (p: Painter, r: () => number, gx: number, gy: number, w = 0.27) => {
+  const roofs = [
+    { rb: "#C9714E", lb: "#A9573A", l: "#8E4630", r: "#B85E40" },
+    { rb: "#6F7E8C", lb: "#55626F", l: "#47525D", r: "#5E6C79" },
+    { rb: "#B98A4E", lb: "#9A6F3A", l: "#7E5A2E", r: "#A07440" },
+  ];
+  p.roof(p.box(gx, gy, w, w, 12 * (w / 0.27), { l: "#C9BDA6", r: "#E6DCC8" }), 11 * (w / 0.27), pick(r, roofs), gx, gy);
+};
+const cabin = (p: Painter, gx: number, gy: number) =>
+  p.roof(p.box(gx, gy, 0.13, 0.13, 7, { l: "#6E5236", r: "#8A6844" }), 7, { rb: "#5A3E28", lb: "#4A3220", l: "#3E2A1A", r: "#5A3E28" }, gx, gy);
+const tower = (p: Painter, r: () => number, gx: number, gy: number, w: number, h: number, c: Faces, rate = 0.55) => {
+  const k = p.box(gx, gy, w, w, cap(h), c);
+  p.bands(k, 6, 6, 7, 3, rate, r, LIT, OFF);
+  return k;
+};
+
+const BUILD: Record<Zone, (p: Painter, r: () => number, lv: Lv) => void> = {
+  cbd: (p, r, lv) => {
     const glass = [
       { t: "#A7B8C6", l: "#2F3C4A", r: "#4A5D70" },
       { t: "#CFC5B3", l: "#46423C", r: "#6B655B" },
       { t: "#8EA6A0", l: "#2C3D3A", r: "#476260" },
     ];
+    if (lv === 1) {
+      // A building site: a concrete core and a crane.
+      p.box(-0.2, -0.2, 0.42, 0.42, 4, { t: "#8D877C", l: "#5A554D", r: "#6F695F" });
+      p.box(-0.2, -0.2, 0.18, 0.18, 26, { t: "#A39D92", l: "#615C54", r: "#7D776D" }, 4);
+      const base = iso(0.55, 0.45), top = up(base, 92), arm = [top[0] - 44, top[1] + 4] as Pt;
+      p.poly([[base[0] - 1.2, base[1]], [base[0] + 1.2, base[1]], [top[0] + 1.2, top[1]], [top[0] - 1.2, top[1]]], "#E2A93B");
+      p.poly([[arm[0], arm[1] - 1.5], [top[0] + 14, top[1] - 1.5], [top[0] + 14, top[1] + 1.5], [arm[0], arm[1] + 1.5]], "#E2A93B");
+      p.poly([[arm[0] + 6, arm[1]], [arm[0] + 7, arm[1]], [arm[0] + 7, arm[1] + 30], [arm[0] + 6, arm[1] + 30]], "#9A8F7A");
+      return;
+    }
+    const f = { 2: 0.42, 3: 0.65, 4: 1, 5: 1.12 }[lv];
     const spots: [number, number, number][] = [[-0.5, -0.5, 150], [0.5, -0.5, 112], [-0.5, 0.5, 96], [0.5, 0.5, 66]];
     inOrder(
-      spots.map(([gx, gy, h0], i) => ({
+      spots.slice(0, lv === 2 ? 2 : 4).map(([gx, gy, h0], i) => ({
         k: gx + gy,
         f: () => {
-          const h = Math.round(h0 * (0.8 + 0.35 * r()));
-          const k = p.box(gx, gy, 0.34, 0.34, h, pick(r, glass));
-          p.bands(k, 6, 6, 7, 3, 0.6, r, LIT, OFF);
-          if (i === 0) {
+          const h = cap(h0 * f * (0.8 + 0.35 * r()));
+          tower(p, r, gx, gy, 0.34, h, pick(r, glass), 0.6);
+          if (i === 0 && lv >= 4) {
             const tp = up(iso(gx, gy), h + 16), bt = up(iso(gx, gy), h);
             p.poly([[bt[0] - 0.8, bt[1]], [bt[0] + 0.8, bt[1]], [tp[0] + 0.4, tp[1]], [tp[0] - 0.4, tp[1]]], "#C9D2DA");
             p.ell(tp[0], tp[1], 1.8, 1.8, "#FF6A4D");
@@ -128,122 +160,181 @@ const BUILD: Record<Zone, (p: Painter, r: () => number) => void> = {
       })),
     );
   },
-  commercial: (p, r) => {
+  commercial: (p, r, lv) => {
     const walls = [
       { t: "#B98F5E", l: "#7A5A3A", r: "#9A7450" },
       { t: "#CDBFA2", l: "#857660", r: "#A6957A" },
       { t: "#B0735A", l: "#6E4532", r: "#8C5840" },
     ];
     const awnings = ["#C2553D", "#3D8C86", "#D9A441"];
+    const shop = (gx: number, gy: number, w: number, h: number) => {
+      const k = p.box(gx, gy, w, w, cap(h), pick(r, walls));
+      const a = pick(r, awnings);
+      for (const [p0, p1] of [[k.W, k.S], [k.S, k.E]] as [Pt, Pt][]) {
+        const s = lerp(p0, p1, 0.08), e = lerp(p0, p1, 0.92);
+        p.poly([up(s, Math.min(12, h)), up(e, Math.min(12, h)), [e[0], e[1] - Math.min(7, h - 2)], [s[0], s[1] - Math.min(7, h - 2)]], a);
+        if (h > 10) p.poly([up(s, 6), up(e, 6), e, s], "rgba(20,14,8,0.55)");
+      }
+      if (h > 20) p.bands(k, 17, 5, 8, 3, 0.45, r, LIT, OFF);
+    };
+    if (lv === 1) {
+      p.grass(r, 6, "#8C8A5C");
+      inOrder([[-0.4, -0.3], [0.35, -0.35], [-0.2, 0.45]].map(([gx, gy]) => ({ k: gx + gy, f: () => shop(gx, gy, 0.2, 9) })));
+      return;
+    }
+    const f = { 2: 0.7, 3: 1, 4: 1.6, 5: 1.9 }[lv];
     const spots: [number, number, number][] = [[-0.48, -0.48, 46], [0.5, -0.45, 34], [-0.45, 0.5, 30], [0.5, 0.5, 20]];
     inOrder(
-      spots.map(([gx, gy, h0]) => ({
+      spots.slice(0, lv === 2 ? 2 : 4).map(([gx, gy, h0], i) => ({
         k: gx + gy,
-        f: () => {
-          const k = p.box(gx, gy, 0.38, 0.38, Math.round(h0 * (0.85 + 0.3 * r())), pick(r, walls));
-          const a = pick(r, awnings);
-          for (const [p0, p1] of [[k.W, k.S], [k.S, k.E]] as [Pt, Pt][]) {
-            const s = lerp(p0, p1, 0.08), e = lerp(p0, p1, 0.92);
-            p.poly([up(s, 12), up(e, 12), [e[0], e[1] - 7], [s[0], s[1] - 7]], a);
-            p.poly([up(s, 6), up(e, 6), e, s], "rgba(20,14,8,0.55)");
-          }
-          p.bands(k, 17, 5, 8, 3, 0.45, r, LIT, OFF);
-        },
+        f: () =>
+          lv === 5 && i === 0
+            ? tower(p, r, gx, gy, 0.38, 132, { t: "#CDBFA2", l: "#6E6352", r: "#8F826C" })
+            : shop(gx, gy, 0.38, h0 * f * (0.85 + 0.3 * r())),
       })),
     );
   },
-  residential: (p, r) => {
-    p.grass(r, 8, "#76A257");
-    const roofs = [
-      { rb: "#C9714E", lb: "#A9573A", l: "#8E4630", r: "#B85E40" },
-      { rb: "#6F7E8C", lb: "#55626F", l: "#47525D", r: "#5E6C79" },
-      { rb: "#B98A4E", lb: "#9A6F3A", l: "#7E5A2E", r: "#A07440" },
-    ];
+  residential: (p, r, lv) => {
     const spots: [number, number][] = [[-0.5, -0.45], [0.48, -0.52], [-0.5, 0.48], [0.45, 0.5]];
-    const items = spots.map(([gx, gy]) => ({
+    if (lv === 1) {
+      p.grass(r, 16, "#76A257");
+      inOrder([{ k: -0.6, f: () => p.tree(-0.4, -0.2, 0.9) }, { k: 0.3, f: () => p.tree(0.5, -0.2, 0.7) }, { k: 0.9, f: () => p.tree(0.1, 0.8, 0.8) }]);
+      return;
+    }
+    p.grass(r, lv >= 4 ? 4 : 8, "#76A257");
+    const flat = [
+      { t: "#D9CDB4", l: "#9C8F76", r: "#BDAF93" },
+      { t: "#C99B7E", l: "#8A5E46", r: "#AA765A" },
+      { t: "#BFC3B8", l: "#7C8177", r: "#9CA196" },
+    ];
+    const items = spots.slice(0, lv === 2 ? 2 : 4).map(([gx, gy], i) => ({
       k: gx + gy,
-      f: () => p.roof(p.box(gx, gy, 0.27, 0.27, 12, { l: "#C9BDA6", r: "#E6DCC8" }), 11, pick(r, roofs), gx, gy),
+      f: () => {
+        if (lv === 3 || lv === 2 || (lv === 4 && i >= 2)) return house(p, r, gx, gy);
+        const h = lv === 4 ? 34 + 10 * r() : 62 + 34 * r() - i * 6;
+        tower(p, r, gx, gy, 0.3, h, pick(r, flat), 0.5);
+      },
     }));
-    items.push({ k: 0, f: () => p.tree(0, 0, 0.9) }, { k: 0.05, f: () => p.tree(0.9, -0.85, 0.75) });
+    items.push({ k: 0, f: () => p.tree(0, 0, 0.9) });
+    if (lv <= 3) items.push({ k: 0.05, f: () => p.tree(0.9, -0.85, 0.75) });
     inOrder(items);
   },
-  villa: (p, r) => {
+  villa: (p, r, lv) => {
     p.grass(r, 22, "#6DAA52");
     const white = { t: "#EFEAE0", l: "#B9B2A4", r: "#D9D3C7" };
-    inOrder([
-      {
-        k: -0.6,
-        f: () => {
-          const k = p.box(-0.3, -0.3, 0.46, 0.34, 18, white);
-          const s = lerp(k.S, k.E, 0.1), e = lerp(k.S, k.E, 0.9);
-          p.poly([up(s, 14), up(e, 14), up(e, 4), up(s, 4)], "#2E3E4A");
-          const k2 = p.box(-0.42, -0.4, 0.28, 0.22, 13, white, 18);
-          const s2 = lerp(k2.W, k2.S, 0.15), e2 = lerp(k2.W, k2.S, 0.85);
-          p.poly([up(s2, 10), up(e2, 10), up(e2, 3), up(s2, 3)], "#2E3E4A");
-        },
-      },
-      {
-        k: 1.0,
-        f: () => {
-          p.poly([iso(0.12, 0.3), iso(0.86, 0.3), iso(0.86, 0.9), iso(0.12, 0.9)], "#E6E0D2");
-          p.poly([iso(0.2, 0.38), iso(0.78, 0.38), iso(0.78, 0.82), iso(0.2, 0.82)], "#4FB3C9");
-          p.poly([iso(0.2, 0.38), iso(0.78, 0.38), iso(0.66, 0.5), iso(0.2, 0.5)], "#7FD0DE");
-        },
-      },
+    const trees = [
       { k: -1.4, f: () => p.tree(0.75, -0.85, 1) },
       { k: -0.25, f: () => p.tree(-0.85, 0.6, 1.1) },
       { k: 0.65, f: () => p.tree(0.85, -0.2, 0.85) },
       { k: 0.8, f: () => p.tree(-0.1, 0.9, 0.9) },
-    ]);
-  },
-  data: (p, r) => {
-    const hall = { t: "#7F93A7", l: "#3F4F60", r: "#56697E" };
-    const led = "#7FD1E8", dark = "rgba(10,14,20,0.35)";
+    ];
+    if (lv === 1) return inOrder(trees);
+    if (lv === 2) return inOrder([{ k: -0.6, f: () => house(p, r, -0.3, -0.3, 0.3) }, ...trees]);
+    const big = lv >= 4 ? 1.25 : 1;
+    const pool = (x0: number, y0: number, x1: number, y1: number) => {
+      p.poly([iso(x0 - 0.08, y0 - 0.08), iso(x1 + 0.08, y0 - 0.08), iso(x1 + 0.08, y1 + 0.08), iso(x0 - 0.08, y1 + 0.08)], "#E6E0D2");
+      p.poly([iso(x0, y0), iso(x1, y0), iso(x1, y1), iso(x0, y1)], "#4FB3C9");
+      p.poly([iso(x0, y0), iso(x1, y0), iso(x1 - 0.12, y0 + 0.12), iso(x0, y0 + 0.12)], "#7FD0DE");
+    };
     inOrder([
       {
         k: -0.6,
         f: () => {
-          const k = p.box(-0.15, -0.5, 0.75, 0.3, 18, hall);
-          p.bands(k, 5, 4, 6, 2, 0.7, r, led, dark, 0.06, 0.94);
-          for (let i = 0; i < 3; i++) p.box(-0.6 + i * 0.42, -0.5, 0.1, 0.12, 5, { t: "#9AABBC", l: "#55687C", r: "#6D8196" }, 18);
+          const k = p.box(-0.3, -0.3, 0.46 * big, 0.34 * big, 18 * big, white);
+          const s = lerp(k.S, k.E, 0.1), e = lerp(k.S, k.E, 0.9);
+          p.poly([up(s, 14 * big), up(e, 14 * big), up(e, 4), up(s, 4)], "#2E3E4A");
+          const k2 = p.box(-0.42, -0.4, 0.28 * big, 0.22 * big, 13 * big, white, 18 * big);
+          const s2 = lerp(k2.W, k2.S, 0.15), e2 = lerp(k2.W, k2.S, 0.85);
+          p.poly([up(s2, 10 * big), up(e2, 10 * big), up(e2, 3), up(s2, 3)], "#2E3E4A");
+          if (lv === 5) {
+            const k3 = p.box(-0.62, -0.62, 0.16, 0.16, 26, white, 18 * big + 13 * big);
+            p.roof(k3, 12, { rb: "#C9A24E", lb: "#B08A3A", l: "#8E6E2C", r: "#C49A40" }, -0.62, -0.62, 18 * big + 13 * big);
+          }
         },
       },
-      { k: 0.5, f: () => p.bands(p.box(0.3, 0.38, 0.55, 0.32, 13, hall), 4, 3, 5, 2, 0.6, r, led, dark, 0.06, 0.94) },
-      {
-        k: -0.1,
-        f: () => {
-          p.box(-0.65, 0.55, 0.13, 0.13, 40, { t: "#A9A39A", l: "#5E5952", r: "#7E786F" });
-          const tp = up(iso(-0.65, 0.55), 46);
-          p.ell(tp[0] + 4, tp[1] - 6, 8, 6, "rgba(230,230,230,0.22)");
-          p.ell(tp[0] + 10, tp[1] - 14, 10, 7, "rgba(230,230,230,0.14)");
-        },
-      },
+      { k: 1.0, f: () => pool(0.2, 0.38, 0.78, 0.82) },
+      ...(lv === 5 ? [{ k: 1.2, f: () => p.ell(iso(-0.55, 0.62)[0], iso(-0.55, 0.62)[1], 7, 3.5, "#7FD0DE") }] : []),
+      ...trees,
     ]);
   },
-  landmark: (p) => {
+  data: (p, r, lv) => {
+    const hall = { t: "#7F93A7", l: "#3F4F60", r: "#56697E" };
+    const led = "#7FD1E8", dark = "rgba(10,14,20,0.35)";
+    if (lv === 1) {
+      p.grass(r, 6, "#7C8A6A");
+      p.bands(p.box(0, 0, 0.26, 0.2, 9, hall), 3, 2, 4, 2, 0.6, r, led, dark, 0.1, 0.9);
+      return;
+    }
+    const f = lv === 5 ? 1.6 : 1;
+    const chimney = (gx: number, gy: number, h: number) => {
+      p.box(gx, gy, 0.13, 0.13, h, { t: "#A9A39A", l: "#5E5952", r: "#7E786F" });
+      const tp = up(iso(gx, gy), h + 6);
+      p.ell(tp[0] + 4, tp[1] - 6, 8, 6, "rgba(230,230,230,0.22)");
+      p.ell(tp[0] + 10, tp[1] - 14, 10, 7, "rgba(230,230,230,0.14)");
+    };
+    const items = [
+      {
+        k: -0.6,
+        f: () => {
+          const k = p.box(-0.15, -0.5, 0.75, 0.3, 18 * f, hall);
+          p.bands(k, 5, 4, 6, 2, 0.7, r, led, dark, 0.06, 0.94);
+          for (let i = 0; i < 3; i++) p.box(-0.6 + i * 0.42, -0.5, 0.1, 0.12, 5, { t: "#9AABBC", l: "#55687C", r: "#6D8196" }, 18 * f);
+        },
+      },
+    ];
+    if (lv >= 3) items.push({ k: 0.5, f: () => p.bands(p.box(0.3, 0.38, 0.55, 0.32, 13 * f, hall), 4, 3, 5, 2, 0.6, r, led, dark, 0.06, 0.94) });
+    if (lv >= 4) items.push({ k: -0.1, f: () => chimney(-0.65, 0.55, 40 * f) });
+    if (lv >= 5) items.push({ k: 0.2, f: () => chimney(-0.85, 0.2, 52) });
+    inOrder(items);
+  },
+  landmark: (p, _r, lv) => {
     p.poly([iso(-0.65, -0.65), iso(0.65, -0.65), iso(0.65, 0.65), iso(-0.65, 0.65)], "#B8944C");
+    const flag = (gx: number, gy: number) => {
+      const b = iso(gx, gy), t = up(b, 30);
+      p.poly([[b[0] - 0.7, b[1]], [b[0] + 0.7, b[1]], [t[0] + 0.7, t[1]], [t[0] - 0.7, t[1]]], "#D8D0BC");
+      p.poly([t, [t[0] + 10, t[1] + 3], [t[0], t[1] + 7]], "#F7931A");
+    };
     inOrder([
       { k: -1.6, f: () => p.tree(-0.8, -0.8, 0.8) },
       {
         k: 0,
         f: () => {
           p.box(0, 0, 0.34, 0.34, 8, { t: "#E0D2AC", l: "#8C7B55", r: "#B09C70" });
-          const ob = p.box(0, 0, 0.13, 0.13, 140, { t: "#F3D27A", l: "#9A7425", r: "#C9982F" }, 8);
+          const ob = p.box(0, 0, 0.13, 0.13, lv >= 5 ? 156 : 140, { t: "#F3D27A", l: "#9A7425", r: "#C9982F" }, 8);
           p.roof(ob, 16, { rb: "#FBE3A0", lb: "#E2BC5C", l: "#B08524", r: "#E7B946" }, 0, 0, 8);
         },
       },
+      ...(lv >= 4 ? [{ k: -0.9, f: () => flag(0.55, -0.55) }, { k: -0.85, f: () => flag(-0.55, 0.55) }] : []),
       { k: 0.1, f: () => p.tree(0.85, -0.75, 0.8) },
       { k: 0.15, f: () => p.tree(-0.75, 0.85, 0.8) },
       { k: 1.6, f: () => p.tree(0.8, 0.8, 0.8) },
     ]);
   },
-  mountain: (p, r) => {
+  mountain: (p, r, lv) => {
     p.grass(r, 7, "#8A8758");
     p.mountain(44, 194, 32, 58);
     p.mountain(88, 198, 26, 42);
     p.mountain(66, 214, 20, 24);
-    p.ell(30, 214, 4, 2.5, "#7A7466");
-    p.ell(98, 214, 3, 2, "#7A7466");
+    if (lv === 1) {
+      p.ell(30, 214, 4, 2.5, "#7A7466");
+      p.ell(98, 214, 3, 2, "#7A7466");
+      return;
+    }
+    if (lv >= 4) {
+      // A cable car from the valley to the high peak.
+      const a: Pt = [44, 138], b: Pt = [104, 206];
+      p.poly([[a[0], a[1] - 0.6], [b[0], b[1] - 0.6], [b[0], b[1] + 0.6], [a[0], a[1] + 0.6]], "#3A342C");
+      const c = lerp(a, b, 0.45);
+      p.poly([[c[0] - 3, c[1] + 2], [c[0] + 3, c[1] + 2], [c[0] + 3, c[1] + 7], [c[0] - 3, c[1] + 7]], "#C2553D");
+    }
+    const cabins: [number, number][] = [[0.62, 0.55], [-0.6, 0.72], [0.15, 0.85], [0.8, 0.15]];
+    inOrder([
+      ...cabins.slice(0, lv === 2 ? 1 : lv === 3 ? 3 : 4).map(([gx, gy]) => ({ k: gx + gy, f: () => cabin(p, gx, gy) })),
+      ...(lv >= 3 ? [{ k: 0.9, f: () => p.tree(-0.2, 0.75, 0.6) }, { k: 1.1, f: () => p.tree(0.5, 0.85, 0.55) }] : []),
+      ...(lv === 5
+        ? [{ k: 1.3, f: () => p.bands(p.box(0.55, 0.62, 0.3, 0.2, 24, { t: "#E6DCC8", l: "#8E7E62", r: "#B3A282" }), 5, 4, 6, 3, 0.8, r, LIT, OFF) }]
+        : []),
+    ]);
   },
 };
 
@@ -259,10 +350,10 @@ export const GROUND: Record<Zone | "unknown", Faces & { t: string }> = {
 };
 
 /** Shapes of one tile. variant picks heights and colours, so neighbours differ. */
-export function tileShapes(zone: Zone | null, variant: number): Shape[] {
+export function tileShapes(zone: Zone | null, variant: number, level: Lv = 3): Shape[] {
   const p = new Painter();
   p.ground(GROUND[zone ?? "unknown"]);
-  if (zone) BUILD[zone](p, rng(variant));
+  if (zone) BUILD[zone](p, rng(variant), level);
   return p.out;
 }
 
@@ -284,10 +375,12 @@ export function drawShapes(ctx: CanvasRenderingContext2D, shapes: Shape[]) {
 export const VARIANTS = 6;
 const sprites = new Map<string, HTMLCanvasElement>();
 
-/** A pre-rendered tile image at `res` pixels per tile unit, cached. */
-export function tileSprite(zone: Zone | null, n: number, res: number): HTMLCanvasElement {
+/** A pre-rendered tile image at `res` pixels per tile unit, cached. level is the district's
+ * prosperity level; districts without one look settled (3). */
+export function tileSprite(zone: Zone | null, n: number, res: number, level: number | null = null): HTMLCanvasElement {
   const variant = hash(n) % VARIANTS;
-  const key = `${zone}:${variant}:${res}`;
+  const lv = (level != null && level >= 1 && level <= 5 ? Math.round(level) : 3) as Lv;
+  const key = `${zone}:${variant}:${res}:${lv}`;
   let c = sprites.get(key);
   if (!c) {
     c = document.createElement("canvas");
@@ -295,7 +388,7 @@ export function tileSprite(zone: Zone | null, n: number, res: number): HTMLCanva
     c.height = Math.ceil(TILE_H * res);
     const ctx = c.getContext("2d")!;
     ctx.scale(res, res);
-    drawShapes(ctx, tileShapes(zone, 9000 + variant));
+    drawShapes(ctx, tileShapes(zone, 9000 + variant, lv));
     sprites.set(key, c);
   }
   return c;
