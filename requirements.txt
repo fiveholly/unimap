@@ -1,0 +1,7 @@
+# Python dependencies of parcel_index and api (versions the tests ran with).
+coincurve==21.0.0
+fastapi==0.143.0
+psycopg2-binary==2.9.13
+python-dotenv==1.2.3
+requests==2.34.2
+uvicorn==0.53.0

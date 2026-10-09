@@ -14,10 +14,13 @@
 - `patches/`：对 OPI 的修补。OPI 的 `getInscriptionInfo` 接口有两个 bug（互斥锁重复加锁导致死锁；条目解码偏移错 1 字节导致 panic），地块索引依赖这个接口。
 - `scripts/setup_opi.sh`：拉取固定版本的 OPI、打补丁并编译它的 ord。
 - `scripts/regtest/e2e.sh`：regtest 端到端测试。
+- `deploy/`：在一台 Ubuntu VPS 上部署主网的脚本和 systemd 服务，见 [deploy/README.md](deploy/README.md)。
 
 ## 运行
 
-依赖：Bitcoin Core（`-txindex=1`）、原版 ord 0.23.2 的 `ord server`（用于持有人追踪）、Postgres、Python 3（`psycopg2-binary`、`python-dotenv`、`requests`、`fastapi`、`uvicorn`、`coincurve`）。
+在 VPS 上部署主网用 `deploy/install.sh`（见 [deploy/README.md](deploy/README.md)）。下面是手动运行的方式。
+
+依赖：Bitcoin Core（`-txindex=1`）、原版 ord 0.23.2 的 `ord server`（用于持有人追踪）、Postgres、Python 3（`pip install -r requirements.txt`）。
 
 1. `scripts/setup_opi.sh ../OPI`，然后按 OPI 的 README 运行它的 ord 和 `bitmap_index`。
 2. 在同一个数据库里执行 `psql -f parcel_index/db_init.sql` 和 `psql -f api/social.sql`。

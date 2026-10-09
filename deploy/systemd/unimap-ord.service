@@ -1,0 +1,21 @@
+[Unit]
+Description=unimap: upstream ord 0.23.2 server (owners, inscription counts)
+After=unimap-bitcoind.service
+Requires=unimap-bitcoind.service
+
+[Service]
+User=unimap
+Group=unimap
+EnvironmentFile=/etc/unimap/unimap.env
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+# RPC credentials as ORD_BITCOIN_RPC_* so they stay off the command line.
+EnvironmentFile=/etc/unimap/ord.env
+LimitNOFILE=65536
+ExecStart=/opt/unimap/bin/ord --data-dir ${DATA_DIR}/ord server --address 127.0.0.1 --http-port 8080
+TimeoutStopSec=300
+
+[Install]
+WantedBy=multi-user.target

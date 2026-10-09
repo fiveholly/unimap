@@ -1,0 +1,11 @@
+# install.sh copies this to /etc/caddy/Caddyfile. Caddy fetches the TLS certificate itself.
+@DOMAIN@ {
+	encode zstd gzip
+	# The API answers under /v1, the web app everything else, on one origin.
+	handle /v1/* {
+		reverse_proxy 127.0.0.1:8000
+	}
+	handle {
+		reverse_proxy 127.0.0.1:3000
+	}
+}

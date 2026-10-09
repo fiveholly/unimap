@@ -1,0 +1,23 @@
+[Unit]
+Description=unimap: OPI ord fork (index run, inscription reader on :11030)
+After=unimap-bitcoind.service
+Requires=unimap-bitcoind.service
+
+[Service]
+User=unimap
+Group=unimap
+EnvironmentFile=/etc/unimap/unimap.env
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+EnvironmentFile=/etc/unimap/ord.env
+# OPI's ord reads DB_READER_API_URL as a bare host:port to listen on; the Python indexers
+# want it as a URL, so keep theirs away from it (it then listens on 127.0.0.1:11030).
+UnsetEnvironment=DB_READER_API_URL
+LimitNOFILE=65536
+ExecStart=/opt/unimap/opi/ord/target/release/ord --data-dir ${DATA_DIR}/opi-ord index run
+TimeoutStopSec=300
+
+[Install]
+WantedBy=multi-user.target
