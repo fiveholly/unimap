@@ -14,7 +14,7 @@ import time
 import traceback
 
 import psycopg2
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
 from parcel_index import rules
 from parcel_index.sources import Bitcoind, OrdReader
@@ -175,7 +175,7 @@ class ParcelIndexer:
 
 
 def main():
-    load_dotenv()
+    load_dotenv(find_dotenv(usecwd=True))
     network = os.getenv("NETWORK_TYPE") or "mainnet"
     indexer = ParcelIndexer(
         connect(),

@@ -47,19 +47,28 @@ wait_for() { # wait_for <description> <command...>
 wait_for bitcoind cli getblockcount
 
 # ---- ord wallet -----------------------------------------------------------
-ordw server --http-port $ORD_HTTP >"$WORK/ord-server.log" 2>&1 &
+if curl -sf http://127.0.0.1:$ORD_HTTP/blockcount >/dev/null 2>&1; then
+  echo "port $ORD_HTTP already serves an ord server; stop it first" >&2; exit 1
+fi
+"$ORD" --regtest --datadir "$WORK/ord" --bitcoin-rpc-url 127.0.0.1:$RPC_PORT \
+  --bitcoin-rpc-username $RPC_USER --bitcoin-rpc-password $RPC_PASS \
+  server --http-port $ORD_HTTP >"$WORK/ord-server.log" 2>&1 &
 PIDS+=($!)
 wait_for "ord server" curl -sf http://127.0.0.1:$ORD_HTTP/blockcount
 wallet create >/dev/null
 ADDR=$(wallet receive | python3 -c 'import json,sys; print(json.load(sys.stdin)["addresses"][0])')
 mine() { cli generatetoaddress "${1:-1}" "$ADDR" >/dev/null; }
-mine 101
-wait_sync() { wait_for "ord sync" sh -c "[ \$(curl -sf http://127.0.0.1:$ORD_HTTP/blockcount) -gt \$(cli getblockcount) ]"; }
+# Start past regtest's jubilee (height 110). Before it, ord marks child inscriptions
+# cursed (negative numbers) and OPI's db_reader drops cursed inscriptions.
+mine 111
+ord_synced() { [ "$(curl -sf http://127.0.0.1:$ORD_HTTP/blockcount)" -gt "$(cli getblockcount)" ]; }
+wait_sync() { wait_for "ord sync" ord_synced; }
 
 FILES="$WORK/files"; mkdir -p "$FILES"
 # inscribe <name> <text> [parent_id]  -> prints inscription id, mines a block
 inscribe() {
   local name="$1" text="$2" parent="${3:-}"
+  echo "inscribing $name: $text" >&2
   printf '%s' "$text" >"$FILES/$name.txt"
   wait_sync
   local args=(inscribe --fee-rate 1 --file "$FILES/$name.txt")
@@ -97,8 +106,13 @@ TIP=$(cli getblockcount)
 "$OPI_ORD" --regtest --data-dir "$WORK/opi-ord" --bitcoin-rpc-url 127.0.0.1:$RPC_PORT \
   --bitcoin-rpc-username $RPC_USER --bitcoin-rpc-password $RPC_PASS index run >"$WORK/opi-ord.log" 2>&1 &
 PIDS+=($!)
-rpc() { curl -sf -H 'content-type: application/json' -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$1\",\"params\":[]}" http://127.0.0.1:11030/; }
-wait_for "OPI ord at tip" sh -c "[ \"\$(curl -sf -H 'content-type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getLatestBlockHeight\",\"params\":[]}' http://127.0.0.1:11030/ | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"result\"])')\" = $TIP ]"
+opi_height() {
+  curl -sf -H 'content-type: application/json' \
+    -d '{"jsonrpc":"2.0","id":1,"method":"getLatestBlockHeight","params":[]}' http://127.0.0.1:11030/ |
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])'
+}
+opi_at_tip() { [ "$(opi_height)" = "$TIP" ]; }
+wait_for "OPI ord at tip" opi_at_tip
 
 DB_URL_PARTS=$(python3 - "$PGURL" <<'PY'
 import sys, urllib.parse as u
@@ -109,9 +123,10 @@ PY
 BM="$WORK/bitmap_index"; cp -r "$OPI_DIR/modules/bitmap_index" "$BM"
 printf '%s\nNETWORK_TYPE=regtest\nDB_READER_API_URL=http://127.0.0.1:11030/\nREPORT_TO_INDEXER=false\n' "$DB_URL_PARTS" >"$BM/.env"
 psql "$PGURL" -q -f "$BM/db_init.sql"
-(cd "$BM" && python3 bitmap_index.py >"$WORK/bitmap_index.log" 2>&1) &
+(cd "$BM" && exec python3 bitmap_index.py >"$WORK/bitmap_index.log" 2>&1) &
 PIDS+=($!)
-wait_for "bitmap_index at tip" sh -c "[ \"\$(psql '$PGURL' -At -c 'select max(block_height) from bitmap_block_hashes')\" = $TIP ]"
+bitmap_at_tip() { [ "$(psqlq 'select max(block_height) from bitmap_block_hashes')" = "$TIP" ]; }
+wait_for "bitmap_index at tip" bitmap_at_tip
 
 # ---- unimap parcel_index ----------------------------------------------------
 psql "$PGURL" -q -f "$ROOT/parcel_index/db_init.sql"

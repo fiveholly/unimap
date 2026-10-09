@@ -1,0 +1,54 @@
+diff --git a/ord/db_reader/src/server.rs b/ord/db_reader/src/server.rs
+index f5d79c0..cb7baad 100644
+--- a/ord/db_reader/src/server.rs
++++ b/ord/db_reader/src/server.rs
+@@ -107,8 +107,10 @@ fn get_inscription_entry_from_raw(raw: Vec<u8>) -> InscriptionEntry {
+   let inscription_number = i32::from_be_bytes(raw[38..42].try_into().unwrap());
+   let sequence_number = u32::from_be_bytes(raw[42..46].try_into().unwrap());
+   let is_json_or_text = raw[46] != 0;
+-  let is_cursed_for_brc20 = raw[47] != 0;
+-  let txcnt_limit = i16::from_be_bytes(raw[48..50].try_into().unwrap());
++  // The indexer's InscriptionEntry (src/index/entry.rs) stores txcnt_limit right
++  // after is_json_or_text; cursed_for_brc20 lives in ord_inscription_info instead.
++  let is_cursed_for_brc20 = false;
++  let txcnt_limit = i16::from_be_bytes(raw[47..49].try_into().unwrap());
+ 
+   InscriptionEntry {
+     charms,
+@@ -566,10 +568,7 @@ impl Brc20ApiServer for RpcServer {
+       u32::from_be_bytes(sequence_number_raw.unwrap()[0..4].try_into().unwrap());
+ 
+     // Now check if the sequence_number exists in the sequence_number_to_inscription_entry column family
+-    let entry_raw = self
+-      .db
+-      .lock()
+-      .expect("DB Error")
++    let entry_raw = db
+       .get_cf(
+         sequence_number_to_inscription_entry,
+         &sequence_number.to_be_bytes(),
+@@ -586,6 +585,7 @@ impl Brc20ApiServer for RpcServer {
+       .unwrap()
+     {
+       let info = get_inscription_info_from_raw(raw, inscription_id.clone());
++      let entry = InscriptionEntry { is_cursed_for_brc20: info.cursed_for_brc20, ..entry };
+ 
+       Ok(Some(InscriptionInformation { info, entry }))
+     } else {
+@@ -644,14 +644,12 @@ impl Brc20ApiServer for RpcServer {
+     let entry = get_inscription_entry_from_raw(entry_raw.unwrap().to_vec());
+ 
+     let inscription_id_key = get_inscription_id_key(&entry.id);
+-    if let Some(raw) = self
+-      .db
+-      .lock()
+-      .expect("DB Error")
++    if let Some(raw) = db
+       .get_cf(ord_inscription_info, &inscription_id_key)
+       .unwrap()
+     {
+       let info = get_inscription_info_from_raw(raw, entry.id.clone());
++      let entry = InscriptionEntry { is_cursed_for_brc20: info.cursed_for_brc20, ..entry };
+ 
+       Ok(Some(InscriptionInformation { info, entry }))
+     } else {
