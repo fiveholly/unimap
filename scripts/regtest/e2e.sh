@@ -141,6 +141,7 @@ unimap_index() { # bring OPI, parcel_index and owners up to the current tip
   wait_sync
   (cd "$PI" && PYTHONPATH="$ROOT" python3 -m parcel_index.indexer --once)
   (cd "$PI" && PYTHONPATH="$ROOT" python3 -m parcel_index.owners --once)
+  (cd "$PI" && PYTHONPATH="$ROOT" python3 -m parcel_index.zones --once)
 }
 unimap_index
 OWNER_BEFORE=$(psqlq "select address from inscription_owners where inscription_id='$P_VALID1'")
@@ -198,6 +199,10 @@ check "parcel 1 owner updated at the transfer block" "$TIP" "$(psqlq "select upd
 check "API land: district" "$D_VALID" "$(api /v1/land/$B | jq_ 'd["district"]["inscription_id"]')"
 check "API land: parcels" "0,1,2" "$(api /v1/land/$B | jq_ '",".join(str(p["tx_index"]) for p in d["parcels"])')"
 check "API land: tx_count" "3" "$(api /v1/land/$B | jq_ 'd["tx_count"]')"
+check "zones cover every block" "$TIP" "$(psqlq "select max(block_height) from block_zones")"
+check "genesis is a landmark" "landmark" "$(api '/v1/land?start=0&end=0' | jq_ 'd["tiles"][0]["zone"]')"
+check "inscriptions counted from ord" "$(curl -sf -H 'Accept: application/json' http://127.0.0.1:$ORD_HTTP/status | jq_ 'd["inscriptions"]')" "$(psqlq "select sum(inscriptions) from block_stats")"
+check "API land: zone" "$(psqlq "select zone from block_zones where block_height=$B")" "$(api /v1/land/$B | jq_ 'd["zone"]')"
 check "API land: unclaimed block" "False" "$(api /v1/land/5 | jq_ 'd["claimed"]')"
 check "API parcel owner" "$EXT" "$(api /v1/land/$B/parcels/1 | jq_ 'd["owner"]["address"]')"
 check "API address land" "1 0" "$(api /v1/addresses/$EXT/land | jq_ 'len(d["parcels"]), len(d["districts"])')"

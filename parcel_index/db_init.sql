@@ -82,3 +82,41 @@ CREATE TABLE IF NOT EXISTS public.block_tx_values (
 	tx_values int8[] NOT NULL,
 	CONSTRAINT block_tx_values_pk PRIMARY KEY (block_height)
 );
+
+-- Zoning inputs, one row per block from height 0 (parcel_index/zones.py).
+CREATE TABLE IF NOT EXISTS public.block_stats (
+	block_height int4 NOT NULL,
+	block_hash text NOT NULL,
+	tx_count int4 NOT NULL, -- coinbase included
+	total_fee int8 NOT NULL, -- sats
+	total_out int8 NOT NULL, -- sats sent by non-coinbase transactions
+	inscriptions int4 NOT NULL, -- inscriptions revealed in the block
+	CONSTRAINT block_stats_pk PRIMARY KEY (block_height)
+);
+
+-- Per halving epoch (210000 blocks), the percentiles zones are cut at.
+CREATE TABLE IF NOT EXISTS public.zone_thresholds (
+	epoch int4 NOT NULL,
+	fee_p90 int8 NULL,
+	fee_p99 int8 NULL,
+	txs_p25 int4 NULL,
+	avg_out_p90 int8 NULL,
+	block_count int4 NOT NULL,
+	CONSTRAINT zone_thresholds_pk PRIMARY KEY (epoch)
+);
+
+-- Zone of each block with stats. The rules are documented in parcel_index/zones.py.
+CREATE OR REPLACE VIEW public.block_zones AS
+SELECT s.block_height,
+	CASE
+		WHEN s.block_height IN (0, 57043, 210000, 420000, 481824, 630000, 709632, 767430, 840000) THEN 'landmark'
+		WHEN s.tx_count = 1 THEN 'mountain'
+		WHEN s.total_fee > 0 AND s.total_fee >= t.fee_p99 THEN 'cbd'
+		WHEN s.total_fee > 0 AND s.total_fee >= t.fee_p90 THEN 'commercial'
+		WHEN s.inscriptions * 5 >= s.tx_count * 2 THEN 'data'
+		WHEN s.tx_count <= t.txs_p25 AND s.total_out / (s.tx_count - 1) > t.avg_out_p90 THEN 'villa'
+		ELSE 'residential'
+	END AS zone,
+	s.tx_count
+FROM public.block_stats s
+LEFT JOIN public.zone_thresholds t ON t.epoch = s.block_height / 210000;

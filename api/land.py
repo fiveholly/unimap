@@ -80,10 +80,26 @@ def land_range(start: int, end: int):
             (start, end),
         )
         claimed = {n: (owner, parcels, posts) for n, owner, parcels, posts in cur.fetchall()}
+        cur.execute(
+            "select block_height, zone, tx_count from block_zones where block_height between %s and %s;",
+            (start, end),
+        )
+        zones = {n: (zone, txs) for n, zone, txs in cur.fetchall()}
     tiles = []
     for n in range(max(start, 0), end + 1):
         owner, parcels, posts = claimed.get(n, (None, 0, 0))
-        tiles.append({"bitmap_number": n, "claimed": n in claimed, "owner": owner, "parcels": parcels, "posts": posts})
+        zone, txs = zones.get(n, (None, None))
+        tiles.append(
+            {
+                "bitmap_number": n,
+                "zone": zone,
+                "tx_count": txs,
+                "claimed": n in claimed,
+                "owner": owner,
+                "parcels": parcels,
+                "posts": posts,
+            }
+        )
     return {"tip": tip, "tiles": tiles}
 
 
@@ -117,9 +133,12 @@ def land(bitmap_number: int):
         heights = _heights(cur)
         if bitmap_number < 0 or heights["bitmap"] is None or bitmap_number > heights["bitmap"]:
             raise HTTPException(404, "no such block yet")
-        cur.execute("select tx_count from block_meta where block_height = %s;", (bitmap_number,))
-        row = cur.fetchone()
-        tx_count = None if row is None else row[0]
+        cur.execute(
+            "select z.zone, coalesce(z.tx_count, m.tx_count) from (select %s as h) q "
+            "left join block_zones z on z.block_height = q.h left join block_meta m on m.block_height = q.h;",
+            (bitmap_number,),
+        )
+        zone, tx_count = cur.fetchone()
         cur.execute(
             "select b.inscription_id, b.inscription_number, b.block_height, o.outpoint, o.address, o.output_value "
             "from bitmaps b left join inscription_owners o on o.inscription_id = b.inscription_id "
@@ -127,7 +146,7 @@ def land(bitmap_number: int):
             (bitmap_number,),
         )
         row = cur.fetchone()
-        result = {"name": f"{bitmap_number}.bitmap", "bitmap_number": bitmap_number, "tx_count": tx_count}
+        result = {"name": f"{bitmap_number}.bitmap", "bitmap_number": bitmap_number, "zone": zone, "tx_count": tx_count}
         if row is None:
             return {**result, "claimed": False, "district": None, "parcels": []}
         inscription_id, number, height, *owner = row

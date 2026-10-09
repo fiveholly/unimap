@@ -1,49 +1,61 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { layout } from "@/lib/mondrian";
+
+export type ParcelInfo = (index: number) => React.ReactNode;
 
 /** The block's Mondrian picture; square i is transaction i, i.e. parcel i. */
 export function Mondrian({
   txValues,
   claimed,
+  own,
   selected,
   onSelect,
-  size = 360,
+  card,
 }: {
   txValues: number[];
   claimed?: Set<number>;
+  own?: Set<number>;
   selected?: number | null;
   onSelect?: (txIndex: number) => void;
-  size?: number;
+  /** Contents of the floating card for the hovered (or selected) parcel. */
+  card?: ParcelInfo;
 }) {
   const { squares, width, height } = useMemo(() => layout(txValues), [txValues]);
+  const [hover, setHover] = useState<number | null>(null);
   const extent = Math.max(width, height);
-  const pad = 0.25;
-  const dx = (extent - width) / 2; // center narrow layouts, like other Bitmap renderers
+  const pad = Math.min(0.25, extent / 400 + 0.08);
+  const dx = (extent - width) / 2; // centre narrow layouts, like other Bitmap renderers
+  const shown = hover ?? selected ?? null;
+  const q = shown != null ? squares[shown] : null;
+  let cardStyle: React.CSSProperties | undefined;
+  if (q) {
+    const right = (dx + q.x + q.r) / extent, left = (dx + q.x) / extent, top = q.y / extent;
+    cardStyle = right < 0.6 ? { left: `calc(${right * 100}% + 10px)`, top: `${top * 100}%` } : { right: `calc(${(1 - left) * 100}% + 10px)`, top: `${top * 100}%` };
+  }
   return (
-    <svg
-      className="mondrian"
-      viewBox={`0 0 ${extent} ${extent}`}
-      width={size}
-      height={size}
-      role="img"
-      aria-label={`Mondrian layout of ${txValues.length} transactions`}
-    >
-      {squares.map((q, i) => (
-        <rect
-          key={i}
-          x={dx + q.x + pad / 2}
-          y={q.y + pad / 2}
-          width={q.r - pad}
-          height={q.r - pad}
-          className={`tx${claimed?.has(i) ? " claimed" : ""}${selected === i ? " selected" : ""}${i === 0 ? " coinbase" : ""}`}
-          onClick={onSelect ? () => onSelect(i) : undefined}
-        >
-          <title>{i === 0 ? "Parcel 0 (coinbase)" : `Parcel ${i}`}</title>
-        </rect>
-      ))}
-    </svg>
+    <div className="mondrian-wrap" onMouseLeave={() => setHover(null)}>
+      <svg className="mondrian" viewBox={`0 0 ${extent} ${extent}`} role="img" aria-label={`${txValues.length} 笔交易的 Mondrian 地块图`}>
+        {squares.map((sq, i) => (
+          <rect
+            key={i}
+            x={dx + sq.x + pad / 2}
+            y={sq.y + pad / 2}
+            width={sq.r - pad}
+            height={sq.r - pad}
+            className={`tx${claimed?.has(i) ? " claimed" : ""}${own?.has(i) ? " own" : ""}${shown === i ? " shown" : ""}${i === 0 ? " coinbase" : ""}`}
+            onMouseEnter={() => setHover(i)}
+            onClick={onSelect ? () => onSelect(i) : undefined}
+          />
+        ))}
+      </svg>
+      {q && card && shown != null && (
+        <div className="parcel-card" style={cardStyle}>
+          {card(shown)}
+        </div>
+      )}
+    </div>
   );
 }
