@@ -74,3 +74,11 @@ CREATE TABLE IF NOT EXISTS public.land_events (
 );
 CREATE INDEX IF NOT EXISTS land_events_bitmap_number_idx ON public.land_events USING btree (bitmap_number, id);
 CREATE INDEX IF NOT EXISTS land_events_block_height_idx ON public.land_events USING btree (block_height);
+
+-- Per-transaction output totals (sats) of a block, cached by the API for Mondrian layouts.
+CREATE TABLE IF NOT EXISTS public.block_tx_values (
+	block_height int4 NOT NULL,
+	block_hash text NOT NULL,
+	tx_values int8[] NOT NULL,
+	CONSTRAINT block_tx_values_pk PRIMARY KEY (block_height)
+);

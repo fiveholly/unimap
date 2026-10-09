@@ -94,3 +94,8 @@ class Bitcoind:
             if "txid" in vin
         ]
         return block["time"], spent
+
+    def tx_values(self, block_hash):
+        """Total output value in sats of each transaction, in block order."""
+        block = _call(self.url, "getblock", [block_hash, 2], self.auth)
+        return [sum(round(out["value"] * 100_000_000) for out in tx["vout"]) for tx in block["tx"]]
