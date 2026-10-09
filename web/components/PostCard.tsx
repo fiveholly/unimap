@@ -6,8 +6,10 @@ import { useEffect, useRef, useState } from "react";
 import { Avatar } from "./Avatar";
 import { Composer } from "./Composer";
 import { short, useSession } from "./Session";
+import { ShareMenu } from "./ShareMenu";
 import { api, type Post } from "@/lib/api";
 import { timeAgo } from "@/lib/format";
+import { postText } from "@/lib/share";
 
 export type PostActions = {
   canReply: boolean;
@@ -160,6 +162,7 @@ export function PostCard({
             {post.like_count}
             <span className="sr-only">个赞</span>
           </button>
+          {!post.removed && <ShareMenu path={`/post/${post.id}`} text={postText(post)} label="" className="act" align="left" />}
         </div>
         {showSig && (
           <div className="sig">

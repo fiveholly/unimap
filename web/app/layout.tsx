@@ -6,10 +6,14 @@ import "./globals.css";
 import { DemoBanner } from "@/components/DemoBanner";
 import { Header } from "@/components/Header";
 import { SessionProvider } from "@/components/Session";
+import { SITE_URL } from "@/lib/share";
 
 export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
   title: "unimap",
   description: "比特币上的 Bitmap 城市：每一个区块都是一个街区。",
+  openGraph: { siteName: "unimap", locale: "zh_CN", type: "website" },
+  twitter: { card: "summary_large_image" },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

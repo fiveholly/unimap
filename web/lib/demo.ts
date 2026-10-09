@@ -555,6 +555,10 @@ function route(path: string, opts: Opts): unknown {
     save();
     return { ok: true };
   }
+  if ((m = p.match(/^\/v1\/posts\/(\d+)$/)) && method === "GET") {
+    const post = s.posts.find((x) => x.id === +m![1] && !x.removed) ?? fail(404, "no such post");
+    return view(post, me);
+  }
   if ((m = p.match(/^\/v1\/posts\/(\d+)$/)) && method === "DELETE") {
     const post = s.posts.find((x) => x.id === +m![1]) ?? fail(404, "no such post");
     const a = needMe();

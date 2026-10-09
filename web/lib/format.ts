@@ -18,3 +18,8 @@ export function epochName(height: number): string {
   const epoch = Math.floor(height / 210000);
   return EPOCHS[epoch] ?? `第 ${epoch} 纪元`;
 }
+
+export function short(address: string | null | undefined): string {
+  if (!address) return "—";
+  return address.length > 16 ? `${address.slice(0, 8)}…${address.slice(-6)}` : address;
+}

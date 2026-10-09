@@ -4,9 +4,11 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { short } from "@/components/Session";
+import { ShareMenu } from "@/components/ShareMenu";
 import { TileThumb } from "@/components/TileThumb";
 import { api, type Ranking } from "@/lib/api";
 import { LEVEL_NAMES, type Level } from "@/lib/prosperity";
+import { rankText } from "@/lib/share";
 import { ZONES, zoneOf } from "@/lib/zones";
 
 export default function RankPage() {
@@ -19,7 +21,10 @@ export default function RankPage() {
   }, []);
   return (
     <div className="page narrow rank">
-      <h1>繁荣榜</h1>
+      <div className="row between">
+        <h1>繁荣榜</h1>
+        <ShareMenu path="/rank" text={rankText} />
+      </div>
       <p className="muted">最热闹的 50 个街区。按繁荣度排序，只算近 30 天的帖子、回复和签到，所以名次每天都会变。</p>
       {error ? (
         <p className="error">{error}</p>

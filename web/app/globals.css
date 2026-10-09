@@ -532,6 +532,16 @@ kbd {
 .menu-item:hover:not(:disabled) {
   background: var(--surface-2);
 }
+.share-menu {
+  position: relative;
+}
+.share-menu.left .menu {
+  right: auto;
+  left: 0;
+}
+.share-menu .menu {
+  min-width: 156px;
+}
 .menu-item.danger {
   color: var(--danger);
 }
@@ -1521,6 +1531,27 @@ label.check.chip {
   font-size: 14px;
   flex-wrap: wrap;
 }
+.share-nudge {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  font-size: 14px;
+  color: var(--fg-2);
+}
+.park-banner .share-menu {
+  margin-left: auto;
+}
+button.sm,
+.btn.sm {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 13px;
+}
 .park-banner {
   display: flex;
   align-items: center;
@@ -1531,4 +1562,15 @@ label.check.chip {
   border: 1px solid rgba(185, 162, 122, 0.45);
   border-radius: 10px;
   background: rgba(185, 162, 122, 0.08);
+}
+
+/* ---------- a shared post ---------- */
+.post-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: flex-start;
+}
+.post-page > article {
+  align-self: stretch;
 }
