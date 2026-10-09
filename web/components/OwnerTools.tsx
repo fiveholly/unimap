@@ -259,7 +259,7 @@ function ParkForm({ n, district, held, save }: { n: number; district: District; 
   const ok = name.trim() && members.length >= 2 && members.includes(n) && connected(members);
   const toggle = (m: number) => setMembers(members.includes(m) ? members.filter((x) => x !== m) : [...members, m].sort((a, b) => a - b));
   if (!park && near.length < 2)
-    return <p className="muted">同一个街坊里，你只有这一个街区挨着这里。持有相邻的街区后，可以把它们连成一个园区，分数合并计算、一起升级。</p>;
+    return <p className="muted">你在这附近只有这一个街区。持有边挨着边或隔着马路相对的街区后，可以把它们连成一个园区，分数合并计算、一起升级。</p>;
   return (
     <>
       <p className="muted small">园区里的街区分数合起来算，一起升级，地图上铺成一整片并显示园区名。街区卖掉后会自动退出园区。</p>

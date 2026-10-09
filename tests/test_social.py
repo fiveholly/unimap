@@ -312,7 +312,13 @@ class SocialApi(unittest.TestCase):
 
         self.assertTrue(parks.connected([100, 101, 109]))
         self.assertFalse(parks.connected([100, 102]))
-        self.assertFalse(parks.connected([127, 128]))  # consecutive, but across a street
+        self.assertFalse(parks.connected([127, 128]))  # consecutive, but in quarters that don't touch
+        self.assertTrue(parks.connected([127, 1656]))  # face each other across a street
+        self.assertTrue(parks.connected([120, 1536]))  # across the street the other way
+        self.assertIsNone(parks.side(56, 0, 1))  # off the left edge of the map
+        for n in (0, 127, 1600, 1663, 3100, 3135):
+            for m in parks.neighbours(n):
+                self.assertIn(n, set(parks.neighbours(m)))
         with self.conn.cursor() as cur:
             cur.execute(
                 "insert into bitmaps (inscription_id, inscription_number, bitmap_number, block_height) values "

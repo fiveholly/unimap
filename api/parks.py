@@ -1,7 +1,8 @@
 """Parks (园区): districts one address holds that touch on the map, joined under one name.
 
 The map (web/components/CityMap.tsx) lays blocks out in quarters of SIDE x SIDE separated
-by streets, so a park lies inside one quarter and its members are joined edge to edge.
+by streets, on a staggered grid QUARTERS to a row. Members are joined edge to edge, or face
+each other across a street, so a park can spread over several quarters.
 Members score together: every district in a park is drawn at the level of the park's total
 score. A member counts only while the park's owner still holds it, so selling a district
 takes it out of the park; a park left with fewer than two members is not shown.
@@ -18,20 +19,43 @@ router = APIRouter()
 
 SIDE = 8
 PER_Q = SIDE * SIDE
+QUARTERS = 24
 MIN_MEMBERS = 2
 
 
-def neighbours(n):
+def side(n, du, dv):
+    """The block next to n one step along u or v, across the street when n is on its quarter's
+    edge; None past the edge of the map."""
     q, i = divmod(n, PER_Q)
     v, u = divmod(i, SIDE)
+    u, v = u + du, v + dv
+    if 0 <= u < SIDE and 0 <= v < SIDE:
+        return q * PER_Q + v * SIDE + u
+    qr, qc = divmod(q, QUARTERS)
+    # Odd rows sit half a quarter to the right: +u is down-right, +v is down-left.
+    if u == SIDE:
+        qr, qc, u = qr + 1, qc + (qr & 1), 0
+    elif u < 0:
+        qr, qc, u = qr - 1, qc - ((qr - 1) & 1), SIDE - 1
+    elif v == SIDE:
+        qr, qc, v = qr + 1, qc - (1 - (qr & 1)), 0
+    else:
+        qr, qc, v = qr - 1, qc + (1 - ((qr - 1) & 1)), SIDE - 1
+    if qr < 0 or not 0 <= qc < QUARTERS:
+        return None
+    return (qr * QUARTERS + qc) * PER_Q + v * SIDE + u
+
+
+def neighbours(n):
     for du, dv in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-        if 0 <= u + du < SIDE and 0 <= v + dv < SIDE:
-            yield q * PER_Q + (v + dv) * SIDE + u + du
+        m = side(n, du, dv)
+        if m is not None:
+            yield m
 
 
 def connected(members):
     members = set(members)
-    if not members or len({n // PER_Q for n in members}) != 1:
+    if not members:
         return False
     seen, todo = set(), [min(members)]
     while todo:
@@ -72,10 +96,11 @@ def in_range(cur, lo, hi):
 def scored(cur, lo, hi):
     """Prosperity for lo..hi with parks applied: ({n: level}, {n: park}), every park with its
     total score and level."""
-    qlo, qhi = lo - lo % PER_Q, hi - hi % PER_Q + PER_Q - 1
-    parts = prosperity.parts_for(cur, qlo, qhi)
-    own = {n: prosperity.prosperity(n, parts.get(n) or prosperity.empty_parts()) for n in range(qlo, qhi + 1)}
     parks = in_range(cur, lo, hi)
+    # Parks reach past lo..hi, so score every member wherever it is.
+    blocks = set(range(lo, hi + 1)) | {n for park in parks.values() for n in park["members"]}
+    parts = prosperity.parts_for(cur, min(blocks), max(blocks))
+    own = {n: prosperity.prosperity(n, parts.get(n) or prosperity.empty_parts()) for n in blocks}
     park_of = {}
     for park in parks.values():
         park["score"] = sum(own[n]["score"] for n in park["members"])
@@ -94,7 +119,7 @@ class ParkBody(BaseModel):
 def _check(cur, req, address, park_id=None):
     members = sorted(set(req.members))
     if len(members) < MIN_MEMBERS or not connected(members):
-        raise HTTPException(400, "a park is two or more districts joined edge to edge in one quarter")
+        raise HTTPException(400, "a park is two or more districts joined edge to edge or across a street")
     cur.execute(
         "select b.bitmap_number from bitmaps b join inscription_owners o on o.inscription_id = b.inscription_id "
         "where b.bitmap_number = any(%s) and o.address = %s;",

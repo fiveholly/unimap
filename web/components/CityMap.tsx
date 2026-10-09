@@ -8,6 +8,7 @@ import { short } from "./Session";
 import { api, type Land, type Tile } from "@/lib/api";
 import { CX, CY, GROUND, PAVED, rng, TILE_H, TILE_W, tileSprite } from "@/lib/iso";
 import { layout } from "@/lib/mondrian";
+import { side } from "@/lib/parks";
 import { LANDMARKS, ZONE_ORDER, ZONES, zoneOf, type Zone } from "@/lib/zones";
 
 // Blocks are grouped into quarters of 8 x 8, laid out like a city's street grid: inside a
@@ -234,16 +235,18 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
     const borders: [[number, number], [number, number]][] = [];
     /** Collect a park member's edges that face outside the park. */
     const parkBorder = (n: number, park: number, x: number, y: number) => {
-      const i = n % PER_Q, u = i % SIDE, v = Math.floor(i / SIDE);
       const N: [number, number] = [x, y - 30 * s], E: [number, number] = [x + 60 * s, y], S: [number, number] = [x, y + 30 * s], W: [number, number] = [x - 60 * s, y];
       const sides: [number, number, [number, number], [number, number]][] = [
-        [u + 1, v, E, S],
-        [u - 1, v, N, W],
-        [u, v + 1, S, W],
-        [u, v - 1, N, E],
+        [1, 0, E, S],
+        [-1, 0, N, W],
+        [0, 1, S, W],
+        [0, -1, N, E],
       ];
-      for (const [a, b, p0, p1] of sides)
-        if (!(a >= 0 && b >= 0 && a < SIDE && b < SIDE && tiles.current.get(n - i + b * SIDE + a)?.park === park)) borders.push([p0, p1]);
+      for (const [du, dv, p0, p1] of sides) {
+        const m = side(n, du, dv);
+        // Across a street the outline stays: it marks the park's edge on each side of the road.
+        if (m === null || tiles.current.get(m)?.park !== park || Math.floor(m / PER_Q) !== Math.floor(n / PER_Q)) borders.push([p0, p1]);
+      }
     };
     const diamond = (x: number, y: number, hw: number, hh: number) => {
       ctx.beginPath();

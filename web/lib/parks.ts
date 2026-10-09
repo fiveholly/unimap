@@ -1,18 +1,36 @@
-// Parks (园区): connected districts in one quarter of the map held by one address. Same rule
-// as api/parks.py; the quarter size matches components/CityMap.tsx.
+// Parks (园区): districts held by one address that touch edge to edge or face each other
+// across a street. Same rule as api/parks.py; the layout matches components/CityMap.tsx.
 
 export const SIDE = 8;
 export const PER_Q = SIDE * SIDE;
+export const QUARTERS = 24;
+
+/** The block next to n one step along u or v, across the street when n is on its quarter's
+ * edge; null past the edge of the map. */
+export function side(n: number, du: number, dv: number): number | null {
+  const q = Math.floor(n / PER_Q), i = n % PER_Q;
+  let u = (i % SIDE) + du, v = Math.floor(i / SIDE) + dv;
+  if (u >= 0 && u < SIDE && v >= 0 && v < SIDE) return q * PER_Q + v * SIDE + u;
+  let qr = Math.floor(q / QUARTERS), qc = q % QUARTERS;
+  // Odd rows sit half a quarter to the right: +u is down-right, +v is down-left.
+  if (u === SIDE) [qc, qr, u] = [qc + (qr & 1), qr + 1, 0];
+  else if (u < 0) [qc, qr, u] = [qc - ((qr - 1) & 1), qr - 1, SIDE - 1];
+  else if (v === SIDE) [qc, qr, v] = [qc - (1 - (qr & 1)), qr + 1, 0];
+  else [qc, qr, v] = [qc + (1 - ((qr - 1) & 1)), qr - 1, SIDE - 1];
+  if (qr < 0 || qc < 0 || qc >= QUARTERS) return null;
+  return (qr * QUARTERS + qc) * PER_Q + v * SIDE + u;
+}
 
 export function neighbours(n: number): number[] {
-  const q = Math.floor(n / PER_Q), i = n % PER_Q, u = i % SIDE, v = Math.floor(i / SIDE);
   const out: number[] = [];
-  for (const [du, dv] of [[1, 0], [-1, 0], [0, 1], [0, -1]])
-    if (u + du >= 0 && u + du < SIDE && v + dv >= 0 && v + dv < SIDE) out.push(q * PER_Q + (v + dv) * SIDE + u + du);
+  for (const [du, dv] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const m = side(n, du, dv);
+    if (m !== null) out.push(m);
+  }
   return out;
 }
 
-/** The districts in `held` reachable from `start` edge to edge. */
+/** The districts in `held` reachable from `start` edge to edge or across a street. */
 export function reach(start: number, held: Set<number>): number[] {
   const seen = new Set<number>();
   const todo = [start];

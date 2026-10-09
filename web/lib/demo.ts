@@ -12,9 +12,10 @@ export const DEMO = process.env.NEXT_PUBLIC_DEMO === "1";
 
 export const DEMO_TIP = 918_500;
 /** The visitor's demo wallet: owns 840000, the two districts that touch it in its quarter
- * (840008, 840009) and 812345, and lives on parcel 7 of 840001. */
+ * (840008, 840009), 838407 across the street from it and 812345, and lives on parcel 7 of
+ * 840001. */
 export const DEMO_ADDRESS = "bc1pdemo7visitor0wa11et0unimap0city0xyz0000000000000000q8d2k";
-const OWNED = [840000, 840008, 840009, 812345];
+const OWNED = [838407, 840000, 840008, 840009, 812345];
 const OWN_PARCEL = { bitmap_number: 840001, tx_index: 7 };
 
 const LANDMARKS = [0, 57043, 210000, 420000, 481824, 630000, 709632, 767430, 840000];
@@ -48,8 +49,8 @@ const fakeAddress = (seed: number) => {
   for (let i = 0; s.length < 62; i++) s += "023456789acdefghjklmnpqrstuvwxyz"[Math.floor(hash(seed * 31 + i) * 32)];
   return s;
 };
-// A park someone else already runs, a quarter before the halving block.
-const SEED_PARK = { id: 1, name: "矿工新村", members: [839940, 839941, 839948, 839949, 839950], owner: "" };
+// A park someone else already runs, a quarter before the halving block and across the street from it.
+const SEED_PARK = { id: 1, name: "矿工新村", members: [838459, 838460, 839940, 839941, 839948, 839949, 839950], owner: "" };
 const ownerOf = (n: number): string | null =>
   OWNED.includes(n)
     ? DEMO_ADDRESS
@@ -131,7 +132,7 @@ function seedExtras(s: State) {
   s.recruits ??= {
     840002: { message: "减半旁边的街区，欢迎新邻居。地块不多，先到先得。", parcels: [3, 8, 12], updated_at: iso(0.5), by: ownerOf(840002)! },
     839998: { message: "CBD 招商：想在手续费最高的那几天留个名字的，来这里。", parcels: [1, 2], updated_at: iso(1.2), by: ownerOf(839998)! },
-    839941: { message: "矿工新村招居民，园区里五个街区一起热闹。", parcels: [4, 9], updated_at: iso(2), by: SEED_PARK.owner },
+    839941: { message: "矿工新村招居民，园区里七个街区隔着马路一起热闹。", parcels: [4, 9], updated_at: iso(2), by: SEED_PARK.owner },
   };
   s.applications ??= {};
   s.polls ??= [
@@ -503,7 +504,7 @@ function route(path: string, opts: Opts): unknown {
       return { ok: true };
     }
     const members = [...new Set(body.members as number[])].sort((x, y) => x - y);
-    if (members.length < 2 || !connected(members) || new Set(members.map((x) => Math.floor(x / 64))).size !== 1) fail(400, "园区要由同一个街坊里连成一片的两个以上街区组成");
+    if (members.length < 2 || !connected(members)) fail(400, "园区要由连成一片的两个以上街区组成，边挨着边或隔着马路相对都算");
     if (members.some((x) => ownerOf(x) !== a)) fail(403, "园区里的街区都要是你的");
     if (liveParks().some((x) => x.id !== id && x.members.some((y) => members.includes(y)))) fail(409, "有的街区已经在别的园区里了");
     const name = String(body.name).trim();
