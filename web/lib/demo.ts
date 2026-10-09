@@ -3,8 +3,9 @@
 // here from deterministic fake data; what the visitor does (posts, likes, follows, profile
 // edits) is kept in localStorage, and "重置演示数据" clears it.
 
-import type { Application, District, FeedItem, Land, LandEvent, Me, Parcel, Park, Poll, Post, Ranking, Recruiting, Role, Tile } from "./api";
+import type { Application, District, FeedItem, Land, LandEvent, Me, Parcel, Park, Poll, Post, Ranking, Recruiting, Role, Showcase, Tile } from "./api";
 import { connected } from "./parks";
+import { PET_KEYS, PETS, type Pet, type PetKey } from "./pets";
 import { prosperity, THRESHOLDS, type ProsperityParts } from "./prosperity";
 import { COLORS, DECOS, visibleStyle, type DistrictStyle } from "./style";
 
@@ -123,6 +124,7 @@ type State = {
   applications?: Record<number, Application[]>;
   polls?: DemoPoll[];
   parks?: { id: number; name: string; owner: string; members: number[] }[];
+  showcase?: Record<number, PetKey[]>; // what the visitor chose to show on their districts
 };
 type DemoPoll = { id: number; n: number; question: string; options: string[]; by: string; created_at: string; closes_at: string; closed_at: string | null; votes: Record<string, number> };
 
@@ -231,6 +233,33 @@ function parts(n: number): ProsperityParts {
     neighbors30: Math.floor(hash(n * 7 + 4) * 150 * h * h) + near,
   };
 }
+// The visitor's wallet holds 2.5 million DOG and one Quantum Cat; nothing shows until they pick
+// it. Some other owners show made-up holdings, and 840001 shows off the top tiers.
+const DEMO_HOLDINGS: Partial<Record<PetKey, number>> = { dog: 2_500_000, cat: 1 };
+function holdingsOf(address: string | null, n: number): Partial<Record<PetKey, number>> {
+  if (!address) return {};
+  if (address === DEMO_ADDRESS) return DEMO_HOLDINGS;
+  if (n === 840001) return { dog: 420_000_000, cat: 12 };
+  if (hash(n + 61) > 0.14) return {};
+  return { dog: Math.floor(10 ** (hash(n + 62) * 9)), ...(hash(n + 63) < 0.5 ? { cat: 1 + Math.floor(hash(n + 64) * 4) } : {}) };
+}
+const petTier = (k: PetKey, amount: number) => PETS[k].tiers.filter((t) => amount >= t).length;
+function petsAt(n: number): Pet[] {
+  const owner = ownerOf(n);
+  const held = holdingsOf(owner, n);
+  const chosen = owner === DEMO_ADDRESS ? load().showcase?.[n] ?? [] : (Object.keys(held) as PetKey[]);
+  return chosen.flatMap((k) => (petTier(k, held[k] ?? 0) ? [{ asset: k, tier: petTier(k, held[k]!), amount: String(held[k]) }] : []));
+}
+function showcaseView(n: number): Showcase {
+  const held = holdingsOf(DEMO_ADDRESS, n);
+  return {
+    chosen: load().showcase?.[n] ?? [],
+    held: PET_KEYS.map((k) => ({ asset: k, tier: petTier(k, held[k] ?? 0), amount: String(held[k] ?? 0) })),
+    checked_at: iso(0.1),
+    error: null,
+    shown: petsAt(n),
+  };
+}
 function tile(n: number): Tile {
   const s = load();
   const o = ownerOf(n);
@@ -241,6 +270,7 @@ function tile(n: number): Tile {
     level: levelAt(n),
     style: styleAt(n),
     park: parkOf(n)?.id ?? null,
+    pets: petsAt(n).map((x) => `${x.asset}:${x.tier}`),
   };
 }
 const ownScore = (n: number) => prosperity(parts(n));
@@ -365,6 +395,7 @@ function district(n: number, me: string | null): District {
     level: levelAt(n),
     park: parkOf(n),
     recruit: recruitAt(n, me),
+    pets: petsAt(n),
   };
 }
 
@@ -488,6 +519,17 @@ function route(path: string, opts: Opts): unknown {
     s.styles![n] = st;
     save();
     return st;
+  }
+  if ((m = p.match(/^\/v1\/districts\/(\d+)\/showcase(\/refresh)?$/))) {
+    const n = +m[1];
+    owns(n);
+    if (method === "PUT") {
+      const assets = (body.assets as PetKey[]) ?? [];
+      if (assets.some((k) => !(k in PETS))) fail(400, "没有这种藏品");
+      (s.showcase ??= {})[n] = assets;
+      save();
+    }
+    return showcaseView(n);
   }
   if ((m = p.match(/^\/v1\/parks(?:\/(\d+))?$/))) {
     const id = m[1] ? +m[1] : null;

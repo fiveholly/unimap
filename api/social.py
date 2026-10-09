@@ -11,10 +11,10 @@ import time
 from datetime import datetime, timezone
 
 import psycopg2.extras
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import bip322, parks, prosperity, recruit, roles, style
+from api import bip322, holdings, parks, prosperity, recruit, roles, style
 from api.auth import current_address, normalize_address, optional_address
 from api.db import cursor
 from api.land import EVENT_SELECT, _event
@@ -116,7 +116,7 @@ def me(address: str = Depends(current_address)):
 
 
 @router.get("/v1/districts/{bitmap_number}")
-def district(bitmap_number: int, viewer: str | None = Depends(optional_address)):
+def district(bitmap_number: int, tasks: BackgroundTasks, viewer: str | None = Depends(optional_address)):
     """District page header: profile, owner, the viewer's role, counts."""
     with cursor(dict_rows=True) as cur:
         profile = _profile(cur, bitmap_number)
@@ -143,6 +143,10 @@ def district(bitmap_number: int, viewer: str | None = Depends(optional_address))
         prosper = prosperity.of(cur, bitmap_number)
         levels, park_of = parks.scored(cur, bitmap_number, bitmap_number)
         notice = recruit.get(cur, bitmap_number, viewer)
+        pets = holdings.shown(cur, bitmap_number, owner)
+        # Pets on show keep their owner's balances fresh; the page doesn't wait for it.
+        if holdings.chosen(cur, bitmap_number, owner) and holdings.stale(cur, owner):
+            tasks.add_task(holdings.refresh, owner)
     profile["style"] = style.visible(profile["style"], levels[bitmap_number])
     return {
         "bitmap_number": bitmap_number,
@@ -157,6 +161,7 @@ def district(bitmap_number: int, viewer: str | None = Depends(optional_address))
         "level": levels[bitmap_number],
         "park": park_of.get(bitmap_number),
         "recruit": notice,
+        "pets": pets,
         "viewer": None
         if viewer is None
         else {

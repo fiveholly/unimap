@@ -143,7 +143,7 @@ CREATE TABLE IF NOT EXISTS social.poll_votes (
 	CONSTRAINT poll_votes_pk PRIMARY KEY (poll_id, address)
 );
 
--- Parks (api/parks.py): connected districts in one quarter held by one address. A member
+-- Parks (api/parks.py): connected districts held by one address. A member
 -- counts only while owner_address still holds it.
 CREATE TABLE IF NOT EXISTS social.parks (
 	id bigserial NOT NULL,
@@ -158,3 +158,26 @@ CREATE TABLE IF NOT EXISTS social.park_members (
 	CONSTRAINT park_members_pk PRIMARY KEY (bitmap_number)
 );
 CREATE INDEX IF NOT EXISTS park_members_park_idx ON social.park_members USING btree (park_id);
+
+-- Holdings on the map (api/holdings.py). What an owner picked to show on a district; a pick
+-- counts only while updated_by still holds the district.
+CREATE TABLE IF NOT EXISTS social.showcase (
+	bitmap_number int4 NOT NULL,
+	assets text[] NOT NULL,
+	updated_by text NOT NULL,
+	updated_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT showcase_pk PRIMARY KEY (bitmap_number)
+);
+-- Cached balances from the holdings provider, refreshed every few hours.
+CREATE TABLE IF NOT EXISTS social.holdings (
+	address text NOT NULL,
+	asset text NOT NULL,
+	amount numeric NOT NULL,
+	CONSTRAINT holdings_pk PRIMARY KEY (address, asset)
+);
+CREATE TABLE IF NOT EXISTS social.holdings_checked (
+	address text NOT NULL,
+	checked_at timestamptz NOT NULL,
+	error text NULL, -- the provider's last failure; the cache above is then older
+	CONSTRAINT holdings_checked_pk PRIMARY KEY (address)
+);

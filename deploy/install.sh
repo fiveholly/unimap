@@ -98,6 +98,8 @@ as_unimap "$OPT/src/scripts/setup_opi.sh" "$OPT/opi"
 
 [ -x "$OPT/venv/bin/python3" ] || as_unimap python3 -m venv "$OPT/venv"
 as_unimap "$OPT/venv/bin/pip" install -q -r "$OPT/src/requirements.txt"
+# Collection lists for pets on the map (api/holdings.py). Not fatal: a missing list only hides that pet.
+as_unimap "$OPT/venv/bin/python3" "$OPT/src/scripts/fetch_collections.py" || echo "warning: some collection lists failed to download"
 [ -x "$OPT/opi-venv/bin/python3" ] || as_unimap python3 -m venv "$OPT/opi-venv"
 as_unimap "$OPT/opi-venv/bin/pip" install -q -r "$OPT/opi/modules/requirements.txt"
 

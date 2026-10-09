@@ -1,6 +1,7 @@
 // Typed client for the unimap API (api/ in this repo).
 
 import { DEMO, demoApi } from "./demo";
+import type { Pet, PetKey } from "./pets";
 import type { Prosperity } from "./prosperity";
 import type { DistrictStyle } from "./style";
 
@@ -70,6 +71,7 @@ export type Tile = {
   level?: number | null; // prosperity 1-5, see lib/prosperity.ts
   style?: DistrictStyle | null;
   park?: number | null;
+  pets?: string[]; // "dog:2": what the owner shows of their wallet, see lib/pets.ts
 };
 
 export type LandEvent = {
@@ -117,6 +119,7 @@ export type District = {
   level?: number; // as drawn on the map: a park member takes the park's level
   park?: Park | null;
   recruit?: Recruit | null;
+  pets?: Pet[];
 };
 
 export type Park = { id: number; name: string; owner: string; members: number[]; score: number; level: number };
@@ -156,3 +159,6 @@ export type Me = {
 };
 
 export type FeedItem = { type: "post"; time: number; post: Post } | { type: "event"; time: number; event: LandEvent };
+
+/** The owner's view of what their wallet holds and what the district shows. */
+export type Showcase = { chosen: PetKey[]; held: Pet[]; checked_at: string | null; error: string | null; shown: Pet[] };

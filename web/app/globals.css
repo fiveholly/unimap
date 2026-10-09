@@ -1574,3 +1574,41 @@ button.sm,
 .post-page > article {
   align-self: stretch;
 }
+
+/* ---------- pets (藏品) ---------- */
+.pets-card ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pets-card li,
+.pet-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.pets-card li .grow,
+.pet-row .grow {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.pet-picture {
+  flex: none;
+  background: var(--surface-2);
+  border-radius: 10px;
+}
+.pet-row.off .pet-picture {
+  opacity: 0.35;
+}
+.pet-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
