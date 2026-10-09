@@ -38,3 +38,23 @@ CREATE TABLE IF NOT EXISTS public.block_meta (
 	tx_count int4 NOT NULL,
 	CONSTRAINT block_meta_pk PRIMARY KEY (block_height)
 );
+
+-- Current location of every district and parcel inscription (parcel_index/owners.py).
+CREATE TABLE IF NOT EXISTS public.inscription_owners (
+	inscription_id text NOT NULL,
+	created_height int4 NOT NULL, -- reveal height of the inscription
+	outpoint text NOT NULL, -- "txid:vout" holding the inscription now
+	address text NULL, -- NULL when the output script has no address form
+	output_value int8 NULL,
+	updated_height int4 NOT NULL,
+	CONSTRAINT inscription_owners_pk PRIMARY KEY (inscription_id)
+);
+CREATE INDEX IF NOT EXISTS inscription_owners_outpoint_idx ON public.inscription_owners USING btree (outpoint);
+CREATE INDEX IF NOT EXISTS inscription_owners_address_idx ON public.inscription_owners USING btree (address);
+CREATE INDEX IF NOT EXISTS inscription_owners_created_height_idx ON public.inscription_owners USING btree (created_height);
+
+CREATE TABLE IF NOT EXISTS public.owner_block_hashes (
+	block_height int4 NOT NULL,
+	block_hash text NOT NULL,
+	CONSTRAINT owner_block_hashes_pk PRIMARY KEY (block_height)
+);
