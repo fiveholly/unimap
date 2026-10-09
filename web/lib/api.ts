@@ -1,5 +1,7 @@
 // Typed client for the unimap API (api/ in this repo).
 
+import { DEMO, demoApi } from "./demo";
+
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 
 export class ApiError extends Error {
@@ -11,6 +13,7 @@ export class ApiError extends Error {
 }
 
 export async function api<T>(path: string, opts: { method?: string; body?: unknown; token?: string | null } = {}): Promise<T> {
+  if (DEMO) return demoApi<T>(path, opts);
   const headers: Record<string, string> = {};
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
   if (opts.token) headers["Authorization"] = `Bearer ${opts.token}`;

@@ -1225,3 +1225,19 @@ kbd {
     transition: none !important;
   }
 }
+
+.demo-banner {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 14px;
+  padding: 8px 16px;
+  font-size: 13px;
+  color: var(--fg-2);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  text-align: center;
+}
+.demo-banner .link-btn {
+  color: var(--accent);
+}

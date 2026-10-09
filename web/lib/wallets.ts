@@ -3,7 +3,9 @@
 // Each wallet gives the address that holds the user's inscriptions (the
 // ordinals / taproot address) and signs with BIP-322 where it can.
 
-export type WalletId = "unisat" | "xverse" | "okx" | "manual";
+import { DEMO, DEMO_ADDRESS } from "./demo";
+
+export type WalletId = "unisat" | "xverse" | "okx" | "manual" | "demo";
 
 export type Wallet = {
   id: WalletId;
@@ -82,7 +84,16 @@ const manual: Wallet = {
   },
 };
 
-export const WALLETS: Wallet[] = [unisat, xverse, okx, manual];
+// Demo mode only: a pretend wallet that holds a couple of districts and a parcel.
+const demo: Wallet = {
+  id: "demo",
+  name: "演示钱包",
+  available: () => DEMO,
+  connect: async () => DEMO_ADDRESS,
+  sign: async () => "demo-" + Math.random().toString(36).slice(2),
+};
+
+export const WALLETS: Wallet[] = DEMO ? [demo, unisat, xverse, okx, manual] : [unisat, xverse, okx, manual];
 
 export function walletById(id: WalletId | null | undefined): Wallet | undefined {
   return WALLETS.find((x) => x.id === id);

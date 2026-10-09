@@ -3,6 +3,7 @@ import { GeistMono } from "geist/font/mono";
 import { GeistSans } from "geist/font/sans";
 
 import "./globals.css";
+import { DemoBanner } from "@/components/DemoBanner";
 import { Header } from "@/components/Header";
 import { SessionProvider } from "@/components/Session";
 
@@ -17,6 +18,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <SessionProvider>
           <Header />
+          <DemoBanner />
           <main>{children}</main>
           <footer className="footer">
             <span className="mono">unimap</span>
