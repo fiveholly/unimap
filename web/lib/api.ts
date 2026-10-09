@@ -5,6 +5,8 @@ import type { Prosperity } from "./prosperity";
 import type { DistrictStyle } from "./style";
 
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
+// The server (share images) can reach the API without going out through the public origin.
+const BASE = typeof window === "undefined" ? (process.env.API_INTERNAL_URL || API_URL).replace(/\/$/, "") : API_URL;
 
 export class ApiError extends Error {
   status: number;
@@ -19,7 +21,7 @@ export async function api<T>(path: string, opts: { method?: string; body?: unkno
   const headers: Record<string, string> = {};
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
   if (opts.token) headers["Authorization"] = `Bearer ${opts.token}`;
-  const res = await fetch(API_URL + path, {
+  const res = await fetch(BASE + path, {
     method: opts.method || "GET",
     headers,
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),

@@ -4,9 +4,11 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { short } from "@/components/Session";
+import { ShareMenu } from "@/components/ShareMenu";
 import { TileThumb } from "@/components/TileThumb";
 import { api, type Application, type District, type Land } from "@/lib/api";
 import { connected, reach } from "@/lib/parks";
+import { parkText, recruitText } from "@/lib/share";
 import { COLORS, DECOS, MAX_DECOS, type DistrictStyle } from "@/lib/style";
 import type { Zone } from "@/lib/zones";
 
@@ -230,6 +232,12 @@ function RecruitForm({
         </button>
       </div>
       {r && (
+        <div className="share-nudge">
+          <span>招募进行中。发到 X，让更多人看到。</span>
+          <ShareMenu path={`/district/${n}`} text={recruitText(n, r.message)} label="分享招募" className="ghost sm" />
+        </div>
+      )}
+      {r && (
         <div>
           <h3 className="section-title">申请（{apps?.length ?? r.applications}）</h3>
           {apps?.length === 0 && <p className="muted small">还没有人申请。</p>}
@@ -257,6 +265,7 @@ function ParkForm({ n, district, held, save }: { n: number; district: District; 
   const [name, setName] = useState(park?.name ?? `${n} 园区`);
   const [members, setMembers] = useState<number[]>(park?.members ?? near);
   const ok = name.trim() && members.length >= 2 && members.includes(n) && connected(members);
+  const [created, setCreated] = useState(false);
   const toggle = (m: number) => setMembers(members.includes(m) ? members.filter((x) => x !== m) : [...members, m].sort((a, b) => a - b));
   if (!park && near.length < 2)
     return <p className="muted">你在这附近只有这一个街区。持有边挨着边或隔着马路相对的街区后，可以把它们连成一个园区，分数合并计算、一起升级。</p>;
@@ -278,13 +287,27 @@ function ParkForm({ n, district, held, save }: { n: number; district: District; 
         ))}
       </div>
       {!connected(members) && <p className="error small">园区里的街区要连成一片。</p>}
+      {created && park && (
+        <div className="share-nudge">
+          <span>园区「{park.name}」建好了，现在是 {park.level} 级。晒一下？</span>
+          <ShareMenu path={`/district/${n}`} text={parkText(park.name, park.members.length, park.level, true)} label="分享园区" className="primary sm" />
+        </div>
+      )}
       <div className="row end">
         {park && (
           <button type="button" className="ghost" onClick={() => confirm(`解散「${park.name}」？`) && save(`/v1/parks/${park.id}`, "DELETE")}>
             解散园区
           </button>
         )}
-        <button type="button" className="primary" disabled={!ok} onClick={() => save(park ? `/v1/parks/${park.id}` : "/v1/parks", park ? "PUT" : "POST", { name, members })}>
+        <button
+          type="button"
+          className="primary"
+          disabled={!ok}
+          onClick={async () => {
+            const isNew = !park;
+            if ((await save(park ? `/v1/parks/${park.id}` : "/v1/parks", park ? "PUT" : "POST", { name, members })) && isNew) setCreated(true);
+          }}
+        >
           {park ? "保存园区" : "建立园区"}
         </button>
       </div>

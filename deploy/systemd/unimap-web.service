@@ -12,6 +12,8 @@ NoNewPrivileges=true
 PrivateTmp=true
 WorkingDirectory=/opt/unimap/src/web
 Environment=NODE_ENV=production
+# Share card images fetch from the API on the server; skip the round trip through Caddy.
+Environment=API_INTERNAL_URL=http://127.0.0.1:8000
 ExecStart=/opt/unimap/node/bin/node node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port 3000
 
 [Install]

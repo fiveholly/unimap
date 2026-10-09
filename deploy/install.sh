@@ -124,7 +124,7 @@ chmod 640 /etc/unimap/*.env /etc/unimap/bitcoin.conf
 sed "s|@DOMAIN@|$DOMAIN|" "$OPT/src/deploy/Caddyfile" >/etc/caddy/Caddyfile
 
 # ---- web app ------------------------------------------------------------------
-(cd "$OPT/src/web" && as_unimap npm ci --no-audit --no-fund && as_unimap env NEXT_PUBLIC_API_URL="https://$DOMAIN" npm run build)
+(cd "$OPT/src/web" && as_unimap npm ci --no-audit --no-fund && as_unimap env NEXT_PUBLIC_API_URL="https://$DOMAIN" NEXT_PUBLIC_SITE_URL="https://$DOMAIN" npm run build)
 
 # ---- services -----------------------------------------------------------------
 install -m 644 "$OPT/src/deploy/systemd/"*.service /etc/systemd/system/

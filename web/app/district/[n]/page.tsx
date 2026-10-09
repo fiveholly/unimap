@@ -13,10 +13,12 @@ import { Polls } from "@/components/Polls";
 import { PostCard, RoleBadge, type PostActions } from "@/components/PostCard";
 import { ProsperityCard } from "@/components/ProsperityCard";
 import { RecruitCard } from "@/components/Recruit";
+import { ShareMenu } from "@/components/ShareMenu";
 import { short, useSession } from "@/components/Session";
 import { TileThumb } from "@/components/TileThumb";
 import { api, ApiError, type District, type Land, type LandEvent, type Me, type Post, type Tile } from "@/lib/api";
 import { btc, epochName } from "@/lib/format";
+import { districtText, parkText } from "@/lib/share";
 import { LANDMARKS, ZONES, zoneOf } from "@/lib/zones";
 
 export default function DistrictPage() {
@@ -47,7 +49,6 @@ function DistrictView() {
   const [selected, setSelected] = useState<number | null>(search.get("parcel") ? Number(search.get("parcel")) : null);
   const [tab, setTab] = useState<Tab>("posts");
   const [editing, setEditing] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Keep only the latest answer: a request sent before sign-in can come back after the one
@@ -121,13 +122,6 @@ function DistrictView() {
     onMute: (a) => confirm(`在 ${n}.bitmap 禁言 ${short(a)}？`) && act(`/v1/districts/${n}/mutes/${a}`, "PUT"),
   };
   const parcelOwner = (i: number) => land.parcels.find((p) => p.tx_index === i)?.owner?.address;
-  const share = async () => {
-    try {
-      await navigator.clipboard.writeText(window.location.href);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1600);
-    } catch {}
-  };
 
   return (
     <div className="page district">
@@ -229,6 +223,12 @@ function DistrictView() {
                     </Link>
                   ))}
               </span>
+              <ShareMenu
+                path={`/district/${n}`}
+                text={parkText(district.park.name, district.park.members.length, district.park.level, viewer?.address === district.park.owner)}
+                label="晒园区"
+                className="ghost sm"
+              />
             </div>
           )}
           {district.prosperity && <ProsperityCard p={district.prosperity} zone={zone} n={n} park={district.park ?? null} look={district.profile.style ?? null} />}
@@ -255,14 +255,7 @@ function DistrictView() {
                 {district.checked_in_today ? "今天已签到" : "签到"}
               </button>
             )}
-            <button type="button" className="ghost lg" onClick={share}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7" />
-                <path d="m16 6-4-4-4 4" />
-                <path d="M12 2v13" />
-              </svg>
-              {copied ? "链接已复制" : "分享"}
-            </button>
+            <ShareMenu path={`/district/${n}`} text={districtText(district, isOwner)} />
             {isOwner && (
               <button type="button" className="ghost lg" onClick={() => setEditing(!editing)} aria-expanded={editing}>
                 管理街区

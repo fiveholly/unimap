@@ -3,6 +3,9 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 
 import { api } from "@/lib/api";
+import { short } from "@/lib/format";
+
+export { short };
 import { setManualPrompt, walletById, type WalletId } from "@/lib/wallets";
 
 type Stored = { address: string; token: string; wallet: WalletId };
@@ -169,7 +172,3 @@ function ManualDialog({ pending, close }: { pending: Pending; close: () => void 
   );
 }
 
-export function short(address: string | null | undefined): string {
-  if (!address) return "—";
-  return address.length > 16 ? `${address.slice(0, 8)}…${address.slice(-6)}` : address;
-}
