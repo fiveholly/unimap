@@ -106,7 +106,7 @@ export type District = {
   followers: number;
   post_count: number;
   viewer: { address: string; role: Role; parcel: number | null; muted: boolean; following: boolean } | null;
-  // Not served by the real API yet; the page hides these when they're missing.
+  // Added with prosperity; the page hides them if an older API leaves them out.
   prosperity?: Prosperity;
   checked_in_today?: boolean;
 };

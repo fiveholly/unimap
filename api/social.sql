@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS social.posts (
 CREATE INDEX IF NOT EXISTS posts_bitmap_idx ON social.posts USING btree (bitmap_number, id) WHERE reply_to IS NULL;
 CREATE INDEX IF NOT EXISTS posts_reply_to_idx ON social.posts USING btree (reply_to, id);
 CREATE INDEX IF NOT EXISTS posts_author_idx ON social.posts USING btree (author_address, created_at);
+CREATE INDEX IF NOT EXISTS posts_recent_idx ON social.posts USING btree (bitmap_number, created_at); -- prosperity
 CREATE UNIQUE INDEX IF NOT EXISTS posts_signature_idx ON social.posts USING btree (signature);
 
 CREATE TABLE IF NOT EXISTS social.likes (
@@ -67,6 +68,7 @@ CREATE TABLE IF NOT EXISTS social.follows (
 	created_at timestamptz NOT NULL DEFAULT now(),
 	CONSTRAINT follows_pk PRIMARY KEY (address, bitmap_number)
 );
+CREATE INDEX IF NOT EXISTS follows_bitmap_idx ON social.follows USING btree (bitmap_number);
 
 CREATE TABLE IF NOT EXISTS social.mutes (
 	bitmap_number int4 NOT NULL,
@@ -88,3 +90,12 @@ CREATE TABLE IF NOT EXISTS social.moderation (
 	CONSTRAINT moderation_pk PRIMARY KEY (id)
 );
 CREATE INDEX IF NOT EXISTS moderation_bitmap_idx ON social.moderation USING btree (bitmap_number, id);
+
+-- One row per signed-in visitor per district per day (UTC); counts towards prosperity.
+CREATE TABLE IF NOT EXISTS social.checkins (
+	address text NOT NULL,
+	bitmap_number int4 NOT NULL,
+	day date NOT NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT checkins_pk PRIMARY KEY (bitmap_number, day, address)
+);

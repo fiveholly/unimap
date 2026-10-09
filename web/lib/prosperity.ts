@@ -2,7 +2,8 @@
 //
 // The zone (mountain, residential, CBD, ...) comes from the chain and never changes. Prosperity
 // grows with what people do there and falls back when they stop, because everything but
-// residents and followers counts only the last 30 days.
+// residents and followers counts only the last 30 days. api/prosperity.py computes the same
+// score on the server; keep the two in step.
 
 export type ProsperityParts = {
   residents: number; // claimed parcels
