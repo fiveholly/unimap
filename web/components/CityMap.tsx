@@ -6,8 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { short } from "./Session";
 import { api, type Land, type Tile } from "@/lib/api";
-import { epochName } from "@/lib/format";
-import { CX, CY, GROUND, TILE_H, TILE_W, tileSprite } from "@/lib/iso";
+import { CX, CY, GROUND, rng, TILE_H, TILE_W, tileSprite } from "@/lib/iso";
 import { layout } from "@/lib/mondrian";
 import { LANDMARKS, ZONE_ORDER, ZONES, zoneOf, type Zone } from "@/lib/zones";
 
@@ -17,12 +16,14 @@ const COLS = 48;
 const CHUNK = 1000; // blocks per /v1/land request (the API's maximum)
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 4;
-// Three levels of detail. Zoomed out, blocks merge into areas of AREA_COLS x AREA_ROWS,
-// each striped by the share of every zone in it; in the middle each block is a building tile; zoomed right in,
-// the buildings fade into the block's parcels (one square per transaction, as on the district page).
+// Three levels of detail. Zoomed out, the city is drawn as big tiles AREA times a block's
+// size, each holding about AREA² blocks and shown as a 3 x 3 cluster of buildings in the mix
+// of zones those blocks are in. In the middle each block is a building tile. Zoomed right in,
+// the buildings fade into the block's parcels (one plot per transaction, as on the district page).
 const AREA_SCALE = 0.3;
-const AREA_COLS = 8;
-const AREA_ROWS = 16;
+const AREA = 8;
+const SLOTS = 3;
+const COMPACT_SCALE = 0.11; // below this an area tile is a single building
 const PARCEL_FADE = [1.9, 2.5] as const;
 const PARCEL_FETCH_LIMIT = 80; // never fetch parcels for more tiles than this at once
 const PLAN = 384; // px of a cached parcel plan
@@ -36,23 +37,40 @@ const LEVELS: [Level, string][] = [
 const levelOf = (s: number): Level => (s < AREA_SCALE ? "area" : s < PARCEL_FADE[0] ? "block" : "parcel");
 /** Blocks fill the view a few columns across, so every building is legible. */
 const defaultScale = (w: number) => Math.min(1.6, Math.max(0.45, w / ((w < 600 ? 2.6 : 5.5) * 128)));
-const LEVEL_SCALE: Record<Level, (w: number) => number> = { area: () => 0.06, block: defaultScale, parcel: () => 2.8 };
+const LEVEL_SCALE: Record<Level, (w: number) => number> = { area: () => 0.16, block: defaultScale, parcel: () => 2.8 };
 
-/** A block's parcels drawn flat on a unit square, ready to be skewed onto its ground. */
-function parcelPlan(txValues: number[], claimed: Set<number>, zone: Zone | null): HTMLCanvasElement {
+const shade = (hex: string, f: number) => {
+  const v = parseInt(hex.slice(1, 7), 16);
+  const ch = (x: number) => Math.round(f < 0 ? x * (1 + f) : x + (255 - x) * f);
+  return `rgb(${ch(v >> 16)},${ch((v >> 8) & 255)},${ch(v & 255)})`;
+};
+
+/** A block's land: plots marked out on its ground (a unit square, skewed onto the tile
+ * when drawn), and the claimed plots as boxes [u0, v0, u1, v1, height] standing on them. */
+type Plan = { ground: HTMLCanvasElement; claimed: [number, number, number, number, number][]; colors: [string, string, string] };
+
+function parcelPlan(txValues: number[], claimed: Set<number>, zone: Zone | null): Plan {
   const { squares, width, height } = layout(txValues);
   const extent = Math.max(width, height, 1);
   const k = PLAN / extent, dx = (extent - width) / 2;
-  const gap = Math.max(0.6, Math.min(0.25, extent / 400 + 0.08) * k) / 2;
+  const gap = Math.max(1, Math.min(0.25, extent / 400 + 0.08) * k) / 2;
+  const g = GROUND[zone ?? "unknown"].t;
   const cv = document.createElement("canvas");
   cv.width = cv.height = PLAN;
   const ctx = cv.getContext("2d")!;
-  const base = zone ? ZONES[zone].color : "#8C877C";
+  ctx.fillStyle = shade(g, -0.3); // the paths between plots
+  ctx.fillRect(0, 0, PLAN, PLAN);
+  const boxes: Plan["claimed"] = [];
   squares.forEach((q, i) => {
-    ctx.fillStyle = claimed.has(i) ? base : base + "4D";
-    ctx.fillRect((dx + q.x) * k + gap, q.y * k + gap, q.r * k - 2 * gap, q.r * k - 2 * gap);
+    const x = (dx + q.x) * k + gap, y = q.y * k + gap, r = q.r * k - 2 * gap;
+    ctx.fillStyle = shade(g, i % 3 === 0 ? 0.06 : i % 3 === 1 ? 0 : -0.06);
+    ctx.fillRect(x, y, r, r);
+    if (claimed.has(i)) boxes.push([x / PLAN, y / PLAN, (x + r) / PLAN, (y + r) / PLAN, Math.min(16, 3 + (q.r / extent) * 40)]);
   });
-  return cv;
+  // Back to front, so nearer boxes cover farther ones.
+  boxes.sort((p, q) => p[0] + p[1] - (q[0] + q[1]));
+  const base = zone && zone !== "residential" && zone !== "villa" ? ZONES[zone].color : "#E9DFC9";
+  return { ground: cv, claimed: boxes, colors: [shade(base, 0.1), shade(base, -0.3), shade(base, -0.15)] };
 }
 
 type View = { x: number; y: number; s: number }; // world point at the canvas centre, and zoom
@@ -86,8 +104,8 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
   const view = useRef<View>({ x: centre(focus)[0], y: centre(focus)[1] - 30, s: 0 });
   const tiles = useRef(new Map<number, Tile>());
   const chunks = useRef(new Set<number>());
-  const areas = useRef(new Map<number, [Zone, number][]>()); // zone shares of each fully loaded area
-  const plans = useRef(new Map<number, HTMLCanvasElement | "loading" | "failed">());
+  const areas = useRef(new Map<number, (Zone | null)[]>()); // the buildings of each fully loaded area tile
+  const plans = useRef(new Map<number, Plan | "loading" | "failed">());
   const [level, setLevel] = useState<Level>("block");
   const hover = useRef<number | null>(null);
   const frame = useRef(0);
@@ -126,71 +144,85 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
     const toScreen = (wx: number, wy: number): [number, number] => [(wx - vx) * s + w / 2, (wy - vy) * s + h / 2];
 
     if (lvl === "area") {
-      // One rectangle per area, in the colour of the zone most of its blocks are in.
-      const gap = Math.max(1, 3 * s * 4);
-      for (let ar = Math.floor(rMin / AREA_ROWS); ar <= Math.floor(rMax / AREA_ROWS); ar++) {
-        for (let ac = Math.floor(cMin / AREA_COLS); ac <= Math.floor(cMax / AREA_COLS); ac++) {
-          const first = ar * AREA_ROWS * COLS + ac * AREA_COLS;
-          if (first > tip) continue;
-          const [ax, ay] = toScreen(ac * AREA_COLS * 128 + 32, ar * AREA_ROWS * 32 + CY - 16);
-          const aw = AREA_COLS * 128 * s, ah = AREA_ROWS * 32 * s;
-          const key = ar * COLS + ac;
-          let shares = areas.current.get(key);
-          if (!shares) {
+      // Area tiles sit on their own staggered grid, AREA times larger than the blocks': a diamond
+      // AW wide and 2 * AH tall, rows AH apart.
+      const AW = AREA * 128, AH = AREA * 32, oy = AH + CY - 32;
+      const aMin = Math.max(0, Math.floor((y0 - oy) / AH) - 1), aMax = Math.ceil((y1 - oy) / AH) + 1;
+      const aCols = Math.ceil(COLS / AREA) + 1;
+      for (let ar = aMin; ar <= aMax; ar++) {
+        for (let ac = 0; ac < aCols; ac++) {
+          const cx = ac * AW + (ar & 1) * (AW / 2) + AW / 2, cy = ar * AH + oy;
+          const [scx, scy] = toScreen(cx, cy);
+          if (scx + (AW / 2) * s < 0 || scx - (AW / 2) * s > w || scy - AH * s > h || scy + AH * s < 0) continue;
+          const key = ar * aCols + ac;
+          let slots = areas.current.get(key);
+          if (!slots) {
+            // The blocks whose ground centre falls inside this tile's diamond.
             const count = new Map<Zone, number>();
-            let missing = false, total = 0;
-            for (let r = ar * AREA_ROWS; r < (ar + 1) * AREA_ROWS; r++) {
-              for (let c = ac * AREA_COLS; c < (ac + 1) * AREA_COLS; c++) {
+            let missing = false, total = 0, landmark = false;
+            for (let r = Math.max(0, ar * AREA - 1); r <= Math.min(lastRow, ar * AREA + 2 * AREA); r++) {
+              for (let c = Math.max(0, Math.floor((cx - AW / 2) / 128) - 1); c <= Math.min(COLS - 1, Math.ceil((cx + AW / 2) / 128)); c++) {
                 const n = r * COLS + c;
                 if (n > tip) continue;
+                const [bx, by] = centre(n);
+                if (Math.abs(bx - cx) / (AW / 2) + Math.abs(by - cy) / AH > 1) continue;
+                total++;
                 const t = tiles.current.get(n);
-                const z = zoneOf(t?.zone);
                 if (!t) {
                   missing = true;
                   want.add(Math.floor(n / CHUNK));
-                } else if (z && z !== "landmark") {
-                  count.set(z, (count.get(z) ?? 0) + 1);
-                  total++;
+                  continue;
                 }
+                const z = zoneOf(t.zone);
+                if (z === "landmark") landmark = true;
+                else if (z) count.set(z, (count.get(z) ?? 0) + 1);
               }
             }
-            shares = ZONE_ORDER.filter((z) => count.has(z)).map((z): [Zone, number] => [z, count.get(z)! / total]);
-            if (!missing) areas.current.set(key, shares);
+            slots = [];
+            if (total > 0) {
+              // Share out the nine plots by largest remainder, then shuffle them into place.
+              const known = [...count.values()].reduce((x, y) => x + y, 0);
+              const n9 = Math.max(1, Math.round((SLOTS * SLOTS * total) / (AREA * AREA)));
+              const quota = ZONE_ORDER.filter((z) => count.has(z)).map((z) => ({ z, q: (count.get(z)! / known) * n9 }));
+              for (const { z, q } of quota) for (let i = 0; i < Math.floor(q); i++) slots.push(z);
+              quota.sort((p, q) => (q.q % 1) - (p.q % 1));
+              for (let i = 0; slots.length < n9 && i < quota.length; i++) slots.push(quota[i].z);
+              while (slots.length < n9) slots.push(null);
+              const rand = rng(key);
+              for (let i = slots.length - 1; i > 0; i--) {
+                const j = Math.floor(rand() * (i + 1));
+                [slots[i], slots[j]] = [slots[j], slots[i]];
+              }
+              if (landmark) slots[Math.min(4, slots.length - 1)] = "landmark";
+            }
+            if (!missing) areas.current.set(key, slots);
           }
-          ctx.save();
-          ctx.beginPath();
-          ctx.roundRect(ax + gap / 2, ay + gap / 2, aw - gap, ah - gap, Math.min(6, aw / 12));
-          ctx.fillStyle = "#2A2823";
-          ctx.fill();
-          ctx.clip();
-          let sx = ax + gap / 2;
-          for (const [z, share] of shares) {
-            ctx.fillStyle = ZONES[z].color;
-            ctx.fillRect(sx, ay, share * (aw - gap) + 0.5, ah);
-            sx += share * (aw - gap);
+          if (!slots.length) continue;
+          if (s < COMPACT_SCALE) {
+            // Too small for nine: one building, of the zone with the most plots.
+            const tally = new Map<Zone | null, number>();
+            for (const z of slots) tally.set(z, (tally.get(z) ?? 0) + 1);
+            const zone = slots.includes("landmark") ? "landmark" : [...tally].sort((p, q) => q[1] - p[1])[0][0];
+            const k = AREA, res = s * k * dpr > 1.2 ? 2 : s * k * dpr > 0.6 ? 1 : 0.5;
+            ctx.drawImage(tileSprite(zone, key, res), scx - CX * k * s, scy - CY * k * s, TILE_W * k * s, TILE_H * k * s);
+            continue;
           }
-          ctx.restore();
+          // Nine smaller tiles inside the diamond, back to front; plots past the map's edge stay empty.
+          const k = AREA / SLOTS, res = s * k * dpr > 1.2 ? 2 : s * k * dpr > 0.6 ? 1 : 0.5;
+          for (const idx of [0, 1, 3, 2, 4, 6, 5, 7, 8]) {
+            const i = idx % SLOTS, j = Math.floor(idx / SLOTS);
+            const zone = idx < slots.length ? slots[idx] : null;
+            if (!zone) continue;
+            const px = cx + ((i - j) * AW) / 2 / SLOTS, py = cy - AH + ((i + j + 1) * AH) / SLOTS;
+            const [qx, qy] = toScreen(px, py);
+            ctx.drawImage(tileSprite(zone, key * 9 + idx, res), qx - CX * k * s, qy - CY * k * s, TILE_W * k * s, TILE_H * k * s);
+          }
         }
-      }
-      // Halvings split the city into epochs.
-      ctx.font = `500 12px ${getComputedStyle(cv).fontFamily}`;
-      ctx.textAlign = "left";
-      ctx.textBaseline = "bottom";
-      for (let e = 0; e * 210000 <= tip; e++) {
-        const r = Math.floor((e * 210000) / COLS);
-        const [, ly] = toScreen(0, r * 32 + CY - 16);
-        if (ly < -20 || ly > h + 20) continue;
-        if (e > 0) {
-          ctx.fillStyle = "rgba(237,234,227,0.5)";
-          ctx.fillRect(0, ly - 1, w, 1);
-        }
-        ctx.fillStyle = "rgba(237,234,227,0.85)";
-        ctx.fillText(epochName(e * 210000), 12, ly - 4);
       }
       for (const [n, name] of Object.entries(LANDMARKS)) {
         if (+n > tip) continue;
         const [lx, ly] = toScreen(...centre(+n));
-        if (lx > -60 && lx < w + 60 && ly > -20 && ly < h + 20) labels.push([lx, ly - 12, name]);
+        if (lx > -60 && lx < w + 60 && ly > -20 && ly < h + 20) labels.push([lx, ly - 40 * AREA * s, name]);
       }
     } else {
       const fade = Math.min(1, Math.max(0, (s - PARCEL_FADE[0]) / (PARCEL_FADE[1] - PARCEL_FADE[0])));
@@ -208,27 +240,33 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
           if (!t) want.add(Math.floor(n / CHUNK));
           const zone = zoneOf(t?.zone);
           const plan = fade > 0 ? plans.current.get(n) : undefined;
-          if (plan instanceof HTMLCanvasElement) {
-            // A bare slab with the parcels on top: map the unit square onto the ground diamond.
+          if (plan && typeof plan === "object") {
+            // A bare slab with the plots on top: map the unit square onto the ground diamond.
             const g = GROUND[zone ?? "unknown"];
-            const top = (dy: number) => {
+            const P = (u: number, v: number): [number, number] => [sx + (64 + (u - v) * 60) * s, sy + (CY - 30 + (u + v) * 30) * s];
+            const poly = (pts: [number, number][], fill: string) => {
+              ctx.fillStyle = fill;
               ctx.beginPath();
-              ctx.moveTo(sx + 64 * s, sy + (CY - 30 + dy) * s);
-              ctx.lineTo(sx + 124 * s, sy + (CY + dy) * s);
-              ctx.lineTo(sx + 64 * s, sy + (CY + 30 + dy) * s);
-              ctx.lineTo(sx + 4 * s, sy + (CY + dy) * s);
+              ctx.moveTo(...pts[0]);
+              for (const q of pts.slice(1)) ctx.lineTo(...q);
               ctx.closePath();
+              ctx.fill();
             };
-            ctx.fillStyle = g.r;
-            top(6);
-            ctx.fill();
-            ctx.fillStyle = "#151411";
-            top(0);
-            ctx.fill();
+            const down = ([x, y]: [number, number], d: number): [number, number] => [x, y + d * s];
+            poly([P(0, 1), P(1, 1), down(P(1, 1), 8), down(P(0, 1), 8)], g.l);
+            poly([P(1, 1), P(1, 0), down(P(1, 0), 8), down(P(1, 1), 8)], g.r);
             ctx.save();
-            ctx.setTransform(dpr * 60 * s / PLAN, dpr * 30 * s / PLAN, -dpr * 60 * s / PLAN, dpr * 30 * s / PLAN, dpr * (sx + 64 * s), dpr * (sy + (CY - 30) * s));
-            ctx.drawImage(plan, 0, 0);
+            ctx.setTransform((dpr * 60 * s) / PLAN, (dpr * 30 * s) / PLAN, (-dpr * 60 * s) / PLAN, (dpr * 30 * s) / PLAN, dpr * (sx + 64 * s), dpr * (sy + (CY - 30) * s));
+            ctx.drawImage(plan.ground, 0, 0);
             ctx.restore();
+            const [top, left, right] = plan.colors;
+            for (const [u0, v0, u1, v1, hh] of plan.claimed) {
+              const up = ([x, y]: [number, number]): [number, number] => [x, y - hh * s];
+              const N = P(u0, v0), E = P(u1, v0), S = P(u1, v1), W = P(u0, v1);
+              poly([W, S, up(S), up(W)], left);
+              poly([S, E, up(E), up(S)], right);
+              poly([up(N), up(E), up(S), up(W)], top);
+            }
             if (fade < 1) {
               ctx.globalAlpha = 1 - fade;
               ctx.drawImage(tileSprite(zone, n, res), sx, sy, TILE_W * s, TILE_H * s);
@@ -524,7 +562,7 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
         ))}
         <span className="grow" />
         <span className="muted">
-          {level === "area" ? "每格是 128 个区块，色条是各地段的占比。点击放大" : level === "parcel" ? "每一小格是一笔交易，也就是一个地块；亮色为已认领" : "拖动平移，滚轮缩放，点击街区查看；放大到最近可看到地块"}
+          {level === "area" ? "每一片约 64 个区块，楼的种类按其中各地段的多少来摆。点击放大" : level === "parcel" ? "每一块地是区块里的一笔交易；立起来的是已认领的地块" : "拖动平移，滚轮缩放，点击街区查看；放大到最近可看到地块"}
         </span>
       </div>
     </div>
