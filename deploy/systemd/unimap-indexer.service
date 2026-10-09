@@ -1,0 +1,19 @@
+[Unit]
+Description=unimap: parcels (on top of OPI bitmap_index)
+After=unimap-bitmap-index.service postgresql.service
+Wants=unimap-bitmap-index.service
+
+[Service]
+User=unimap
+Group=unimap
+EnvironmentFile=/etc/unimap/unimap.env
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+WorkingDirectory=/opt/unimap/src
+Environment=PYTHONPATH=/opt/unimap/src
+ExecStart=/opt/unimap/venv/bin/python3 -m parcel_index.indexer
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+# install.sh fills this in to /etc/unimap/bitcoin.conf. Keep the node unpruned:
+# parcel_index needs txindex and zones needs getblockstats on every block.
+server=1
+txindex=1
+prune=0
+disablewallet=1
+rpcbind=127.0.0.1
+rpcallowip=127.0.0.1
+rpcuser=@BITCOIN_RPC_USER@
+rpcpassword=@BITCOIN_RPC_PASSWD@
+# Two ord indexers and the zone indexer query RPC at once.
+rpcthreads=16
+rpcworkqueue=256
+# A large UTXO cache speeds up the first sync a lot; lower it after the sync if RAM is tight.
+dbcache=@DBCACHE@
+maxconnections=40

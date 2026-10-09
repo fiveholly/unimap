@@ -1,0 +1,20 @@
+[Unit]
+Description=unimap: Bitcoin Core (unpruned, txindex)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=unimap
+Group=unimap
+EnvironmentFile=/etc/unimap/unimap.env
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+LimitNOFILE=65536
+ExecStart=/opt/unimap/bin/bitcoind -conf=/etc/unimap/bitcoin.conf -datadir=${DATA_DIR}/bitcoin
+# Flushing the UTXO cache on shutdown can take minutes.
+TimeoutStopSec=900
+
+[Install]
+WantedBy=multi-user.target

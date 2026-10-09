@@ -1,0 +1,18 @@
+[Unit]
+Description=unimap: OPI bitmap_index (districts)
+After=unimap-opi-ord.service postgresql.service
+Wants=unimap-opi-ord.service
+
+[Service]
+User=unimap
+Group=unimap
+EnvironmentFile=/etc/unimap/unimap.env
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+WorkingDirectory=/opt/unimap/opi/modules/bitmap_index
+ExecStart=/opt/unimap/opi-venv/bin/python3 bitmap_index.py
+
+[Install]
+WantedBy=multi-user.target

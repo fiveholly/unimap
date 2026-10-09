@@ -1,0 +1,19 @@
+[Unit]
+Description=unimap: district and parcel owners
+After=unimap-ord.service postgresql.service
+Wants=unimap-ord.service
+
+[Service]
+User=unimap
+Group=unimap
+EnvironmentFile=/etc/unimap/unimap.env
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+WorkingDirectory=/opt/unimap/src
+Environment=PYTHONPATH=/opt/unimap/src
+ExecStart=/opt/unimap/venv/bin/python3 -m parcel_index.owners
+
+[Install]
+WantedBy=multi-user.target
