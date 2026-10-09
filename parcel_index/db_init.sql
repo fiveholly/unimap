@@ -58,3 +58,19 @@ CREATE TABLE IF NOT EXISTS public.owner_block_hashes (
 	block_hash text NOT NULL,
 	CONSTRAINT owner_block_hashes_pk PRIMARY KEY (block_height)
 );
+
+-- Land history for activity feeds: claims and transfers between addresses.
+CREATE TABLE IF NOT EXISTS public.land_events (
+	id bigserial NOT NULL,
+	block_height int4 NOT NULL,
+	block_time int8 NOT NULL, -- block header time, unix seconds
+	kind text NOT NULL, -- district_claimed | parcel_claimed | transfer
+	inscription_id text NOT NULL,
+	bitmap_number int4 NOT NULL,
+	tx_index int4 NULL, -- set for parcels
+	from_address text NULL,
+	to_address text NULL,
+	CONSTRAINT land_events_pk PRIMARY KEY (id)
+);
+CREATE INDEX IF NOT EXISTS land_events_bitmap_number_idx ON public.land_events USING btree (bitmap_number, id);
+CREATE INDEX IF NOT EXISTS land_events_block_height_idx ON public.land_events USING btree (block_height);

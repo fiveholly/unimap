@@ -151,13 +151,27 @@ wallet send --fee-rate 1 "$EXT" "$P_VALID1" >/dev/null
 mine 1
 unimap_index
 
-# ---- land API -----------------------------------------------------------------
+# ---- API (land + social) ------------------------------------------------------
+psql "$PGURL" -q -f "$ROOT/api/social.sql"
 API_PORT=18090
 (cd "$PI" && PYTHONPATH="$ROOT" exec python3 -m uvicorn api.app:app --port $API_PORT >"$WORK/api.log" 2>&1) &
 PIDS+=($!)
 wait_for "land API" curl -sf http://127.0.0.1:$API_PORT/v1/status
 api() { curl -sf "http://127.0.0.1:$API_PORT$1"; }
 jq_() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
+apipost() { curl -s -X POST -H 'content-type: application/json' ${3:+-H "Authorization: Bearer $3"} -d "$2" "http://127.0.0.1:$API_PORT$1"; }
+ord_sign() { wallet sign --signer "$1" --text "$2" | jq_ 'd["witness"]'; }
+
+# The district owner signs in with a BIP-322 signature from ord's wallet and posts.
+OWNER_ADDR=$(psqlq "select address from inscription_owners where inscription_id='$D_VALID'")
+NONCE_JSON=$(apipost /v1/auth/nonce "{\"address\": \"$OWNER_ADDR\"}")
+LOGIN_MSG=$(printf '%s' "$NONCE_JSON" | jq_ 'd["message"]')
+LOGIN_SIG=$(ord_sign "$OWNER_ADDR" "$LOGIN_MSG")
+TOKEN=$(apipost /v1/auth/login "$(python3 -c 'import json,sys; print(json.dumps({"address": sys.argv[1], "nonce": json.loads(sys.argv[2])["nonce"], "signature": sys.argv[3]}))' "$OWNER_ADDR" "$NONCE_JSON" "$LOGIN_SIG")" | jq_ 'd["token"]')
+SIGNED_AT=$(date +%s)
+POST_MSG=$(PYTHONPATH="$ROOT" python3 -c 'import sys; from api.social import post_message; sys.stdout.write(post_message(int(sys.argv[1]), None, None, int(sys.argv[2]), [], "gm from the owner"))' "$B" "$SIGNED_AT")
+POST_SIG=$(ord_sign "$OWNER_ADDR" "$POST_MSG")
+POST_JSON=$(apipost /v1/districts/$B/posts "$(python3 -c 'import json,sys; print(json.dumps({"body": "gm from the owner", "signed_at": int(sys.argv[1]), "signature": sys.argv[2]}))' "$SIGNED_AT" "$POST_SIG")" "$TOKEN")
 
 # ---- assertions -------------------------------------------------------------
 fail=0
@@ -186,5 +200,10 @@ check "API land: tx_count" "3" "$(api /v1/land/$B | jq_ 'd["tx_count"]')"
 check "API land: unclaimed block" "False" "$(api /v1/land/5 | jq_ 'd["claimed"]')"
 check "API parcel owner" "$EXT" "$(api /v1/land/$B/parcels/1 | jq_ 'd["owner"]["address"]')"
 check "API address land" "1 0" "$(api /v1/addresses/$EXT/land | jq_ 'len(d["parcels"]), len(d["districts"])')"
+check "API land events: parcel 1 transfer" "$OWNER_BEFORE>$EXT" "$(api /v1/land/$B/events | jq_ '[e["from_address"] + ">" + e["to_address"] for e in d["events"] if e["kind"] == "transfer"][0]')"
+check "API land events: district claim" "1" "$(api /v1/land/$B/events | jq_ 'sum(e["kind"] == "district_claimed" for e in d["events"])')"
+check "social: owner signs in with ord's BIP-322 signature" "yes" "$([ -n "$TOKEN" ] && [ "$TOKEN" != None ] && echo yes)"
+check "social: owner post accepted" "owner" "$(printf '%s' "$POST_JSON" | jq_ 'd["author"]["role"]')"
+check "social: post listed on district page" "gm from the owner" "$(api /v1/districts/$B/posts | jq_ 'd["posts"][0]["body"]')"
 check "API future block 404" "404" "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:$API_PORT/v1/land/999999)"
 exit $fail

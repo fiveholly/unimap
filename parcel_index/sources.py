@@ -85,11 +85,12 @@ class Bitcoind:
         return _call(self.url, "getblockheader", [block_hash], self.auth)["nTx"]
 
     def spent_outpoints(self, block_hash):
-        """Every "txid:vout" spent by the block's non-coinbase inputs."""
+        """(block time, every "txid:vout" spent by the block's non-coinbase inputs)."""
         block = _call(self.url, "getblock", [block_hash, 2], self.auth)
-        return [
+        spent = [
             f"{vin['txid']}:{vin['vout']}"
             for tx in block["tx"]
             for vin in tx["vin"]
             if "txid" in vin
         ]
+        return block["time"], spent
