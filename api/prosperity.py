@@ -30,13 +30,20 @@ def empty_parts():
     return dict.fromkeys(WEIGHTS, 0)
 
 
-def prosperity(bitmap_number, parts):
-    score = math.floor(sum(parts[k] * w for k, w in WEIGHTS.items()) + 0.5)
+def score_of(parts):
+    return math.floor(sum(parts[k] * w for k, w in WEIGHTS.items()) + 0.5)
+
+
+def level_of(score):
     level = 1
     while level < TOP and score >= THRESHOLDS[level]:
         level += 1
-    if bitmap_number in LANDMARKS:
-        level = TOP
+    return level
+
+
+def prosperity(bitmap_number, parts):
+    score = score_of(parts)
+    level = TOP if bitmap_number in LANDMARKS else level_of(score)
     return {"score": score, "level": level, "parts": parts, "next": THRESHOLDS[level] if level < TOP else None}
 
 

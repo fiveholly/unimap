@@ -45,6 +45,9 @@ export function Header() {
           <Link href="/rank" className={path === "/rank" ? "active" : ""}>
             繁荣榜
           </Link>
+          <Link href="/recruit" className={path === "/recruit" ? "active" : ""}>
+            招募
+          </Link>
           <Link href="/me" className={path === "/me" ? "active" : ""}>
             我的
           </Link>

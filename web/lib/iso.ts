@@ -1,6 +1,7 @@
 // Isometric district tiles: one illustrated building set per zone, drawn as flat polygons.
 // A tile is TILE_W x TILE_H; its ground diamond is centred at (CX, CY) and spans 128 x 64.
 
+import { COLORS, styleKey, type DistrictStyle } from "./style";
 import type { Zone } from "./zones";
 
 export const TILE_W = 128;
@@ -96,6 +97,50 @@ class Painter {
     this.poly([lerp(ap, W, 0.3), lerp(ap, S, 0.3), ap], "#D3CEC2");
     this.poly([lerp(ap, S, 0.3), lerp(ap, E, 0.3), ap], "#F2EEE6");
   }
+}
+
+// Decorations an owner picks (lib/style.ts), in the front corner and along the two front
+// edges, drawn last so they stay in view in front of the buildings.
+const DECO_SPOTS: [number, number][] = [
+  [0.72, 0.72],
+  [-0.3, 0.8],
+  [0.8, -0.3],
+];
+function decorate(p: Painter, style: DistrictStyle) {
+  const hex = COLORS[style.color]?.hex ?? COLORS.orange.hex;
+  style.deco.slice(0, DECO_SPOTS.length).forEach((d, i) => {
+    const [gx, gy] = DECO_SPOTS[i];
+    const b = iso(gx, gy);
+    const shadow = () => p.ell(b[0] + 2, b[1] + 1, 7, 2.6, "rgba(0,0,0,0.3)");
+    if (d === "flag") {
+      shadow();
+      p.poly([[b[0] - 0.8, b[1]], [b[0] + 0.8, b[1]], [b[0] + 0.8, b[1] - 30], [b[0] - 0.8, b[1] - 30]], "#D8D2C4");
+      p.poly([[b[0] + 0.8, b[1] - 30], [b[0] + 14, b[1] - 26], [b[0] + 0.8, b[1] - 21]], hex);
+    } else if (d === "flowers") {
+      p.ell(b[0], b[1], 10, 4.6, "#5A3E28");
+      p.ell(b[0], b[1] - 1.2, 9, 4, "#3A6E34");
+      for (const [dx, dy] of [[-5, -1.5], [0, -3], [5, -1.5], [-2.5, 0.5], [3, 0.6]]) p.ell(b[0] + dx, b[1] + dy - 1.5, 1.7, 1.4, dx === 0 ? "#F2EEE6" : hex);
+    } else if (d === "lamps") {
+      for (const dx of [-6, 6]) {
+        const x = b[0] + dx, y = b[1] + (dx > 0 ? -2 : 2);
+        p.ell(x, y - 18, 5, 4, "rgba(246,198,107,0.22)");
+        p.poly([[x - 0.7, y], [x + 0.7, y], [x + 0.7, y - 17], [x - 0.7, y - 17]], "#2E2C28");
+        p.ell(x, y - 18, 2.2, 2, "#F6C66B");
+      }
+    } else if (d === "fountain") {
+      p.ell(b[0], b[1], 12, 5.4, "#9A958A");
+      p.ell(b[0], b[1] - 1.5, 10, 4.4, "#5BA7D9");
+      p.poly([[b[0] - 1.2, b[1] - 1], [b[0] + 1.2, b[1] - 1], [b[0] + 1.2, b[1] - 9], [b[0] - 1.2, b[1] - 9]], "#C9C3B6");
+      p.ell(b[0], b[1] - 11, 3.4, 2.8, "rgba(160,210,240,0.85)");
+    } else if (d === "statue") {
+      shadow();
+      p.poly([[b[0] - 5, b[1]], [b[0], b[1] + 2.5], [b[0], b[1] - 4.5], [b[0] - 5, b[1] - 7]], "#8E887C");
+      p.poly([[b[0], b[1] + 2.5], [b[0] + 5, b[1]], [b[0] + 5, b[1] - 7], [b[0], b[1] - 4.5]], "#B3AC9E");
+      p.poly([[b[0] - 5, b[1] - 7], [b[0], b[1] - 9.5], [b[0] + 5, b[1] - 7], [b[0], b[1] - 4.5]], "#CFC8BA");
+      p.poly([[b[0] - 2, b[1] - 8], [b[0] + 2, b[1] - 8], [b[0] + 1.6, b[1] - 20], [b[0] - 1.6, b[1] - 20]], hex);
+      p.ell(b[0], b[1] - 22.5, 2.4, 2.6, hex);
+    }
+  });
 }
 
 // Things on a tile are drawn back to front by k = gx + gy.
@@ -349,11 +394,15 @@ export const GROUND: Record<Zone | "unknown", Faces & { t: string }> = {
   unknown: { t: "#2A2823", l: "#1A1916", r: "#22201C" },
 };
 
+/** The ground of a park member (lib/parks.ts): one paved plaza across the whole park. */
+export const PAVED: Faces & { t: string } = { t: "#A8977A", l: "#5A4C38", r: "#6E5E46" };
+
 /** Shapes of one tile. variant picks heights and colours, so neighbours differ. */
-export function tileShapes(zone: Zone | null, variant: number, level: Lv = 3): Shape[] {
+export function tileShapes(zone: Zone | null, variant: number, level: Lv = 3, style: DistrictStyle | null = null, paved = false): Shape[] {
   const p = new Painter();
-  p.ground(GROUND[zone ?? "unknown"]);
+  p.ground(paved ? PAVED : GROUND[zone ?? "unknown"]);
   if (zone) BUILD[zone](p, rng(variant), level);
+  if (style?.deco.length) decorate(p, style);
   return p.out;
 }
 
@@ -377,10 +426,17 @@ const sprites = new Map<string, HTMLCanvasElement>();
 
 /** A pre-rendered tile image at `res` pixels per tile unit, cached. level is the district's
  * prosperity level; districts without one look settled (3). */
-export function tileSprite(zone: Zone | null, n: number, res: number, level: number | null = null): HTMLCanvasElement {
+export function tileSprite(
+  zone: Zone | null,
+  n: number,
+  res: number,
+  level: number | null = null,
+  style: DistrictStyle | null = null,
+  paved = false,
+): HTMLCanvasElement {
   const variant = hash(n) % VARIANTS;
   const lv = (level != null && level >= 1 && level <= 5 ? Math.round(level) : 3) as Lv;
-  const key = `${zone}:${variant}:${res}:${lv}`;
+  const key = `${zone}:${variant}:${res}:${lv}:${styleKey(style)}:${paved ? "p" : ""}`;
   let c = sprites.get(key);
   if (!c) {
     c = document.createElement("canvas");
@@ -388,7 +444,7 @@ export function tileSprite(zone: Zone | null, n: number, res: number, level: num
     c.height = Math.ceil(TILE_H * res);
     const ctx = c.getContext("2d")!;
     ctx.scale(res, res);
-    drawShapes(ctx, tileShapes(zone, 9000 + variant, lv));
+    drawShapes(ctx, tileShapes(zone, 9000 + variant, lv, style, paved));
     sprites.set(key, c);
   }
   return c;

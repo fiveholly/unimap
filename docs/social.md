@@ -61,6 +61,16 @@ media: none
 | GET | `/v1/land/{n}/events` | 街区和地块的认领、转手记录 |
 | POST | `/v1/districts/{n}/checkin` | 签到，每个地址每个街区每天（UTC）一次，重复返回 409 |
 | GET | `/v1/rankings` | 繁荣榜：繁荣度最高的 50 个已认领街区，地标除外，缓存 5 分钟 |
+| PUT / DELETE | `/v1/districts/{n}/recruit` | 街区主人发布或结束招募 `{"message", "parcels"}` |
+| GET | `/v1/recruiting` | 正在招募的街区，新的在前 |
+| PUT / DELETE | `/v1/districts/{n}/application` | 访客申请入住 `{"note"}` / 撤回 |
+| GET | `/v1/districts/{n}/applications` | 街区主人查看申请 |
+| GET / POST | `/v1/districts/{n}/polls` | 投票列表 / 街区主人发起 `{"question", "options", "days"}` |
+| PUT | `/v1/polls/{id}/vote` | 主人和居民投票 `{"option"}`，截止前可以改 |
+| POST | `/v1/polls/{id}/close` | 街区主人提前结束 |
+| PUT | `/v1/districts/{n}/style` | 街区主人设置外观 `{"color", "deco"}` |
+| GET | `/v1/parks/{id}` | 园区 |
+| POST / PUT / DELETE | `/v1/parks[/{id}]` | 建立、修改、解散园区 `{"name", "members"}` |
 
 ## 繁荣度
 
@@ -82,3 +92,29 @@ media: none
 `GET /v1/districts/{n}` 返回 `prosperity`（`score`、`level`、`parts`、`next`，`next` 是下一级需要的分数，已满级为 `null`）和 `checked_in_today`；`GET /v1/land` 的每个格子带 `level`。权重和门槛在 `api/prosperity.py` 和 `web/lib/prosperity.ts` 两处，要一起改。
 
 图片上传（S3）还没做，目前 `media` 只接受 https 链接。
+
+## 招募居民
+
+街区主人写一段招募说明，可以列出开放的地块编号（只能列还没被认领的）。登录的访客可以带一句留言申请入住，主人在管理面板里看到申请列表。地块的交接仍然在链上完成：主人把地块铭刻成街区的子铭文转给对方，索引器看到后对方就是居民。街区转手后，旧主人的招募自动失效；新主人重新发布时，旧的申请会清掉。
+
+## 街区投票
+
+街区主人发起投票，2 到 4 个选项，时长 1 到 30 天。主人和居民每人一票，截止前可以改票；身份按投票那一刻算。所有人都能看结果。主人可以提前结束。
+
+## 外观装扮
+
+街区主人可以选一个主题色和最多 3 个装饰，装饰按繁荣度解锁：
+
+| 装饰 | 解锁等级 |
+|---|---|
+| 旗帜 | 1 |
+| 花坛 | 2 |
+| 路灯 | 3 |
+| 喷泉 | 4 |
+| 雕像 | 5 |
+
+主题色里紫色 3 级解锁，金色 5 级解锁，其余一开始就能用。街区降级后，超出等级的装饰会暂时隐藏，金色、紫色退回橙色，升回来后自动恢复。保存的外观出现在 `/v1/land` 的 `style` 和街区主页的 `profile.style` 里。
+
+## 园区
+
+同一个地址持有的、在地图上连成一片的街区可以组成园区。地图把每 8 × 8 个区块排成一个街坊，街坊之间隔着马路，所以园区只能在同一个街坊里，成员之间要边挨着边。园区里各街区的分数加在一起算等级，所有成员都按这个等级显示。成员只在园区主人还持有它时才算数，卖掉的街区自动退出；剩下不到两个时园区不再显示。`/v1/land` 的每个格子带 `park`（园区 id），街区主页带 `park`（名称、成员、合计分数和等级）。
