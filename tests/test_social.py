@@ -3,6 +3,7 @@ database (its tables are dropped and recreated), e.g.
 TEST_PGURL=postgresql://postgres:postgres@localhost/unimap_test"""
 
 import base64
+import math
 import os
 import time
 import unittest
@@ -62,6 +63,7 @@ class SocialApi(unittest.TestCase):
                 with open(os.path.join(ROOT, path)) as f:
                     cur.execute(f.read())
             cur.execute(
+                "insert into bitmap_block_hashes (block_height, block_hash) values (1000, 'h1000');"
                 "insert into bitmaps (inscription_id, inscription_number, bitmap_number, block_height) values "
                 "('d100i0', 1, 100, 200), ('d105i0', 2, 105, 201), ('d999i0', 3, 999, 1000);"
                 "insert into parcels (inscription_id, inscription_number, tx_index, bitmap_number, "
@@ -215,6 +217,41 @@ class SocialApi(unittest.TestCase):
         self.assertEqual(items[-1]["event"]["kind"], "district_claimed")
         near = self.client.get(f"/v1/districts/{OTHER}/neighbors").json()["posts"]
         self.assertTrue(near and all(p["bitmap_number"] == DISTRICT for p in near))
+
+    # --- prosperity and check-ins ---
+
+    def test_checkin_and_prosperity(self):
+        from api import prosperity
+
+        prosperity.RANKING_TTL = 0
+        before = self.client.get(f"/v1/districts/{DISTRICT}", headers=self.h(CAROL)).json()
+        self.assertFalse(before["checked_in_today"])
+        self.assertEqual(before["prosperity"]["parts"]["residents"], 1)
+        self.assertEqual(self.client.post(f"/v1/districts/{DISTRICT}/checkin").status_code, 401)
+        self.assertEqual(self.client.post(f"/v1/districts/{DISTRICT}/checkin", headers=self.h(CAROL)).status_code, 200)
+        self.assertEqual(self.client.post(f"/v1/districts/{DISTRICT}/checkin", headers=self.h(CAROL)).status_code, 409)
+        self.assertEqual(self.client.post("/v1/districts/5000/checkin", headers=self.h(CAROL)).status_code, 404)
+        after = self.client.get(f"/v1/districts/{DISTRICT}", headers=self.h(CAROL)).json()
+        self.assertTrue(after["checked_in_today"])
+        self.assertEqual(after["prosperity"]["parts"]["checkins30"], before["prosperity"]["parts"]["checkins30"] + 1)
+
+        # A post counts for its district and, as a neighbour's, for the districts around it.
+        near = lambda: self.client.get(f"/v1/districts/{OTHER}").json()["prosperity"]["parts"]["neighbors30"]
+        n0 = near()
+        self.assertEqual(self.post(ALICE, "busy street").status_code, 201)
+        self.assertEqual(near(), n0 + 1)
+        p = self.client.get(f"/v1/districts/{DISTRICT}").json()["prosperity"]
+        self.assertGreater(p["score"], 0)
+        self.assertEqual(p["score"], math.floor(sum(p["parts"][k] * w for k, w in prosperity.WEIGHTS.items()) + 0.5))
+
+        tiles = self.client.get(f"/v1/land?start={DISTRICT}&end={OTHER}").json()["tiles"]
+        self.assertEqual(tiles[0]["level"], p["level"])
+        self.assertTrue(all(1 <= t["level"] <= 5 for t in tiles))
+        self.assertEqual(self.client.get("/v1/districts/0").json()["prosperity"]["level"], 5)  # a landmark
+        ranks = self.client.get("/v1/rankings").json()["rankings"]
+        self.assertEqual(ranks[0]["bitmap_number"], DISTRICT)
+        self.assertEqual(ranks[0]["owner"], ALICE.address)
+        self.assertEqual([r["score"] for r in ranks], sorted((r["score"] for r in ranks), reverse=True))
 
     # --- land changes hands ---
 

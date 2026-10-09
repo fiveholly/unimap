@@ -9,7 +9,7 @@ import type { Zone } from "@/lib/zones";
 const CROP_TOP = 50;
 
 /** One district's isometric tile as a small picture. */
-export function TileThumb({ zone, n, width = 96 }: { zone: Zone | null; n: number; width?: number }) {
+export function TileThumb({ zone, n, width = 96, level = null }: { zone: Zone | null; n: number; width?: number; level?: number | null }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const height = Math.round((width * (TILE_H - CROP_TOP)) / TILE_W);
   useEffect(() => {
@@ -20,7 +20,7 @@ export function TileThumb({ zone, n, width = 96 }: { zone: Zone | null; n: numbe
     const ctx = cv.getContext("2d")!;
     ctx.clearRect(0, 0, cv.width, cv.height);
     const k = cv.width / TILE_W;
-    ctx.drawImage(tileSprite(zone, n, k > 1 ? 2 : 1), 0, -CROP_TOP * k, cv.width, TILE_H * k);
-  }, [zone, n, width, height]);
+    ctx.drawImage(tileSprite(zone, n, k > 1 ? 2 : 1, level), 0, -CROP_TOP * k, cv.width, TILE_H * k);
+  }, [zone, n, width, height, level]);
   return <canvas ref={ref} className="tile-thumb" style={{ width, height }} aria-hidden />;
 }

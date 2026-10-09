@@ -1,6 +1,7 @@
 // Typed client for the unimap API (api/ in this repo).
 
 import { DEMO, demoApi } from "./demo";
+import type { Prosperity } from "./prosperity";
 
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 
@@ -63,6 +64,7 @@ export type Tile = {
   owner: string | null;
   parcels: number;
   posts: number;
+  level?: number | null; // prosperity 1-5, see lib/prosperity.ts
 };
 
 export type LandEvent = {
@@ -104,7 +106,12 @@ export type District = {
   followers: number;
   post_count: number;
   viewer: { address: string; role: Role; parcel: number | null; muted: boolean; following: boolean } | null;
+  // Added with prosperity; the page hides them if an older API leaves them out.
+  prosperity?: Prosperity;
+  checked_in_today?: boolean;
 };
+
+export type Ranking = { bitmap_number: number; name: string; zone: string | null; owner: string | null; score: number; level: number };
 
 export type Me = {
   address: string;

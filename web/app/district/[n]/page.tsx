@@ -9,6 +9,7 @@ import { Composer } from "@/components/Composer";
 import { EventItem } from "@/components/EventItem";
 import { Mondrian } from "@/components/Mondrian";
 import { PostCard, RoleBadge, type PostActions } from "@/components/PostCard";
+import { ProsperityCard } from "@/components/ProsperityCard";
 import { short, useSession } from "@/components/Session";
 import { TileThumb } from "@/components/TileThumb";
 import { api, ApiError, type District, type Land, type LandEvent, type Me, type Post, type Tile } from "@/lib/api";
@@ -208,6 +209,7 @@ function DistrictView() {
             {viewer && <RoleBadge role={viewer.role} parcel={viewer.parcel} />}
             {viewer?.muted && <span className="badge muted-badge">你在这里被禁言了</span>}
           </div>
+          {district.prosperity && <ProsperityCard p={district.prosperity} zone={zone} n={n} />}
           <div className="row">
             {token ? (
               <button
@@ -220,6 +222,16 @@ function DistrictView() {
               </button>
             ) : (
               <span className="muted small">连接钱包后可以关注和回复。</span>
+            )}
+            {token && district.checked_in_today !== undefined && (
+              <button
+                type="button"
+                className="ghost lg"
+                disabled={district.checked_in_today}
+                onClick={() => act(`/v1/districts/${n}/checkin`, "POST")}
+              >
+                {district.checked_in_today ? "今天已签到" : "签到"}
+              </button>
             )}
             <button type="button" className="ghost lg" onClick={share}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>

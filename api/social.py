@@ -14,7 +14,7 @@ import psycopg2.extras
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import bip322, roles
+from api import bip322, prosperity, roles
 from api.auth import current_address, normalize_address, optional_address
 from api.db import cursor
 from api.land import EVENT_SELECT, _event
@@ -126,7 +126,9 @@ def district(bitmap_number: int, viewer: str | None = Depends(optional_address))
             "(select count(*) from social.posts where bitmap_number = %(n)s and reply_to is null "
             "and removed_at is null) as posts, "
             "exists(select 1 from social.mutes where bitmap_number = %(n)s and address = %(me)s) as muted, "
-            "exists(select 1 from social.follows where bitmap_number = %(n)s and address = %(me)s) as following;",
+            "exists(select 1 from social.follows where bitmap_number = %(n)s and address = %(me)s) as following, "
+            "exists(select 1 from social.checkins where bitmap_number = %(n)s and address = %(me)s "
+            "and day = (now() at time zone 'utc')::date) as checked_in;",
             {"n": bitmap_number, "me": viewer},
         )
         counts = cur.fetchone()
@@ -136,6 +138,8 @@ def district(bitmap_number: int, viewer: str | None = Depends(optional_address))
                 cur, "p.id = %(id)s and p.removed_at is null", {"id": profile["pinned_post_id"]}, viewer, 1
             )
             pinned = found[0] if found else None
+    with cursor() as cur:
+        prosper = prosperity.of(cur, bitmap_number)
     return {
         "bitmap_number": bitmap_number,
         "name": f"{bitmap_number}.bitmap",
@@ -144,6 +148,8 @@ def district(bitmap_number: int, viewer: str | None = Depends(optional_address))
         "pinned_post": pinned,
         "followers": counts["followers"],
         "post_count": counts["posts"],
+        "prosperity": prosper,
+        "checked_in_today": counts["checked_in"],
         "viewer": None
         if viewer is None
         else {
@@ -154,6 +160,31 @@ def district(bitmap_number: int, viewer: str | None = Depends(optional_address))
             "following": counts["following"],
         },
     }
+
+
+@router.get("/v1/rankings")
+def rankings():
+    """The liveliest districts by prosperity."""
+    with cursor() as cur:
+        return {"rankings": prosperity.ranking(cur)}
+
+
+@router.post("/v1/districts/{bitmap_number}/checkin")
+def checkin(bitmap_number: int, address: str = Depends(current_address)):
+    """Once a day per signed-in address and district."""
+    with cursor() as cur:
+        cur.execute("select max(block_height) from bitmap_block_hashes;")
+        tip = cur.fetchone()[0]
+        if bitmap_number < 0 or tip is None or bitmap_number > tip:
+            raise HTTPException(404, "no such block yet")
+        cur.execute(
+            "insert into social.checkins (address, bitmap_number, day) values (%s, %s, (now() at time zone 'utc')::date) "
+            "on conflict do nothing;",
+            (address, bitmap_number),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(409, "already checked in today")
+    return {"ok": True}
 
 
 @router.get("/v1/districts/{bitmap_number}/posts")

@@ -42,6 +42,9 @@ export function Header() {
           <Link href="/" className={path === "/" ? "active" : ""}>
             地图
           </Link>
+          <Link href="/rank" className={path === "/rank" ? "active" : ""}>
+            繁荣榜
+          </Link>
           <Link href="/me" className={path === "/me" ? "active" : ""}>
             我的
           </Link>

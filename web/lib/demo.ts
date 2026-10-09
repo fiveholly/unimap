@@ -3,7 +3,8 @@
 // here from deterministic fake data; what the visitor does (posts, likes, follows, profile
 // edits) is kept in localStorage, and "重置演示数据" clears it.
 
-import type { District, FeedItem, Land, LandEvent, Me, Parcel, Post, Role, Tile } from "./api";
+import type { District, FeedItem, Land, LandEvent, Me, Parcel, Post, Ranking, Role, Tile } from "./api";
+import { prosperity, type ProsperityParts } from "./prosperity";
 
 export const DEMO = process.env.NEXT_PUBLIC_DEMO === "1";
 
@@ -51,10 +52,22 @@ const inscriptionId = (seed: number) => {
   for (let i = 0; i < 64; i++) s += "0123456789abcdef"[Math.floor(hash(seed * 7 + i) * 16)];
   return s + "i0";
 };
+// How busy a neighbourhood is, 0 to 1: a few lively stretches of the chain, the blocks
+// around each landmark, and quiet everywhere else. Drives the fake activity below.
+const smooth = (x: number) => {
+  const i = Math.floor(x), f = x - i, t = f * f * (3 - 2 * f);
+  return hash(i * 97 + 1) * (1 - t) + hash(i * 97 + 98) * t;
+};
+function heat(n: number): number {
+  const wide = smooth(n / 4000) ** 3;
+  const local = hash(Math.floor(n / 64) + 17);
+  const near = Math.max(...LANDMARKS.map((l) => Math.exp(-Math.abs(n - l) / 120)));
+  return Math.min(1, wide * (0.3 + 0.7 * local) * 1.6 + near * 0.9) * (0.5 + 0.5 * hash(n + 23));
+}
 function parcelIndexes(n: number): number[] {
   if (!ownerOf(n)) return [];
   const count = txCount(n);
-  const k = n === 840001 ? 24 : Math.floor(hash(n + 5) * Math.min(count, 60));
+  const k = n === 840001 ? 24 : Math.floor(hash(n + 5) * Math.min(count, 60) * heat(n));
   const set = new Set<number>();
   for (let i = 0; set.size < k && i < k * 4; i++) set.add(Math.floor(hash(n * 13 + i) * count));
   if (n === OWN_PARCEL.bitmap_number) set.add(OWN_PARCEL.tx_index);
@@ -91,6 +104,7 @@ type State = {
   follows: number[];
   profiles: Record<number, Partial<District["profile"]>>;
   mutes: Record<number, string[]>;
+  checkins?: Record<number, string[]>; // the visitor's check-in days (YYYY-MM-DD) per district
 };
 
 const KEY = "unimap.demo";
@@ -159,6 +173,26 @@ const fail = (status: number, message: string): never => {
   throw new DemoError(status, message);
 };
 
+const today = () => new Date().toISOString().slice(0, 10);
+const seededFollowers = (n: number) => (ownerOf(n) ? Math.floor(hash(n + 11) * 240 * heat(n)) : 0);
+/** What counts towards a district's prosperity: made-up background activity scaled by its
+ * neighbourhood's heat, plus whatever the visitor has done here in this browser. */
+function parts(n: number): ProsperityParts {
+  const s = load(), h = heat(n), claimed = !!ownerOf(n);
+  const since = NOW - 30 * DAY;
+  const recent = s.posts.filter((p) => p.bitmap_number === n && !p.removed && Date.parse(p.created_at) / 1000 > since);
+  const near = s.posts.filter((p) => p.bitmap_number !== n && Math.abs(p.bitmap_number - n) <= 5 && !p.removed && Date.parse(p.created_at) / 1000 > since).length;
+  const mine = (s.checkins?.[n] ?? []).filter((d) => Date.parse(d) / 1000 > since).length;
+  const fake = (k: number, max: number) => (claimed ? Math.floor(hash(n * 7 + k) * max * h * h) : 0);
+  return {
+    residents: parcelIndexes(n).length,
+    posts30: fake(1, 30) + recent.filter((p) => p.reply_to == null).length,
+    replies30: fake(2, 80) + recent.filter((p) => p.reply_to != null).length,
+    followers: seededFollowers(n) + (s.follows.includes(n) ? 1 : 0),
+    checkins30: fake(3, 120) + mine,
+    neighbors30: Math.floor(hash(n * 7 + 4) * 150 * h * h) + near,
+  };
+}
 function tile(n: number): Tile {
   const s = load();
   const o = ownerOf(n);
@@ -166,7 +200,24 @@ function tile(n: number): Tile {
     bitmap_number: n, zone: zoneOf(n), tx_count: txCount(n), claimed: !!o, owner: o,
     parcels: parcelIndexes(n).length,
     posts: s.posts.filter((p) => p.bitmap_number === n && !p.removed && p.reply_to == null).length,
+    level: zoneOf(n) === "landmark" ? 5 : prosperity(parts(n)).level,
   };
+}
+let hot: number[] | undefined;
+/** The liveliest districts: only the busy stretches can make the list, so score just those. */
+function rankings(): Ranking[] {
+  const s = load();
+  hot ??= Array.from({ length: Math.floor(DEMO_TIP / 64) + 1 }, (_, q) => q).filter((q) => heat(q * 64 + 32) > 0.5);
+  const quarters = new Set(hot);
+  for (const n of [...LANDMARKS, ...s.posts.map((p) => p.bitmap_number), ...s.follows]) quarters.add(Math.floor(n / 64));
+  const out: Ranking[] = [];
+  for (const q of quarters)
+    for (let n = q * 64; n < q * 64 + 64 && n <= DEMO_TIP; n++) {
+      if (zoneOf(n) === "landmark" || !ownerOf(n)) continue;
+      const p = prosperity(parts(n));
+      out.push({ bitmap_number: n, name: `${n}.bitmap`, zone: zoneOf(n), owner: ownerOf(n), score: p.score, level: p.level });
+    }
+  return out.sort((a, b) => b.score - a.score).slice(0, 50);
 }
 function land(n: number): Land {
   if (n < 0 || n > DEMO_TIP) fail(404, "no such block yet");
@@ -217,12 +268,14 @@ function district(n: number, me: string | null): District {
   const prof = profile(n);
   const pinned = prof.pinned_post_id != null ? s.posts.find((p) => p.id === prof.pinned_post_id && !p.removed) : undefined;
   const [role, parcel] = roleOf(me, n);
-  const seededFollowers = Math.floor(hash(n + 11) * 200);
+  const pr = prosperity(parts(n));
   return {
     bitmap_number: n, name: `${n}.bitmap`, owner: ownerOf(n), profile: prof, pinned_post: pinned ? view(pinned, me) : null,
-    followers: seededFollowers + (s.follows.includes(n) ? 1 : 0),
+    followers: pr.parts.followers,
     post_count: s.posts.filter((p) => p.bitmap_number === n && !p.removed && p.reply_to == null).length,
     viewer: me ? { address: me, role, parcel, muted: (s.mutes[n] ?? []).includes(me), following: s.follows.includes(n) } : null,
+    prosperity: zoneOf(n) === "landmark" ? { ...pr, level: 5, next: null } : pr,
+    checked_in_today: !!me && (s.checkins?.[n] ?? []).includes(today()),
   };
 }
 
@@ -263,6 +316,15 @@ function route(path: string, opts: Opts): unknown {
     return { items: items.sort((a, b) => b.time - a.time).slice(0, 30) };
   }
   if ((m = p.match(/^\/v1\/districts\/(\d+)$/))) return district(+m[1], me);
+  if (p === "/v1/rankings") return { rankings: rankings() };
+  if ((m = p.match(/^\/v1\/districts\/(\d+)\/checkin$/)) && method === "POST") {
+    needMe();
+    const days = ((s.checkins ??= {})[+m[1]] ??= []);
+    if (days.includes(today())) fail(409, "今天已经签到过了");
+    days.push(today());
+    save();
+    return { ok: true };
+  }
   if ((m = p.match(/^\/v1\/districts\/(\d+)\/neighbors$/))) {
     const n = +m[1];
     return { posts: topPosts((x) => Math.abs(x.bitmap_number - n) <= 10 && x.bitmap_number !== n, me) };
