@@ -63,6 +63,13 @@ class OrdServer:
         """Highest block ord has indexed."""
         return self._get("/blockheight")
 
+    def block_inscription_count(self, block_height):
+        """Number of inscriptions revealed in the block."""
+        block = self._get(f"/block/{block_height}")
+        if block is None:
+            raise RpcError(f"ord does not know block {block_height}")
+        return len(block["inscriptions"])
+
     def location(self, inscription_id):
         """(outpoint, address, value) of the inscription's current output, or None.
         address is None for scripts ord can't render as an address."""
@@ -80,6 +87,13 @@ class Bitcoind:
 
     def block_hash(self, block_height):
         return _call(self.url, "getblockhash", [block_height], self.auth)
+
+    def block_count(self):
+        return _call(self.url, "getblockcount", [], self.auth)
+
+    def block_stats(self, block_hash):
+        """txs (coinbase included), totalfee and total_out (coinbase excluded), in sats."""
+        return _call(self.url, "getblockstats", [block_hash, ["txs", "totalfee", "total_out"]], self.auth)
 
     def tx_count(self, block_hash):
         return _call(self.url, "getblockheader", [block_hash], self.auth)["nTx"]

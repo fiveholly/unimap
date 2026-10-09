@@ -4,13 +4,16 @@ import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 
+import { Avatar } from "@/components/Avatar";
 import { Composer } from "@/components/Composer";
 import { EventItem } from "@/components/EventItem";
 import { Mondrian } from "@/components/Mondrian";
 import { PostCard, RoleBadge, type PostActions } from "@/components/PostCard";
 import { short, useSession } from "@/components/Session";
-import { api, ApiError, type District, type Land, type LandEvent, type Me, type Post } from "@/lib/api";
-import { btc, epochName, LANDMARKS } from "@/lib/format";
+import { TileThumb } from "@/components/TileThumb";
+import { api, ApiError, type District, type Land, type LandEvent, type Me, type Post, type Tile } from "@/lib/api";
+import { btc, epochName } from "@/lib/format";
+import { LANDMARKS, ZONES, zoneOf } from "@/lib/zones";
 
 export default function DistrictPage() {
   return (
@@ -20,11 +23,13 @@ export default function DistrictPage() {
   );
 }
 
+type Tab = "posts" | "parcels" | "history";
+
 function DistrictView() {
   const params = useParams<{ n: string }>();
   const search = useSearchParams();
   const n = Number(params.n);
-  const { token, address } = useSession();
+  const { token } = useSession();
 
   const [land, setLand] = useState<Land | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -32,15 +37,16 @@ function DistrictView() {
   const [district, setDistrict] = useState<District | null>(null);
   const [posts, setPosts] = useState<Post[]>([]);
   const [events, setEvents] = useState<LandEvent[]>([]);
-  const [neighbors, setNeighbors] = useState<Post[]>([]);
+  const [nearby, setNearby] = useState<Post[]>([]);
+  const [around, setAround] = useState<Tile[]>([]);
   const [me, setMe] = useState<Me | null>(null);
   const [selected, setSelected] = useState<number | null>(search.get("parcel") ? Number(search.get("parcel")) : null);
+  const [tab, setTab] = useState<Tab>("posts");
+  const [editing, setEditing] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadDistrict = useCallback(
-    () => api<District>(`/v1/districts/${n}`, { token }).then(setDistrict),
-    [n, token],
-  );
+  const loadDistrict = useCallback(() => api<District>(`/v1/districts/${n}`, { token }).then(setDistrict), [n, token]);
   const loadPosts = useCallback(
     () => api<{ posts: Post[] }>(`/v1/districts/${n}/posts`, { token }).then((r) => setPosts(r.posts)),
     [n, token],
@@ -49,6 +55,8 @@ function DistrictView() {
   useEffect(() => {
     if (!Number.isInteger(n) || n < 0) return setNotFound(true);
     setError(null);
+    setLand(null);
+    setTxValues(null);
     api<Land>(`/v1/land/${n}`)
       .then(setLand)
       .catch((e) => (e instanceof ApiError && e.status === 404 ? setNotFound(true) : setError(e.message)));
@@ -56,7 +64,8 @@ function DistrictView() {
       .then((r) => setTxValues(r.tx_values))
       .catch(() => setTxValues(null));
     api<{ events: LandEvent[] }>(`/v1/land/${n}/events`).then((r) => setEvents(r.events)).catch(() => {});
-    api<{ posts: Post[] }>(`/v1/districts/${n}/neighbors`).then((r) => setNeighbors(r.posts)).catch(() => {});
+    api<{ posts: Post[] }>(`/v1/districts/${n}/neighbors`).then((r) => setNearby(r.posts)).catch(() => {});
+    api<{ tiles: Tile[] }>(`/v1/land?start=${Math.max(0, n - 3)}&end=${n + 3}`).then((r) => setAround(r.tiles)).catch(() => {});
   }, [n]);
 
   useEffect(() => {
@@ -70,19 +79,22 @@ function DistrictView() {
     api<Me>("/v1/me", { token }).then(setMe).catch(() => setMe(null));
   }, [token]);
 
-  const claimedParcels = useMemo(() => new Set(land?.parcels.map((p) => p.tx_index)), [land]);
+  const claimed = useMemo(() => new Set(land?.parcels.map((p) => p.tx_index)), [land]);
+  const own = useMemo(() => new Set(me?.parcels.filter((p) => p.bitmap_number === n).map((p) => p.tx_index)), [me, n]);
 
-  if (notFound) return <p className="muted">Block {params.n} hasn&apos;t been mined or indexed yet.</p>;
-  if (error) return <p className="error">{error}</p>;
-  if (!land || !district) return <p className="muted">Loading {n}.bitmap…</p>;
+  if (notFound) return <p className="page muted">区块 {params.n} 还没挖出来，或者还没被索引。</p>;
+  if (error) return <p className="page error">{error}</p>;
+  if (!land || !district) return <DistrictSkeleton n={n} />;
 
   const viewer = district.viewer;
   const isOwner = viewer?.role === "owner";
   const canPost = !!viewer && !viewer.muted && viewer.role !== "visitor";
   const canReply = !!viewer && !viewer.muted && (viewer.role !== "visitor" || district.profile.visitor_comments_on);
   const asOptions = (me?.districts || []).filter((d) => d !== n);
+  const zone = zoneOf(land.zone);
+  const txCount = land.tx_count ?? txValues?.length ?? null;
 
-  const owner = async (path: string, method: string, body?: unknown) => {
+  const act = async (path: string, method: string, body?: unknown) => {
     try {
       await api(path, { method, token, body });
       await Promise.all([loadDistrict(), loadPosts()]);
@@ -94,135 +106,338 @@ function DistrictView() {
     canReply,
     isOwner,
     asOptions,
-    onPin: (p) => owner(`/v1/districts/${n}/pin`, "PUT", { post_id: p.id }),
-    onMute: (a) => confirm(`Mute ${short(a)} in ${n}.bitmap?`) && owner(`/v1/districts/${n}/mutes/${a}`, "PUT"),
+    onPin: (p) => act(`/v1/districts/${n}/pin`, "PUT", { post_id: p.id }),
+    onMute: (a) => confirm(`在 ${n}.bitmap 禁言 ${short(a)}？`) && act(`/v1/districts/${n}/mutes/${a}`, "PUT"),
   };
-  const parcel = selected != null ? land.parcels.find((p) => p.tx_index === selected) : undefined;
+  const parcelOwner = (i: number) => land.parcels.find((p) => p.tx_index === i)?.owner?.address;
+  const share = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {}
+  };
 
   return (
-    <div className="district">
+    <div className="page district">
       {district.profile.cover && (
         // eslint-disable-next-line @next/next/no-img-element
         <img className="banner" src={district.profile.cover} alt="" referrerPolicy="no-referrer" />
       )}
-      <section className="district-head card">
-        <div className="cover">
-          {txValues ? (
-            <Mondrian txValues={txValues} claimed={claimedParcels} selected={selected} onSelect={setSelected} />
-          ) : (
-            <div className="mondrian placeholder" />
-          )}
-        </div>
-        <div className="district-info">
-          <h1>{n}.bitmap</h1>
-          <div className="chips">
-            <span className="chip">{epochName(n)}</span>
-            {LANDMARKS[n] && <span className="chip landmark">{LANDMARKS[n]}</span>}
-            {land.tx_count != null && <span className="chip">{land.tx_count.toLocaleString()} transactions</span>}
-            <span className="chip">{land.parcels.length} parcels claimed</span>
+      <section className="d-hero">
+        <div className="d-info">
+          <div className="crumbs">
+            <span>{epochName(n)}</span>
+            <span aria-hidden>·</span>
+            <span>区块 {n.toLocaleString("en-US")}</span>
+            {zone && (
+              <>
+                <span aria-hidden>·</span>
+                <span className="zone-tag">
+                  <i className="swatch" style={{ background: ZONES[zone].color }} />
+                  {ZONES[zone].name}
+                  {LANDMARKS[n] && ` · ${LANDMARKS[n]}`}
+                </span>
+              </>
+            )}
           </div>
-          {land.claimed ? (
-            <p>
-              Owner <span className="mono" title={district.owner || ""}>{short(district.owner)}</span>
-              {land.district && <span className="muted small"> · inscription #{land.district.inscription_number}</span>}
-            </p>
-          ) : (
-            <p className="muted">Nobody has claimed this block yet. Inscribe {n}.bitmap to claim it.</p>
-          )}
-          {district.profile.bio && <p className="bio">{district.profile.bio}</p>}
-          <div className="row">
-            <span className="muted small">{district.followers} followers</span>
+          <div className="d-title-row">
+            <h1 className="d-title mono">
+              {n}
+              <span className="dim">.bitmap</span>
+            </h1>
+            <div className="row tight">
+              {n > 0 ? (
+                <Link className="icon-btn" href={`/district/${n - 1}`} aria-label="上一个街区">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="m15 18-6-6 6-6" />
+                  </svg>
+                </Link>
+              ) : null}
+              <Link className="icon-btn" href={`/district/${n + 1}`} aria-label="下一个街区">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="m9 18 6-6-6-6" />
+                </svg>
+              </Link>
+            </div>
+          </div>
+          <p className="lede">{district.profile.bio || (zone ? ZONES[zone].story : "")}</p>
+          <div className="stats">
+            <div>
+              <b className="mono">{txCount?.toLocaleString("en-US") ?? "—"}</b>
+              <span>地块</span>
+            </div>
+            <div>
+              <b className="mono">{land.parcels.length.toLocaleString("en-US")}</b>
+              <span>已认领</span>
+            </div>
+            <div>
+              <b className="mono">{district.followers.toLocaleString("en-US")}</b>
+              <span>关注</span>
+            </div>
+            <div>
+              <b className="mono">{district.post_count.toLocaleString("en-US")}</b>
+              <span>帖子</span>
+            </div>
+          </div>
+          <div className="owner-row">
+            <Avatar seed={n} size={40} />
+            <div className="grow">
+              {land.claimed ? (
+                <>
+                  <div>拥有者</div>
+                  <div className="mono muted small" title={district.owner || ""}>
+                    {short(district.owner)}
+                    {land.district && ` · 铭文 #${land.district.inscription_number}`}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>还没有人认领</div>
+                  <div className="muted small">铭刻 {n}.bitmap 就能成为这里的主人。</div>
+                </>
+              )}
+            </div>
             {viewer && <RoleBadge role={viewer.role} parcel={viewer.parcel} />}
-            {viewer?.muted && <span className="badge muted-badge">Muted here</span>}
-            {token && (
+            {viewer?.muted && <span className="badge muted-badge">你在这里被禁言了</span>}
+          </div>
+          <div className="row">
+            {token ? (
               <button
-                className={viewer?.following ? "ghost small" : "small"}
-                onClick={() => owner(`/v1/districts/${n}/follow`, viewer?.following ? "DELETE" : "PUT")}
+                type="button"
+                className={viewer?.following ? "ghost lg" : "primary lg"}
+                onClick={() => act(`/v1/districts/${n}/follow`, viewer?.following ? "DELETE" : "PUT")}
+                aria-pressed={!!viewer?.following}
               >
-                {viewer?.following ? "Following" : "Follow"}
+                {viewer?.following ? "已关注" : "关注街区"}
+              </button>
+            ) : (
+              <span className="muted small">连接钱包后可以关注和回复。</span>
+            )}
+            <button type="button" className="ghost lg" onClick={share}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7" />
+                <path d="m16 6-4-4-4 4" />
+                <path d="M12 2v13" />
+              </svg>
+              {copied ? "链接已复制" : "分享"}
+            </button>
+            {isOwner && (
+              <button type="button" className="ghost lg" onClick={() => setEditing(!editing)} aria-expanded={editing}>
+                编辑街区
               </button>
             )}
           </div>
-          <ParcelPanel n={n} index={selected} parcel={parcel} value={selected != null ? txValues?.[selected] : undefined} />
+        </div>
+
+        <div className="d-art">
+          {txValues ? (
+            <Mondrian
+              txValues={txValues}
+              claimed={claimed}
+              own={own}
+              selected={selected}
+              onSelect={setSelected}
+              card={(i) => (
+                <>
+                  <div className="row between">
+                    <b>地块 #{i}</b>
+                    <span className="muted small">{claimed.has(i) ? "已认领" : "未认领"}</span>
+                  </div>
+                  {i === 0 && <div className="muted small">coinbase，街区的市政厅</div>}
+                  <div className="row between small">
+                    <span className="muted">交易金额</span>
+                    <span className="mono">{btc(txValues[i])}</span>
+                  </div>
+                  {claimed.has(i) && (
+                    <div className="row between small">
+                      <span className="muted">居民</span>
+                      <span className="mono">{short(parcelOwner(i))}</span>
+                    </div>
+                  )}
+                </>
+              )}
+            />
+          ) : (
+            <div className="mondrian-wrap placeholder" />
+          )}
+          <div className="legend">
+            <span>
+              <i className="swatch free" />
+              未认领
+            </span>
+            <span>
+              <i className="swatch claimed" />
+              已认领
+            </span>
+            {own.size > 0 && (
+              <span>
+                <i className="swatch own" />
+                你的地块
+              </span>
+            )}
+            <span className="grow" />
+            <span>方块大小 = 交易金额</span>
+          </div>
         </div>
       </section>
 
-      {isOwner && (
-        <OwnerPanel district={district} onSave={(body) => owner(`/v1/districts/${n}/profile`, "PUT", body)} onUnpin={() => owner(`/v1/districts/${n}/pin`, "DELETE")} />
+      {isOwner && editing && (
+        <OwnerPanel
+          district={district}
+          onSave={(body) => act(`/v1/districts/${n}/profile`, "PUT", body).then(() => setEditing(false))}
+          onUnpin={() => act(`/v1/districts/${n}/pin`, "DELETE")}
+        />
       )}
 
-      <div className="columns">
-        <div className="col-main">
-          {district.pinned_post && (
-            <div className="pinned">
-              <p className="muted small">Pinned</p>
-              <PostCard key={`pin${district.pinned_post.id}`} post={district.pinned_post} actions={actions} onRemoved={() => loadDistrict()} />
-            </div>
-          )}
-          {canPost && <Composer district={n} asOptions={asOptions} onPosted={(p) => setPosts([p, ...posts])} />}
-          {!token && land.claimed && <p className="muted card">Sign in to follow, like and reply.</p>}
-          {token && viewer?.role === "visitor" && (
-            <p className="muted small">
-              {district.profile.visitor_comments_on
-                ? "Visitors can reply to posts. Hold a parcel here to post."
-                : "The owner has turned off visitor replies."}
-            </p>
-          )}
-          {posts.length === 0 && <p className="muted">No posts yet.</p>}
-          {posts.map((p) => (
-            <PostCard key={p.id} post={p} actions={actions} onRemoved={(id) => setPosts(posts.filter((x) => x.id !== id))} />
+      {around.length > 1 && (
+        <section className="neighbors" aria-label="相邻街区">
+          {around.map((t) => (
+            <Link key={t.bitmap_number} href={`/district/${t.bitmap_number}`} className={`neighbor${t.bitmap_number === n ? " current" : ""}`} aria-current={t.bitmap_number === n ? "page" : undefined}>
+              <TileThumb zone={zoneOf(t.zone)} n={t.bitmap_number} width={88} />
+              <span className="mono small">{t.bitmap_number.toLocaleString("en-US")}</span>
+            </Link>
           ))}
-        </div>
-        <aside className="col-side">
-          <section className="card">
-            <h2>Land activity</h2>
-            {events.length === 0 && <p className="muted small">No claims or transfers recorded yet.</p>}
+        </section>
+      )}
+
+      <nav className="tabs" aria-label="街区内容">
+        {(
+          [
+            ["posts", "动态"],
+            ["parcels", "地块"],
+            ["history", "历史"],
+          ] as [Tab, string][]
+        ).map(([k, label]) => (
+          <button key={k} type="button" className={tab === k ? "active" : ""} aria-pressed={tab === k} onClick={() => setTab(k)}>
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      <div className="d-body">
+        <div className="d-main">
+          {tab === "posts" && (
+            <>
+              {canPost && (
+                <Composer
+                  district={n}
+                  asOptions={asOptions}
+                  speakingAs={isOwner ? "街区主人身份" : viewer?.parcel != null ? `地块 #${viewer.parcel} ` : undefined}
+                  onPosted={(p) => setPosts([p, ...posts])}
+                />
+              )}
+              {token && viewer?.role === "visitor" && (
+                <p className="muted small hint">
+                  {district.profile.visitor_comments_on ? "访客可以回复帖子。持有这里的地块后就能发帖。" : "街区主人关闭了访客回复。"}
+                </p>
+              )}
+              {district.pinned_post && (
+                <PostCard key={`pin${district.pinned_post.id}`} post={district.pinned_post} actions={actions} pinned onRemoved={() => loadDistrict()} />
+              )}
+              {posts.filter((p) => p.id !== district.pinned_post?.id).map((p) => (
+                <PostCard key={p.id} post={p} actions={actions} onRemoved={(id) => setPosts(posts.filter((x) => x.id !== id))} />
+              ))}
+              {posts.length === 0 && !district.pinned_post && <p className="muted empty">还没有帖子。</p>}
+            </>
+          )}
+          {tab === "parcels" && <ParcelList land={land} txValues={txValues} own={own} onPick={(i) => setSelected(i)} />}
+          {tab === "history" && (
             <ul className="events">
+              {events.length === 0 && <li className="muted">还没有认领或转手记录。</li>}
               {events.map((e) => (
                 <EventItem key={e.id} event={e} />
               ))}
             </ul>
+          )}
+        </div>
+
+        <aside className="d-side">
+          <section>
+            <h2 className="section-title">最近变动</h2>
+            <ul className="events">
+              {events.length === 0 && <li className="muted small">还没有认领或转手记录。</li>}
+              {events.slice(0, 4).map((e) => (
+                <EventItem key={e.id} event={e} />
+              ))}
+            </ul>
+            {events.length > 4 && (
+              <button type="button" className="link-btn small" onClick={() => setTab("history")}>
+                查看全部历史
+              </button>
+            )}
           </section>
-          <section className="card">
-            <h2>Neighbors</h2>
-            <div className="chips">
-              {[-2, -1, 1, 2].map((d) =>
-                n + d >= 0 ? (
-                  <Link key={d} className="chip" href={`/district/${n + d}`}>
-                    {n + d}
-                  </Link>
-                ) : null,
-              )}
-            </div>
-            {neighbors.length === 0 && <p className="muted small">Quiet around here.</p>}
-            {neighbors.map((p) => (
-              <PostCard key={p.id} post={p} showDistrict />
-            ))}
-          </section>
+          {land.claimed && txCount != null && txCount > land.parcels.length && (
+            <section className="callout">
+              <b>认领这里的地块</b>
+              <p className="muted small">
+                还有 {(txCount - land.parcels.length).toLocaleString("en-US")} 个地块没人认领。街区主人可以把地块铭刻成子铭文分给居民，居民可以在这里发帖。
+              </p>
+            </section>
+          )}
+          {nearby.length > 0 && (
+            <section>
+              <h2 className="section-title">附近在聊</h2>
+              {nearby.map((p) => (
+                <PostCard key={p.id} post={p} showDistrict />
+              ))}
+            </section>
+          )}
         </aside>
       </div>
     </div>
   );
 }
 
-function ParcelPanel({ n, index, parcel, value }: { n: number; index: number | null; parcel?: Land["parcels"][number]; value?: number }) {
-  if (index == null) return <p className="muted small">Click a square to see that parcel.</p>;
+function ParcelList({ land, txValues, own, onPick }: { land: Land; txValues: number[] | null; own: Set<number>; onPick: (i: number) => void }) {
+  if (land.parcels.length === 0) return <p className="muted empty">还没有地块被认领。</p>;
   return (
-    <div className="parcel-panel">
-      <strong>
-        Parcel {index}.{n}.bitmap
-      </strong>
-      {index === 0 && <span className="muted small"> · coinbase, the town hall</span>}
-      {value != null && <span className="muted small"> · {btc(value)}</span>}
-      <p className="small">
-        {parcel ? (
-          <>
-            Claimed by <span className="mono">{short(parcel.owner?.address)}</span> · inscription #{parcel.inscription_number}
-          </>
-        ) : (
-          <span className="muted">Unclaimed. The district owner can inscribe {index}.{n}.bitmap as a child to split it off.</span>
-        )}
-      </p>
+    <div className="table-wrap">
+      <table className="table">
+        <thead>
+          <tr>
+            <th>地块</th>
+            <th>居民</th>
+            <th className="num">交易金额</th>
+            <th className="num">铭文</th>
+          </tr>
+        </thead>
+        <tbody>
+          {land.parcels.map((p) => (
+            <tr key={p.tx_index}>
+              <td>
+                <button type="button" className="link-btn" onClick={() => onPick(p.tx_index)}>
+                  #{p.tx_index}
+                </button>
+                {own.has(p.tx_index) && <span className="badge resident">你的</span>}
+              </td>
+              <td className="mono">{short(p.owner?.address)}</td>
+              <td className="num mono">{txValues ? btc(txValues[p.tx_index]) : "—"}</td>
+              <td className="num mono">#{p.inscription_number}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function DistrictSkeleton({ n }: { n: number }) {
+  return (
+    <div className="page district" aria-busy="true">
+      <section className="d-hero">
+        <div className="d-info">
+          <h1 className="d-title mono">
+            {n}
+            <span className="dim">.bitmap</span>
+          </h1>
+          <div className="skeleton line" />
+          <div className="skeleton line short" />
+        </div>
+        <div className="d-art">
+          <div className="mondrian-wrap placeholder" />
+        </div>
+      </section>
     </div>
   );
 }
@@ -236,49 +451,34 @@ function OwnerPanel({
   onSave: (body: { bio: string; cover: string; visitor_comments_on: boolean }) => void;
   onUnpin: () => void;
 }) {
-  const [open, setOpen] = useState(false);
   const [bio, setBio] = useState(district.profile.bio);
   const [cover, setCover] = useState(district.profile.cover || "");
   const [visitors, setVisitors] = useState(district.profile.visitor_comments_on);
   return (
-    <section className="card owner-panel">
-      <div className="row">
-        <h2 className="grow">Owner tools</h2>
+    <section className="owner-panel">
+      <h2 className="section-title">编辑街区</h2>
+      <label>
+        街区简介
+        <textarea value={bio} onChange={(e) => setBio(e.target.value)} rows={3} maxLength={1000} name="bio" />
+      </label>
+      <label>
+        封面图片链接
+        <input value={cover} onChange={(e) => setCover(e.target.value)} placeholder="https://…" name="cover" />
+      </label>
+      <label className="check">
+        <input type="checkbox" checked={visitors} onChange={(e) => setVisitors(e.target.checked)} name="visitors" />
+        允许访客回复
+      </label>
+      <div className="row end">
         {district.profile.pinned_post_id && (
-          <button className="ghost small" onClick={onUnpin}>
-            Unpin
+          <button type="button" className="ghost" onClick={onUnpin}>
+            取消置顶
           </button>
         )}
-        <button className="ghost small" onClick={() => setOpen(!open)}>
-          {open ? "Close" : "Edit page"}
+        <button type="button" className="primary" onClick={() => onSave({ bio, cover, visitor_comments_on: visitors })}>
+          保存
         </button>
       </div>
-      {open && (
-        <div className="stack">
-          <label>
-            About this district
-            <textarea value={bio} onChange={(e) => setBio(e.target.value)} rows={3} maxLength={1000} name="bio" />
-          </label>
-          <label>
-            Cover image link
-            <input value={cover} onChange={(e) => setCover(e.target.value)} placeholder="https://…" name="cover" />
-          </label>
-          <label className="row">
-            <input type="checkbox" checked={visitors} onChange={(e) => setVisitors(e.target.checked)} name="visitors" />
-            Visitors can reply
-          </label>
-          <div className="row end">
-            <button
-              onClick={() => {
-                onSave({ bio, cover, visitor_comments_on: visitors });
-                setOpen(false);
-              }}
-            >
-              Save
-            </button>
-          </div>
-        </div>
-      )}
     </section>
   );
 }

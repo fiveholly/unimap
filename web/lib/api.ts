@@ -45,13 +45,22 @@ export type Parcel = {
 export type Land = {
   name: string;
   bitmap_number: number;
+  zone: string | null;
   tx_count: number | null;
   claimed: boolean;
   district: { inscription_id: string; inscription_number: number; inscribed_height: number; owner: Owner } | null;
   parcels: Parcel[];
 };
 
-export type Tile = { bitmap_number: number; claimed: boolean; owner: string | null; parcels: number; posts: number };
+export type Tile = {
+  bitmap_number: number;
+  zone: string | null; // see lib/zones.ts; null until the zone indexer reaches the block
+  tx_count: number | null;
+  claimed: boolean;
+  owner: string | null;
+  parcels: number;
+  posts: number;
+};
 
 export type LandEvent = {
   id: number;

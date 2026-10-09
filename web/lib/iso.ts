@@ -1,0 +1,302 @@
+// Isometric district tiles: one illustrated building set per zone, drawn as flat polygons.
+// A tile is TILE_W x TILE_H; its ground diamond is centred at (CX, CY) and spans 128 x 64.
+
+import type { Zone } from "./zones";
+
+export const TILE_W = 128;
+export const TILE_H = 230;
+export const CX = 64;
+export const CY = 190;
+const A = 64;
+const B = 32;
+
+type Pt = [number, number];
+export type Shape = { pts: Pt[]; fill: string } | { e: [number, number, number, number]; fill: string };
+
+const hash = (n: number) => {
+  let h = (n ^ 0x9e3779b9) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  h ^= h >>> 16;
+  return h >>> 0;
+};
+export function rng(seed: number) {
+  let s = hash(seed);
+  return () => {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+    return hash(s) / 4294967296;
+  };
+}
+
+const iso = (x: number, y: number): Pt => [CX + ((x - y) * A) / 2, CY + ((x + y) * B) / 2];
+const up = (p: Pt, h: number): Pt => [p[0], p[1] - h];
+const lerp = (p: Pt, q: Pt, u: number): Pt => [p[0] + (q[0] - p[0]) * u, p[1] + (q[1] - p[1]) * u];
+
+type Faces = { t?: string; l: string; r: string };
+type Roof = { rb: string; lb: string; l: string; r: string };
+type Box = { N: Pt; E: Pt; S: Pt; W: Pt; h: number };
+
+class Painter {
+  out: Shape[] = [];
+  poly(pts: Pt[], fill: string) {
+    this.out.push({ pts, fill });
+  }
+  ell(x: number, y: number, rx: number, ry: number, fill: string) {
+    this.out.push({ e: [x, y, rx, ry], fill });
+  }
+  ground(c: Faces) {
+    const g = 0.95;
+    const N = iso(-g, -g), E = iso(g, -g), S = iso(g, g), W = iso(-g, g);
+    this.poly([W, S, [S[0], S[1] + 8], [W[0], W[1] + 8]], c.l);
+    this.poly([S, E, [E[0], E[1] + 8], [S[0], S[1] + 8]], c.r);
+    this.poly([N, E, S, W], c.t!);
+  }
+  box(gx: number, gy: number, w: number, d: number, h: number, c: Faces, z0 = 0): Box {
+    const N = up(iso(gx - w, gy - d), z0), E = up(iso(gx + w, gy - d), z0);
+    const S = up(iso(gx + w, gy + d), z0), W = up(iso(gx - w, gy + d), z0);
+    this.poly([up(W, h), up(S, h), S, W], c.l);
+    this.poly([up(S, h), up(E, h), E, S], c.r);
+    if (c.t) this.poly([up(N, h), up(E, h), up(S, h), up(W, h)], c.t);
+    return { N, E, S, W, h };
+  }
+  bands(k: Box, from: number, top: number, step: number, th: number, rate: number, r: () => number, on: string, off: string, u0 = 0.12, u1 = 0.88) {
+    for (let z = from; z + th <= k.h - top; z += step) {
+      for (const [p0, p1] of [[k.W, k.S], [k.S, k.E]] as [Pt, Pt][]) {
+        const a = lerp(p0, p1, u0), b = lerp(p0, p1, u1);
+        this.poly([up(a, z + th), up(b, z + th), up(b, z), up(a, z)], r() < rate ? on : off);
+      }
+    }
+  }
+  roof(k: Box, rh: number, c: Roof, gx: number, gy: number, z0 = 0) {
+    const ap = up(iso(gx, gy), z0 + k.h + rh);
+    const T = (p: Pt) => up(p, k.h);
+    this.poly([T(k.N), T(k.E), ap], c.rb);
+    this.poly([T(k.W), T(k.N), ap], c.lb);
+    this.poly([T(k.W), T(k.S), ap], c.l);
+    this.poly([T(k.S), T(k.E), ap], c.r);
+  }
+  tree(gx: number, gy: number, s: number) {
+    const b = iso(gx, gy);
+    this.ell(b[0] + 2.5 * s, b[1] + 0.5, 6.5 * s, 2.6 * s, "rgba(0,0,0,0.28)");
+    this.poly([[b[0] - 1.3, b[1]], [b[0] + 1.3, b[1]], [b[0] + 1.3, b[1] - 6 * s], [b[0] - 1.3, b[1] - 6 * s]], "#5A3E28");
+    this.ell(b[0], b[1] - 11 * s, 6.5 * s, 7.5 * s, "#3A6E34");
+    this.ell(b[0] - 1.8 * s, b[1] - 13 * s, 3.6 * s, 4 * s, "#5C9A4A");
+  }
+  grass(r: () => number, n: number, col: string) {
+    for (let i = 0; i < n; i++) {
+      const p = iso(r() * 1.8 - 0.9, r() * 1.8 - 0.9);
+      this.poly([[p[0] - 1.6, p[1]], [p[0] + 1.6, p[1]], [p[0] + 0.3, p[1] - 4]], col);
+      this.poly([[p[0] + 0.8, p[1]], [p[0] + 3.2, p[1]], [p[0] + 2.8, p[1] - 3]], col);
+    }
+  }
+  mountain(sx: number, sy: number, rr: number, H: number) {
+    const W: Pt = [sx - rr, sy], E: Pt = [sx + rr, sy], S: Pt = [sx + rr * 0.1, sy + rr * 0.38], ap: Pt = [sx + rr * 0.08, sy - H];
+    this.poly([W, S, ap], "#5C564C");
+    this.poly([S, E, ap], "#867D6D");
+    this.poly([lerp(ap, W, 0.3), lerp(ap, S, 0.3), ap], "#D3CEC2");
+    this.poly([lerp(ap, S, 0.3), lerp(ap, E, 0.3), ap], "#F2EEE6");
+  }
+}
+
+// Things on a tile are drawn back to front by k = gx + gy.
+const inOrder = (items: { k: number; f: () => void }[]) => items.sort((a, b) => a.k - b.k).forEach((i) => i.f());
+const pick = <T,>(r: () => number, xs: T[]) => xs[Math.floor(r() * xs.length)];
+const LIT = "#F6C66B";
+const OFF = "rgba(10,12,16,0.35)";
+
+const BUILD: Record<Zone, (p: Painter, r: () => number) => void> = {
+  cbd: (p, r) => {
+    const glass = [
+      { t: "#A7B8C6", l: "#2F3C4A", r: "#4A5D70" },
+      { t: "#CFC5B3", l: "#46423C", r: "#6B655B" },
+      { t: "#8EA6A0", l: "#2C3D3A", r: "#476260" },
+    ];
+    const spots: [number, number, number][] = [[-0.5, -0.5, 150], [0.5, -0.5, 112], [-0.5, 0.5, 96], [0.5, 0.5, 66]];
+    inOrder(
+      spots.map(([gx, gy, h0], i) => ({
+        k: gx + gy,
+        f: () => {
+          const h = Math.round(h0 * (0.8 + 0.35 * r()));
+          const k = p.box(gx, gy, 0.34, 0.34, h, pick(r, glass));
+          p.bands(k, 6, 6, 7, 3, 0.6, r, LIT, OFF);
+          if (i === 0) {
+            const tp = up(iso(gx, gy), h + 16), bt = up(iso(gx, gy), h);
+            p.poly([[bt[0] - 0.8, bt[1]], [bt[0] + 0.8, bt[1]], [tp[0] + 0.4, tp[1]], [tp[0] - 0.4, tp[1]]], "#C9D2DA");
+            p.ell(tp[0], tp[1], 1.8, 1.8, "#FF6A4D");
+          }
+        },
+      })),
+    );
+  },
+  commercial: (p, r) => {
+    const walls = [
+      { t: "#B98F5E", l: "#7A5A3A", r: "#9A7450" },
+      { t: "#CDBFA2", l: "#857660", r: "#A6957A" },
+      { t: "#B0735A", l: "#6E4532", r: "#8C5840" },
+    ];
+    const awnings = ["#C2553D", "#3D8C86", "#D9A441"];
+    const spots: [number, number, number][] = [[-0.48, -0.48, 46], [0.5, -0.45, 34], [-0.45, 0.5, 30], [0.5, 0.5, 20]];
+    inOrder(
+      spots.map(([gx, gy, h0]) => ({
+        k: gx + gy,
+        f: () => {
+          const k = p.box(gx, gy, 0.38, 0.38, Math.round(h0 * (0.85 + 0.3 * r())), pick(r, walls));
+          const a = pick(r, awnings);
+          for (const [p0, p1] of [[k.W, k.S], [k.S, k.E]] as [Pt, Pt][]) {
+            const s = lerp(p0, p1, 0.08), e = lerp(p0, p1, 0.92);
+            p.poly([up(s, 12), up(e, 12), [e[0], e[1] - 7], [s[0], s[1] - 7]], a);
+            p.poly([up(s, 6), up(e, 6), e, s], "rgba(20,14,8,0.55)");
+          }
+          p.bands(k, 17, 5, 8, 3, 0.45, r, LIT, OFF);
+        },
+      })),
+    );
+  },
+  residential: (p, r) => {
+    p.grass(r, 8, "#76A257");
+    const roofs = [
+      { rb: "#C9714E", lb: "#A9573A", l: "#8E4630", r: "#B85E40" },
+      { rb: "#6F7E8C", lb: "#55626F", l: "#47525D", r: "#5E6C79" },
+      { rb: "#B98A4E", lb: "#9A6F3A", l: "#7E5A2E", r: "#A07440" },
+    ];
+    const spots: [number, number][] = [[-0.5, -0.45], [0.48, -0.52], [-0.5, 0.48], [0.45, 0.5]];
+    const items = spots.map(([gx, gy]) => ({
+      k: gx + gy,
+      f: () => p.roof(p.box(gx, gy, 0.27, 0.27, 12, { l: "#C9BDA6", r: "#E6DCC8" }), 11, pick(r, roofs), gx, gy),
+    }));
+    items.push({ k: 0, f: () => p.tree(0, 0, 0.9) }, { k: 0.05, f: () => p.tree(0.9, -0.85, 0.75) });
+    inOrder(items);
+  },
+  villa: (p, r) => {
+    p.grass(r, 22, "#6DAA52");
+    const white = { t: "#EFEAE0", l: "#B9B2A4", r: "#D9D3C7" };
+    inOrder([
+      {
+        k: -0.6,
+        f: () => {
+          const k = p.box(-0.3, -0.3, 0.46, 0.34, 18, white);
+          const s = lerp(k.S, k.E, 0.1), e = lerp(k.S, k.E, 0.9);
+          p.poly([up(s, 14), up(e, 14), up(e, 4), up(s, 4)], "#2E3E4A");
+          const k2 = p.box(-0.42, -0.4, 0.28, 0.22, 13, white, 18);
+          const s2 = lerp(k2.W, k2.S, 0.15), e2 = lerp(k2.W, k2.S, 0.85);
+          p.poly([up(s2, 10), up(e2, 10), up(e2, 3), up(s2, 3)], "#2E3E4A");
+        },
+      },
+      {
+        k: 1.0,
+        f: () => {
+          p.poly([iso(0.12, 0.3), iso(0.86, 0.3), iso(0.86, 0.9), iso(0.12, 0.9)], "#E6E0D2");
+          p.poly([iso(0.2, 0.38), iso(0.78, 0.38), iso(0.78, 0.82), iso(0.2, 0.82)], "#4FB3C9");
+          p.poly([iso(0.2, 0.38), iso(0.78, 0.38), iso(0.66, 0.5), iso(0.2, 0.5)], "#7FD0DE");
+        },
+      },
+      { k: -1.4, f: () => p.tree(0.75, -0.85, 1) },
+      { k: -0.25, f: () => p.tree(-0.85, 0.6, 1.1) },
+      { k: 0.65, f: () => p.tree(0.85, -0.2, 0.85) },
+      { k: 0.8, f: () => p.tree(-0.1, 0.9, 0.9) },
+    ]);
+  },
+  data: (p, r) => {
+    const hall = { t: "#7F93A7", l: "#3F4F60", r: "#56697E" };
+    const led = "#7FD1E8", dark = "rgba(10,14,20,0.35)";
+    inOrder([
+      {
+        k: -0.6,
+        f: () => {
+          const k = p.box(-0.15, -0.5, 0.75, 0.3, 18, hall);
+          p.bands(k, 5, 4, 6, 2, 0.7, r, led, dark, 0.06, 0.94);
+          for (let i = 0; i < 3; i++) p.box(-0.6 + i * 0.42, -0.5, 0.1, 0.12, 5, { t: "#9AABBC", l: "#55687C", r: "#6D8196" }, 18);
+        },
+      },
+      { k: 0.5, f: () => p.bands(p.box(0.3, 0.38, 0.55, 0.32, 13, hall), 4, 3, 5, 2, 0.6, r, led, dark, 0.06, 0.94) },
+      {
+        k: -0.1,
+        f: () => {
+          p.box(-0.65, 0.55, 0.13, 0.13, 40, { t: "#A9A39A", l: "#5E5952", r: "#7E786F" });
+          const tp = up(iso(-0.65, 0.55), 46);
+          p.ell(tp[0] + 4, tp[1] - 6, 8, 6, "rgba(230,230,230,0.22)");
+          p.ell(tp[0] + 10, tp[1] - 14, 10, 7, "rgba(230,230,230,0.14)");
+        },
+      },
+    ]);
+  },
+  landmark: (p) => {
+    p.poly([iso(-0.65, -0.65), iso(0.65, -0.65), iso(0.65, 0.65), iso(-0.65, 0.65)], "#B8944C");
+    inOrder([
+      { k: -1.6, f: () => p.tree(-0.8, -0.8, 0.8) },
+      {
+        k: 0,
+        f: () => {
+          p.box(0, 0, 0.34, 0.34, 8, { t: "#E0D2AC", l: "#8C7B55", r: "#B09C70" });
+          const ob = p.box(0, 0, 0.13, 0.13, 140, { t: "#F3D27A", l: "#9A7425", r: "#C9982F" }, 8);
+          p.roof(ob, 16, { rb: "#FBE3A0", lb: "#E2BC5C", l: "#B08524", r: "#E7B946" }, 0, 0, 8);
+        },
+      },
+      { k: 0.1, f: () => p.tree(0.85, -0.75, 0.8) },
+      { k: 0.15, f: () => p.tree(-0.75, 0.85, 0.8) },
+      { k: 1.6, f: () => p.tree(0.8, 0.8, 0.8) },
+    ]);
+  },
+  mountain: (p, r) => {
+    p.grass(r, 7, "#8A8758");
+    p.mountain(44, 194, 32, 58);
+    p.mountain(88, 198, 26, 42);
+    p.mountain(66, 214, 20, 24);
+    p.ell(30, 214, 4, 2.5, "#7A7466");
+    p.ell(98, 214, 3, 2, "#7A7466");
+  },
+};
+
+export const GROUND: Record<Zone | "unknown", Faces & { t: string }> = {
+  cbd: { t: "#4B4842", l: "#2A2824", r: "#3A3833" },
+  commercial: { t: "#6E5D46", l: "#3A2E20", r: "#4A3B2A" },
+  residential: { t: "#5C8743", l: "#3E3020", r: "#4E3C28" },
+  villa: { t: "#4F8A3E", l: "#3E3020", r: "#4E3C28" },
+  data: { t: "#3E4A56", l: "#232A31", r: "#2E363F" },
+  landmark: { t: "#9C7A3A", l: "#5A4520", r: "#6E5428" },
+  mountain: { t: "#6B6844", l: "#3E3424", r: "#4C4130" },
+  unknown: { t: "#2A2823", l: "#1A1916", r: "#22201C" },
+};
+
+/** Shapes of one tile. variant picks heights and colours, so neighbours differ. */
+export function tileShapes(zone: Zone | null, variant: number): Shape[] {
+  const p = new Painter();
+  p.ground(GROUND[zone ?? "unknown"]);
+  if (zone) BUILD[zone](p, rng(variant));
+  return p.out;
+}
+
+export function drawShapes(ctx: CanvasRenderingContext2D, shapes: Shape[]) {
+  for (const s of shapes) {
+    ctx.fillStyle = s.fill;
+    ctx.beginPath();
+    if ("pts" in s) {
+      ctx.moveTo(s.pts[0][0], s.pts[0][1]);
+      for (let i = 1; i < s.pts.length; i++) ctx.lineTo(s.pts[i][0], s.pts[i][1]);
+      ctx.closePath();
+    } else {
+      ctx.ellipse(s.e[0], s.e[1], s.e[2], s.e[3], 0, 0, Math.PI * 2);
+    }
+    ctx.fill();
+  }
+}
+
+export const VARIANTS = 6;
+const sprites = new Map<string, HTMLCanvasElement>();
+
+/** A pre-rendered tile image at `res` pixels per tile unit, cached. */
+export function tileSprite(zone: Zone | null, n: number, res: number): HTMLCanvasElement {
+  const variant = hash(n) % VARIANTS;
+  const key = `${zone}:${variant}:${res}`;
+  let c = sprites.get(key);
+  if (!c) {
+    c = document.createElement("canvas");
+    c.width = Math.ceil(TILE_W * res);
+    c.height = Math.ceil(TILE_H * res);
+    const ctx = c.getContext("2d")!;
+    ctx.scale(res, res);
+    drawShapes(ctx, tileShapes(zone, 9000 + variant));
+    sprites.set(key, c);
+  }
+  return c;
+}
