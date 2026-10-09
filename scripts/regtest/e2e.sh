@@ -128,12 +128,36 @@ PIDS+=($!)
 bitmap_at_tip() { [ "$(psqlq 'select max(block_height) from bitmap_block_hashes')" = "$TIP" ]; }
 wait_for "bitmap_index at tip" bitmap_at_tip
 
-# ---- unimap parcel_index ----------------------------------------------------
+# ---- unimap parcel_index + owner tracker ------------------------------------
 psql "$PGURL" -q -f "$ROOT/parcel_index/db_init.sql"
 PI="$WORK/parcel_env"; mkdir -p "$PI"
-printf '%s\nNETWORK_TYPE=regtest\nDB_READER_API_URL=http://127.0.0.1:11030/\nBITCOIN_RPC_URL=http://127.0.0.1:%s/\nBITCOIN_RPC_USER=%s\nBITCOIN_RPC_PASSWD=%s\n' \
-  "$DB_URL_PARTS" $RPC_PORT $RPC_USER $RPC_PASS >"$PI/.env"
-(cd "$PI" && PYTHONPATH="$ROOT" python3 -m parcel_index.indexer --once)
+printf '%s\nNETWORK_TYPE=regtest\nDB_READER_API_URL=http://127.0.0.1:11030/\nORD_API_URL=http://127.0.0.1:%s/\nBITCOIN_RPC_URL=http://127.0.0.1:%s/\nBITCOIN_RPC_USER=%s\nBITCOIN_RPC_PASSWD=%s\n' \
+  "$DB_URL_PARTS" $ORD_HTTP $RPC_PORT $RPC_USER $RPC_PASS >"$PI/.env"
+unimap_index() { # bring OPI, parcel_index and owners up to the current tip
+  TIP=$(cli getblockcount)
+  wait_for "OPI ord at tip" opi_at_tip
+  wait_for "bitmap_index at tip" bitmap_at_tip
+  wait_sync
+  (cd "$PI" && PYTHONPATH="$ROOT" python3 -m parcel_index.indexer --once)
+  (cd "$PI" && PYTHONPATH="$ROOT" python3 -m parcel_index.owners --once)
+}
+unimap_index
+OWNER_BEFORE=$(psqlq "select address from inscription_owners where inscription_id='$P_VALID1'")
+
+# Move parcel 1 to an address outside the ord wallet.
+cli -named createwallet wallet_name=ext >/dev/null
+EXT=$(cli -rpcwallet=ext getnewaddress "" bech32m)
+wallet send --fee-rate 1 "$EXT" "$P_VALID1" >/dev/null
+mine 1
+unimap_index
+
+# ---- land API -----------------------------------------------------------------
+API_PORT=18090
+(cd "$PI" && PYTHONPATH="$ROOT" exec python3 -m uvicorn api.app:app --port $API_PORT >"$WORK/api.log" 2>&1) &
+PIDS+=($!)
+wait_for "land API" curl -sf http://127.0.0.1:$API_PORT/v1/status
+api() { curl -sf "http://127.0.0.1:$API_PORT$1"; }
+jq_() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 
 # ---- assertions -------------------------------------------------------------
 fail=0
@@ -150,4 +174,17 @@ check "out-of-range parcel ignored" "0" "$(psqlq "select count(*) from parcels w
 check "leading-zero parcel ignored" "0" "$(psqlq "select count(*) from parcels where inscription_id='$P_ZERO'")"
 check "parcel count" "3" "$(psqlq "select count(*) from parcels")"
 check "parcel hashes cover every block" "$TIP" "$(psqlq "select max(block_height) from parcel_cumulative_event_hashes")"
+check "owners cover every block" "$TIP" "$(psqlq "select max(block_height) from owner_block_hashes")"
+check "every district and parcel has an owner row" "$(psqlq "select (select count(*) from bitmaps) + (select count(*) from parcels)")" "$(psqlq "select count(*) from inscription_owners")"
+check "district owner matches ord" "$(curl -sf -H 'Accept: application/json' http://127.0.0.1:$ORD_HTTP/inscription/$D_VALID | jq_ 'd["address"]')" "$(psqlq "select address from inscription_owners where inscription_id='$D_VALID'")"
+check "parcel 1 was held by the ord wallet before the transfer" "yes" "$([ -n "$OWNER_BEFORE" ] && [ "$OWNER_BEFORE" != "$EXT" ] && echo yes)"
+check "parcel 1 owner follows the transfer" "$EXT" "$(psqlq "select address from inscription_owners where inscription_id='$P_VALID1'")"
+check "parcel 1 owner updated at the transfer block" "$TIP" "$(psqlq "select updated_height from inscription_owners where inscription_id='$P_VALID1'")"
+check "API land: district" "$D_VALID" "$(api /v1/land/$B | jq_ 'd["district"]["inscription_id"]')"
+check "API land: parcels" "0,1,2" "$(api /v1/land/$B | jq_ '",".join(str(p["tx_index"]) for p in d["parcels"])')"
+check "API land: tx_count" "3" "$(api /v1/land/$B | jq_ 'd["tx_count"]')"
+check "API land: unclaimed block" "False" "$(api /v1/land/5 | jq_ 'd["claimed"]')"
+check "API parcel owner" "$EXT" "$(api /v1/land/$B/parcels/1 | jq_ 'd["owner"]["address"]')"
+check "API address land" "1 0" "$(api /v1/addresses/$EXT/land | jq_ 'len(d["parcels"]), len(d["districts"])')"
+check "API future block 404" "404" "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:$API_PORT/v1/land/999999)"
 exit $fail
