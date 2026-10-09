@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
 import { Composer } from "@/components/Composer";
@@ -46,11 +46,18 @@ function DistrictView() {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadDistrict = useCallback(() => api<District>(`/v1/districts/${n}`, { token }).then(setDistrict), [n, token]);
-  const loadPosts = useCallback(
-    () => api<{ posts: Post[] }>(`/v1/districts/${n}/posts`, { token }).then((r) => setPosts(r.posts)),
-    [n, token],
-  );
+  // Keep only the latest answer: a request sent before sign-in can come back after the one
+  // sent with the token, and must not overwrite it.
+  const districtSeq = useRef(0);
+  const postsSeq = useRef(0);
+  const loadDistrict = useCallback(() => {
+    const id = ++districtSeq.current;
+    return api<District>(`/v1/districts/${n}`, { token }).then((d) => id === districtSeq.current && setDistrict(d));
+  }, [n, token]);
+  const loadPosts = useCallback(() => {
+    const id = ++postsSeq.current;
+    return api<{ posts: Post[] }>(`/v1/districts/${n}/posts`, { token }).then((r) => id === postsSeq.current && setPosts(r.posts));
+  }, [n, token]);
 
   useEffect(() => {
     if (!Number.isInteger(n) || n < 0) return setNotFound(true);
