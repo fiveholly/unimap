@@ -9,7 +9,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api import auth, land, social
+from api import auth, land, parks, polls, recruit, social, style
 
 app = FastAPI(title="unimap API")
 origins = [o for o in (os.getenv("API_CORS_ORIGINS") or "").split(",") if o]
@@ -20,3 +20,5 @@ if origins:
 app.include_router(land.router)
 app.include_router(auth.router)
 app.include_router(social.router)
+for extra in (recruit, polls, style, parks):
+    app.include_router(extra.router)

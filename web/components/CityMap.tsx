@@ -6,8 +6,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { short } from "./Session";
 import { api, type Land, type Tile } from "@/lib/api";
-import { CX, CY, GROUND, rng, TILE_H, TILE_W, tileSprite } from "@/lib/iso";
+import { CX, CY, GROUND, PAVED, rng, TILE_H, TILE_W, tileSprite } from "@/lib/iso";
 import { layout } from "@/lib/mondrian";
+import { side } from "@/lib/parks";
 import { LANDMARKS, ZONE_ORDER, ZONES, zoneOf, type Zone } from "@/lib/zones";
 
 // Blocks are grouped into quarters of 8 x 8, laid out like a city's street grid: inside a
@@ -183,6 +184,7 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
   const chunks = useRef(new Set<number>());
   const areas = useRef(new Map<number, { slots: (Zone | null)[]; level: number | null }>()); // each fully loaded quarter
   const plans = useRef(new Map<number, Plan | "loading" | "failed">());
+  const parkNames = useRef(new Map<number, string | null>()); // null while loading
   const [level, setLevel] = useState<Level>("block");
   const hover = useRef<number | null>(null);
   const frame = useRef(0);
@@ -226,7 +228,26 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
         quarters.push(q);
       }
     const want = new Set<number>();
-    const labels: [number, number, string][] = [];
+    const labels: [number, number, string, "landmark" | "park"][] = [];
+    const parkCells = new Map<number, [number, number][]>(); // park id -> screen centres of its members
+    // A park's outline goes over everything at the end, like a territory line in a game:
+    // drawn at ground level it would hide behind the tall buildings in front.
+    const borders: [[number, number], [number, number]][] = [];
+    /** Collect a park member's edges that face outside the park. */
+    const parkBorder = (n: number, park: number, x: number, y: number) => {
+      const N: [number, number] = [x, y - 30 * s], E: [number, number] = [x + 60 * s, y], S: [number, number] = [x, y + 30 * s], W: [number, number] = [x - 60 * s, y];
+      const sides: [number, number, [number, number], [number, number]][] = [
+        [1, 0, E, S],
+        [-1, 0, N, W],
+        [0, 1, S, W],
+        [0, -1, N, E],
+      ];
+      for (const [du, dv, p0, p1] of sides) {
+        const m = side(n, du, dv);
+        // Across a street the outline stays: it marks the park's edge on each side of the road.
+        if (m === null || tiles.current.get(m)?.park !== park || Math.floor(m / PER_Q) !== Math.floor(n / PER_Q)) borders.push([p0, p1]);
+      }
+    };
     const diamond = (x: number, y: number, hw: number, hh: number) => {
       ctx.beginPath();
       ctx.moveTo(x, y - hh);
@@ -239,7 +260,7 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
     for (const [n, name] of Object.entries(LANDMARKS)) {
       if (+n > tip) continue;
       const [lx, ly] = toScreen(...centre(+n));
-      if (lx > -60 && lx < w + 60 && ly > -40 && ly < h + 40) labels.push([lx, ly - (lvl === "area" ? 46 * AREA_LABEL * s : 150 * s), name]);
+      if (lx > -60 && lx < w + 60 && ly > -40 && ly < h + 40) labels.push([lx, ly - (lvl === "area" ? 46 * AREA_LABEL * s : 150 * s), name, "landmark"]);
     }
 
     if (lvl === "area") {
@@ -338,7 +359,16 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
         if (!t) want.add(Math.floor(n / CHUNK));
         const zone = zoneOf(t?.zone);
         const plan = fade > 0 ? plans.current.get(n) : undefined;
-        const sprite = () => tileSprite(zone, n, res, t?.level ?? null);
+        const sprite = () => tileSprite(zone, n, res, t?.level ?? null, t?.style ?? null, t?.park != null);
+        if (t?.park != null) {
+          // Park members stand on one paved plaza: fill the seams between their tiles too.
+          ctx.fillStyle = PAVED.t;
+          diamond(c.x, c.y, 64.5 * s, 32.5 * s);
+          ctx.fill();
+          const list = parkCells.get(t.park) ?? [];
+          list.push([c.x, c.y]);
+          parkCells.set(t.park, list);
+        }
         if (plan && typeof plan === "object") {
           // A bare slab with the plots on top: map the unit square onto the ground diamond.
           const g = GROUND[zone ?? "unknown"];
@@ -374,6 +404,7 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
         } else {
           ctx.drawImage(sprite(), sx, sy, TILE_W * s, TILE_H * s);
         }
+        if (t?.park != null) parkBorder(n, t.park, c.x, c.y);
         if (n === selectedRef.current || n === hover.current) {
           ctx.strokeStyle = n === selectedRef.current ? "#EDEAE3" : "rgba(237,234,227,0.45)";
           ctx.lineWidth = 2;
@@ -383,16 +414,50 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
       }
       if (fade > 0 && visible.length <= PARCEL_FETCH_LIMIT) for (const n of visible) loadPlan(n);
     }
+    if (borders.length) {
+      ctx.strokeStyle = "rgba(232,214,170,0.9)";
+      ctx.lineWidth = 2;
+      ctx.lineCap = "round";
+      ctx.setLineDash([7, 5]);
+      ctx.beginPath();
+      for (const [p0, p1] of borders) {
+        ctx.moveTo(...p0);
+        ctx.lineTo(...p1);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    for (const [id, cellsOf] of parkCells) {
+      if (!parkNames.current.has(id)) {
+        parkNames.current.set(id, null);
+        api<{ name: string }>(`/v1/parks/${id}`)
+          .then((p) => {
+            parkNames.current.set(id, p.name);
+            invalidate();
+          })
+          .catch(() => {});
+      }
+      const name = parkNames.current.get(id);
+      if (!name) continue;
+      const x = cellsOf.reduce((a, c) => a + c[0], 0) / cellsOf.length;
+      const y = cellsOf.reduce((a, c) => a + c[1], 0) / cellsOf.length;
+      labels.push([x, y - 70 * s, name, "park"]);
+    }
     ctx.font = `600 11px ${getComputedStyle(cv).fontFamily}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    for (const [x, y, text] of labels) {
+    for (const [x, y, text, kind] of labels) {
       const tw = ctx.measureText(text).width + 18;
-      ctx.fillStyle = "#E8B04A";
+      ctx.fillStyle = kind === "park" ? "rgba(22,21,18,0.88)" : "#E8B04A";
       ctx.beginPath();
       ctx.roundRect(x - tw / 2, y - 10, tw, 20, 10);
       ctx.fill();
-      ctx.fillStyle = "#1A1206";
+      if (kind === "park") {
+        ctx.strokeStyle = PAVED.t;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+      ctx.fillStyle = kind === "park" ? "#EDEAE3" : "#1A1206";
       ctx.fillText(text, x, y + 0.5);
     }
 

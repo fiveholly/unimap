@@ -3,15 +3,19 @@
 // here from deterministic fake data; what the visitor does (posts, likes, follows, profile
 // edits) is kept in localStorage, and "重置演示数据" clears it.
 
-import type { District, FeedItem, Land, LandEvent, Me, Parcel, Post, Ranking, Role, Tile } from "./api";
-import { prosperity, type ProsperityParts } from "./prosperity";
+import type { Application, District, FeedItem, Land, LandEvent, Me, Parcel, Park, Poll, Post, Ranking, Recruiting, Role, Tile } from "./api";
+import { connected } from "./parks";
+import { prosperity, THRESHOLDS, type ProsperityParts } from "./prosperity";
+import { COLORS, DECOS, visibleStyle, type DistrictStyle } from "./style";
 
 export const DEMO = process.env.NEXT_PUBLIC_DEMO === "1";
 
 export const DEMO_TIP = 918_500;
-/** The visitor's demo wallet: owns 840000 and 812345, lives on parcel 7 of 840001. */
+/** The visitor's demo wallet: owns 840000, the two districts that touch it in its quarter
+ * (840008, 840009), 838407 across the street from it and 812345, and lives on parcel 7 of
+ * 840001. */
 export const DEMO_ADDRESS = "bc1pdemo7visitor0wa11et0unimap0city0xyz0000000000000000q8d2k";
-const OWNED = [840000, 812345];
+const OWNED = [838407, 840000, 840008, 840009, 812345];
 const OWN_PARCEL = { bitmap_number: 840001, tx_index: 7 };
 
 const LANDMARKS = [0, 57043, 210000, 420000, 481824, 630000, 709632, 767430, 840000];
@@ -45,8 +49,17 @@ const fakeAddress = (seed: number) => {
   for (let i = 0; s.length < 62; i++) s += "023456789acdefghjklmnpqrstuvwxyz"[Math.floor(hash(seed * 31 + i) * 32)];
   return s;
 };
+// A park someone else already runs, a quarter before the halving block and across the street from it.
+const SEED_PARK = { id: 1, name: "矿工新村", members: [838459, 838460, 839940, 839941, 839948, 839949, 839950], owner: "" };
 const ownerOf = (n: number): string | null =>
-  OWNED.includes(n) ? DEMO_ADDRESS : n === 840001 || hash(n + 3) < 0.88 ? fakeAddress(n) : null;
+  OWNED.includes(n)
+    ? DEMO_ADDRESS
+    : SEED_PARK.members.includes(n)
+      ? fakeAddress(77)
+      : n === 840001 || hash(n + 3) < 0.88
+        ? fakeAddress(n)
+        : null;
+SEED_PARK.owner = fakeAddress(77);
 const inscriptionId = (seed: number) => {
   let s = "";
   for (let i = 0; i < 64; i++) s += "0123456789abcdef"[Math.floor(hash(seed * 7 + i) * 16)];
@@ -105,7 +118,32 @@ type State = {
   profiles: Record<number, Partial<District["profile"]>>;
   mutes: Record<number, string[]>;
   checkins?: Record<number, string[]>; // the visitor's check-in days (YYYY-MM-DD) per district
+  styles?: Record<number, DistrictStyle>;
+  recruits?: Record<number, { message: string; parcels: number[]; updated_at: string; by: string }>;
+  applications?: Record<number, Application[]>;
+  polls?: DemoPoll[];
+  parks?: { id: number; name: string; owner: string; members: number[] }[];
 };
+type DemoPoll = { id: number; n: number; question: string; options: string[]; by: string; created_at: string; closes_at: string; closed_at: string | null; votes: Record<string, number> };
+
+const iso = (daysAgo: number) => new Date((NOW - daysAgo * DAY) * 1000).toISOString();
+function seedExtras(s: State) {
+  s.styles ??= {};
+  s.recruits ??= {
+    840002: { message: "减半旁边的街区，欢迎新邻居。地块不多，先到先得。", parcels: [3, 8, 12], updated_at: iso(0.5), by: ownerOf(840002)! },
+    839998: { message: "CBD 招商：想在手续费最高的那几天留个名字的，来这里。", parcels: [1, 2], updated_at: iso(1.2), by: ownerOf(839998)! },
+    839941: { message: "矿工新村招居民，园区里七个街区隔着马路一起热闹。", parcels: [4, 9], updated_at: iso(2), by: SEED_PARK.owner },
+  };
+  s.applications ??= {};
+  s.polls ??= [
+    { id: 1, n: 840001, question: "街区要不要在 coinbase 那块地上修一个广场？", options: ["修广场", "保持原样", "改成公园"], by: ownerOf(840001)!,
+      created_at: iso(1), closes_at: iso(-6), closed_at: null, votes: { a: 0, b: 0, c: 2, d: 0, e: 1 } },
+    { id: 2, n: 840001, question: "下个月的街区聚会选哪天？", options: ["周六", "周日"], by: ownerOf(840001)!,
+      created_at: iso(20), closes_at: iso(13), closed_at: null, votes: { a: 1, b: 1, c: 0 } },
+  ];
+  s.parks ??= [SEED_PARK];
+  return s;
+}
 
 const KEY = "unimap.demo";
 let state: State | null = null;
@@ -146,7 +184,7 @@ function load(): State {
   } catch {
     state = seed();
   }
-  return state;
+  return seedExtras(state);
 }
 function save() {
   try {
@@ -200,7 +238,55 @@ function tile(n: number): Tile {
     bitmap_number: n, zone: zoneOf(n), tx_count: txCount(n), claimed: !!o, owner: o,
     parcels: parcelIndexes(n).length,
     posts: s.posts.filter((p) => p.bitmap_number === n && !p.removed && p.reply_to == null).length,
-    level: zoneOf(n) === "landmark" ? 5 : prosperity(parts(n)).level,
+    level: levelAt(n),
+    style: styleAt(n),
+    park: parkOf(n)?.id ?? null,
+  };
+}
+const ownScore = (n: number) => prosperity(parts(n));
+/** Parks with only the members their owner still holds, and at least two of them. */
+function liveParks() {
+  return (load().parks ?? [])
+    .map((p) => ({ ...p, members: p.members.filter((m) => ownerOf(m) === p.owner) }))
+    .filter((p) => p.members.length >= 2);
+}
+function parkOf(n: number): Park | null {
+  const p = liveParks().find((x) => x.members.includes(n));
+  if (!p) return null;
+  const score = p.members.reduce((a, m) => a + ownScore(m).score, 0);
+  let level = 1;
+  while (level < 5 && score >= THRESHOLDS[level]) level++;
+  return { ...p, score, level };
+}
+function levelAt(n: number): number {
+  if (zoneOf(n) === "landmark") return 5;
+  return Math.max(ownScore(n).level, parkOf(n)?.level ?? 0);
+}
+/** The visitor's saved looks, and made-up ones on about a fifth of the claimed districts. */
+function styleAt(n: number): DistrictStyle | null {
+  const saved = load().styles?.[n];
+  const lv = levelAt(n);
+  if (saved) return visibleStyle(saved, lv);
+  if (!ownerOf(n) || OWNED.includes(n) || hash(n + 41) > 0.2) return null;
+  const colors = Object.keys(COLORS), decos = Object.keys(DECOS).filter((d) => DECOS[d].level <= lv);
+  const k = Math.min(decos.length, 1 + Math.floor(hash(n + 43) * 3));
+  const deco = decos.map((d, i) => [hash(n * 13 + i), d] as const).sort((a, b) => a[0] - b[0]).slice(0, k).map(([, d]) => d);
+  return visibleStyle({ color: colors[Math.floor(hash(n + 42) * colors.length)], deco }, lv);
+}
+function recruitAt(n: number, me: string | null) {
+  const s = load();
+  const r = s.recruits?.[n];
+  if (!r || ownerOf(n) !== r.by) return null;
+  const taken = new Set(parcelIndexes(n));
+  const apps = s.applications?.[n] ?? [];
+  return { message: r.message, parcels: r.parcels.filter((i) => !taken.has(i)), updated_at: r.updated_at, applications: apps.length, applied: !!me && apps.some((a) => a.address === me) };
+}
+function pollView(p: DemoPoll, me: string | null): Poll {
+  const counts = p.options.map((_, i) => Object.values(p.votes).filter((v) => v === i).length);
+  const end = p.closed_at ?? p.closes_at;
+  return {
+    id: p.id, bitmap_number: p.n, question: p.question, options: p.options, counts, total: counts.reduce((a, b) => a + b, 0),
+    my_vote: me != null && me in p.votes ? p.votes[me] : null, created_by: p.by, created_at: p.created_at, closes_at: end, closed: Date.parse(end) <= Date.now(),
   };
 }
 let hot: number[] | undefined;
@@ -258,7 +344,7 @@ function roleOf(address: string | null, n: number): [Role, number | null] {
 function profile(n: number): District["profile"] {
   const p = load().profiles[n] ?? {};
   const pinned = n === 840000 && p.pinned_post_id === undefined ? 1 : p.pinned_post_id ?? null;
-  return { bio: p.bio ?? "", cover: p.cover ?? null, visitor_comments_on: p.visitor_comments_on ?? true, pinned_post_id: pinned };
+  return { bio: p.bio ?? "", cover: p.cover ?? null, visitor_comments_on: p.visitor_comments_on ?? true, pinned_post_id: pinned, style: styleAt(n) };
 }
 const view = (p: Post, me: string | null): Post => ({ ...p, liked_by_me: !!me && !!load().likes[p.id], like_count: p.like_count + (me && load().likes[p.id] ? 1 : 0) });
 const topPosts = (pred: (p: Post) => boolean, me: string | null) =>
@@ -276,6 +362,9 @@ function district(n: number, me: string | null): District {
     viewer: me ? { address: me, role, parcel, muted: (s.mutes[n] ?? []).includes(me), following: s.follows.includes(n) } : null,
     prosperity: zoneOf(n) === "landmark" ? { ...pr, level: 5, next: null } : pr,
     checked_in_today: !!me && (s.checkins?.[n] ?? []).includes(today()),
+    level: levelAt(n),
+    park: parkOf(n),
+    recruit: recruitAt(n, me),
   };
 }
 
@@ -317,6 +406,113 @@ function route(path: string, opts: Opts): unknown {
   }
   if ((m = p.match(/^\/v1\/districts\/(\d+)$/))) return district(+m[1], me);
   if (p === "/v1/rankings") return { rankings: rankings() };
+  const owns = (n: number) => {
+    const a = needMe();
+    if (ownerOf(n) !== a) fail(403, "只有街区主人可以这样做");
+    return a;
+  };
+  if (p === "/v1/recruiting") {
+    const out: Recruiting[] = Object.keys(s.recruits ?? {})
+      .map(Number)
+      .flatMap((n) => {
+        const r = recruitAt(n, me), o = ownerOf(n);
+        return r && o ? [{ bitmap_number: n, name: `${n}.bitmap`, zone: zoneOf(n), owner: o, level: levelAt(n), message: r.message, parcels: r.parcels, updated_at: r.updated_at }] : [];
+      })
+      .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+    return { districts: out };
+  }
+  if ((m = p.match(/^\/v1\/districts\/(\d+)\/recruit$/))) {
+    const n = +m[1], a = owns(n);
+    if (method === "DELETE") {
+      delete s.recruits![n];
+      delete s.applications![n];
+    } else {
+      const plots = [...new Set((body.parcels as number[]) ?? [])].sort((x, y) => x - y);
+      if (plots.some((i) => i < 0 || i >= txCount(n) || parcelIndexes(n).includes(i))) fail(400, "有的地块不存在或已经被认领");
+      if (s.recruits![n] && s.recruits![n].by !== a) delete s.applications![n];
+      s.recruits![n] = { message: String(body.message).trim(), parcels: plots, updated_at: new Date().toISOString(), by: a };
+    }
+    save();
+    return method === "DELETE" ? { ok: true } : recruitAt(n, a);
+  }
+  if ((m = p.match(/^\/v1\/districts\/(\d+)\/applications?$/))) {
+    const n = +m[1];
+    if (p.endsWith("applications")) {
+      owns(n);
+      return { applications: [...(s.applications![n] ?? [])].reverse() };
+    }
+    const a = needMe();
+    const list = (s.applications![n] ??= []);
+    if (method === "DELETE") s.applications![n] = list.filter((x) => x.address !== a);
+    else {
+      if (!recruitAt(n, a)) fail(404, "这个街区没有在招募");
+      if (roleOf(a, n)[0] !== "visitor") fail(400, "你已经住在这里了");
+      s.applications![n] = [...list.filter((x) => x.address !== a), { address: a, note: String(body.note ?? "").trim(), created_at: new Date().toISOString() }];
+    }
+    save();
+    return { ok: true };
+  }
+  if ((m = p.match(/^\/v1\/districts\/(\d+)\/polls$/))) {
+    const n = +m[1];
+    if (method === "GET") return { polls: s.polls!.filter((x) => x.n === n).sort((a, b) => b.id - a.id).map((x) => pollView(x, me)) };
+    const a = owns(n);
+    const options = (body.options as string[]).map((o) => o.trim());
+    if (options.length < 2 || new Set(options).size !== options.length) fail(400, "选项要不同，至少两个");
+    const poll: DemoPoll = { id: Math.max(0, ...s.polls!.map((x) => x.id)) + 1, n, question: String(body.question).trim(), options, by: a,
+      created_at: new Date().toISOString(), closes_at: new Date(Date.now() + Number(body.days ?? 7) * DAY * 1000).toISOString(), closed_at: null, votes: {} };
+    s.polls!.push(poll);
+    save();
+    return pollView(poll, a);
+  }
+  if ((m = p.match(/^\/v1\/polls\/(\d+)\/(vote|close)$/))) {
+    const poll = s.polls!.find((x) => x.id === +m![1]) ?? fail(404, "没有这个投票");
+    const a = needMe();
+    if (m[2] === "close") {
+      owns(poll.n);
+      poll.closed_at ??= new Date().toISOString();
+    } else {
+      if (pollView(poll, a).closed) fail(409, "投票已经结束");
+      if (roleOf(a, poll.n)[0] === "visitor") fail(403, "只有街区主人和居民可以投票");
+      poll.votes[a] = Number(body.option);
+    }
+    save();
+    return pollView(poll, a);
+  }
+  if ((m = p.match(/^\/v1\/districts\/(\d+)\/style$/))) {
+    const n = +m[1];
+    owns(n);
+    const st = { color: String(body.color), deco: (body.deco as string[]) ?? [] };
+    const lv = levelAt(n);
+    const locked = [COLORS[st.color]?.level, ...st.deco.map((d) => DECOS[d]?.level)].some((l) => l == null || l > lv);
+    if (locked) fail(403, `还没解锁，现在是 ${lv} 级`);
+    s.styles![n] = st;
+    save();
+    return st;
+  }
+  if ((m = p.match(/^\/v1\/parks(?:\/(\d+))?$/))) {
+    const id = m[1] ? +m[1] : null;
+    if (method === "GET") {
+      const park = liveParks().find((x) => x.id === id);
+      return park ? parkOf(park.members[0]) : fail(404, "没有这个园区");
+    }
+    const a = needMe();
+    const existing = id != null ? s.parks!.find((x) => x.id === id) ?? fail(404, "没有这个园区") : null;
+    if (existing && existing.owner !== a) fail(403, "只有园区主人可以这样做");
+    if (method === "DELETE") {
+      s.parks = s.parks!.filter((x) => x.id !== id);
+      save();
+      return { ok: true };
+    }
+    const members = [...new Set(body.members as number[])].sort((x, y) => x - y);
+    if (members.length < 2 || !connected(members)) fail(400, "园区要由连成一片的两个以上街区组成，边挨着边或隔着马路相对都算");
+    if (members.some((x) => ownerOf(x) !== a)) fail(403, "园区里的街区都要是你的");
+    if (liveParks().some((x) => x.id !== id && x.members.some((y) => members.includes(y)))) fail(409, "有的街区已经在别的园区里了");
+    const name = String(body.name).trim();
+    if (existing) Object.assign(existing, { name, members });
+    else s.parks!.push({ id: Math.max(0, ...s.parks!.map((x) => x.id)) + 1, name, owner: a, members });
+    save();
+    return parkOf(members[0]);
+  }
   if ((m = p.match(/^\/v1\/districts\/(\d+)\/checkin$/)) && method === "POST") {
     needMe();
     const days = ((s.checkins ??= {})[+m[1]] ??= []);

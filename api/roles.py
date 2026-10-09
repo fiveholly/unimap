@@ -1,5 +1,7 @@
 """Who someone is in a district, read live from the indexer tables."""
 
+from fastapi import HTTPException
+
 OWNER, RESIDENT, VISITOR = "owner", "resident", "visitor"
 
 
@@ -18,6 +20,11 @@ def district_owner(cur, bitmap_number):
         (bitmap_number,),
     )
     return _first(cur.fetchone())
+
+
+def require_owner(cur, bitmap_number, address):
+    if district_owner(cur, bitmap_number) != address:
+        raise HTTPException(403, "only the district owner can do this")
 
 
 def role_in(cur, address, bitmap_number):

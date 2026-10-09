@@ -4,7 +4,7 @@ import os
 
 from fastapi import APIRouter, HTTPException
 
-from api import prosperity
+from api import parks, style
 from api.db import cursor
 from parcel_index.sources import Bitcoind
 
@@ -64,7 +64,7 @@ def status():
 
 @router.get("/v1/land")
 def land_range(start: int, end: int):
-    """Map tiles for blocks start..end (inclusive): claimed or not, owner, parcel and post counts, prosperity level."""
+    """Map tiles for blocks start..end (inclusive): claimed or not, owner, parcel and post counts, prosperity level, look and park."""
     if end < start or end - start + 1 > MAX_RANGE:
         raise HTTPException(400, f"range must cover 1 to {MAX_RANGE} blocks")
     with cursor() as cur:
@@ -86,7 +86,8 @@ def land_range(start: int, end: int):
             (start, end),
         )
         zones = {n: (zone, txs) for n, zone, txs in cur.fetchall()}
-        levels = prosperity.levels(cur, max(start, 0), end)
+        levels, park_of = parks.scored(cur, max(start, 0), end)
+        styles = style.in_range(cur, max(start, 0), end)
     tiles = []
     for n in range(max(start, 0), end + 1):
         owner, parcels, posts = claimed.get(n, (None, 0, 0))
@@ -101,6 +102,8 @@ def land_range(start: int, end: int):
                 "parcels": parcels,
                 "posts": posts,
                 "level": levels[n],
+                "style": style.visible(styles.get(n), levels[n]),
+                "park": park_of[n]["id"] if n in park_of else None,
             }
         )
     return {"tip": tip, "tiles": tiles}

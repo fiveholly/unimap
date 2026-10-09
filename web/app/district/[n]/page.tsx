@@ -8,8 +8,11 @@ import { Avatar } from "@/components/Avatar";
 import { Composer } from "@/components/Composer";
 import { EventItem } from "@/components/EventItem";
 import { Mondrian } from "@/components/Mondrian";
+import { OwnerTools } from "@/components/OwnerTools";
+import { Polls } from "@/components/Polls";
 import { PostCard, RoleBadge, type PostActions } from "@/components/PostCard";
 import { ProsperityCard } from "@/components/ProsperityCard";
+import { RecruitCard } from "@/components/Recruit";
 import { short, useSession } from "@/components/Session";
 import { TileThumb } from "@/components/TileThumb";
 import { api, ApiError, type District, type Land, type LandEvent, type Me, type Post, type Tile } from "@/lib/api";
@@ -24,7 +27,7 @@ export default function DistrictPage() {
   );
 }
 
-type Tab = "posts" | "parcels" | "history";
+type Tab = "posts" | "polls" | "parcels" | "history";
 
 function DistrictView() {
   const params = useParams<{ n: string }>();
@@ -209,7 +212,26 @@ function DistrictView() {
             {viewer && <RoleBadge role={viewer.role} parcel={viewer.parcel} />}
             {viewer?.muted && <span className="badge muted-badge">你在这里被禁言了</span>}
           </div>
-          {district.prosperity && <ProsperityCard p={district.prosperity} zone={zone} n={n} />}
+          {district.park && (
+            <div className="park-banner">
+              <span>
+                属于园区 <b>{district.park.name}</b>
+              </span>
+              <span className="muted small">
+                {district.park.members.length} 个街区 · 合计 {district.park.score} 分 · {district.park.level} 级
+              </span>
+              <span className="chips">
+                {district.park.members
+                  .filter((m) => m !== n)
+                  .map((m) => (
+                    <Link key={m} href={`/district/${m}`} className="chip mono">
+                      {m}
+                    </Link>
+                  ))}
+              </span>
+            </div>
+          )}
+          {district.prosperity && <ProsperityCard p={district.prosperity} zone={zone} n={n} park={district.park ?? null} look={district.profile.style ?? null} />}
           <div className="row">
             {token ? (
               <button
@@ -243,7 +265,7 @@ function DistrictView() {
             </button>
             {isOwner && (
               <button type="button" className="ghost lg" onClick={() => setEditing(!editing)} aria-expanded={editing}>
-                编辑街区
+                管理街区
               </button>
             )}
           </div>
@@ -302,9 +324,15 @@ function DistrictView() {
       </section>
 
       {isOwner && editing && (
-        <OwnerPanel
+        <OwnerTools
+          n={n}
           district={district}
-          onSave={(body) => act(`/v1/districts/${n}/profile`, "PUT", body).then(() => setEditing(false))}
+          land={land}
+          zone={zone}
+          held={me?.districts ?? []}
+          token={token}
+          txCount={txCount}
+          onDone={loadDistrict}
           onUnpin={() => act(`/v1/districts/${n}/pin`, "DELETE")}
         />
       )}
@@ -324,6 +352,7 @@ function DistrictView() {
         {(
           [
             ["posts", "动态"],
+            ["polls", "投票"],
             ["parcels", "地块"],
             ["history", "历史"],
           ] as [Tab, string][]
@@ -360,6 +389,7 @@ function DistrictView() {
               {posts.length === 0 && !district.pinned_post && <p className="muted empty">还没有帖子。</p>}
             </>
           )}
+          {tab === "polls" && <Polls n={n} token={token} canVote={!!viewer && viewer.role !== "visitor"} isOwner={isOwner} />}
           {tab === "parcels" && <ParcelList land={land} txValues={txValues} own={own} onPick={(i) => setSelected(i)} />}
           {tab === "history" && (
             <ul className="events">
@@ -372,6 +402,16 @@ function DistrictView() {
         </div>
 
         <aside className="d-side">
+          {district.recruit && (
+            <RecruitCard
+              n={n}
+              recruit={district.recruit}
+              token={token}
+              canApply={!!viewer && viewer.role === "visitor"}
+              onPick={setSelected}
+              onChanged={() => loadDistrict()}
+            />
+          )}
           <section>
             <h2 className="section-title">最近变动</h2>
             <ul className="events">
@@ -386,7 +426,7 @@ function DistrictView() {
               </button>
             )}
           </section>
-          {land.claimed && txCount != null && txCount > land.parcels.length && (
+          {!district.recruit && land.claimed && txCount != null && txCount > land.parcels.length && (
             <section className="callout">
               <b>认领这里的地块</b>
               <p className="muted small">
@@ -458,46 +498,5 @@ function DistrictSkeleton({ n }: { n: number }) {
         </div>
       </section>
     </div>
-  );
-}
-
-function OwnerPanel({
-  district,
-  onSave,
-  onUnpin,
-}: {
-  district: District;
-  onSave: (body: { bio: string; cover: string; visitor_comments_on: boolean }) => void;
-  onUnpin: () => void;
-}) {
-  const [bio, setBio] = useState(district.profile.bio);
-  const [cover, setCover] = useState(district.profile.cover || "");
-  const [visitors, setVisitors] = useState(district.profile.visitor_comments_on);
-  return (
-    <section className="owner-panel">
-      <h2 className="section-title">编辑街区</h2>
-      <label>
-        街区简介
-        <textarea value={bio} onChange={(e) => setBio(e.target.value)} rows={3} maxLength={1000} name="bio" />
-      </label>
-      <label>
-        封面图片链接
-        <input value={cover} onChange={(e) => setCover(e.target.value)} placeholder="https://…" name="cover" />
-      </label>
-      <label className="check">
-        <input type="checkbox" checked={visitors} onChange={(e) => setVisitors(e.target.checked)} name="visitors" />
-        允许访客回复
-      </label>
-      <div className="row end">
-        {district.profile.pinned_post_id && (
-          <button type="button" className="ghost" onClick={onUnpin}>
-            取消置顶
-          </button>
-        )}
-        <button type="button" className="primary" onClick={() => onSave({ bio, cover, visitor_comments_on: visitors })}>
-          保存
-        </button>
-      </div>
-    </section>
   );
 }

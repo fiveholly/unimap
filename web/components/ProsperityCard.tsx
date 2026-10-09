@@ -2,10 +2,25 @@
 
 import { TileThumb } from "@/components/TileThumb";
 import { GROWTH, LEVEL_NAMES, PART_NAMES, THRESHOLDS, WEIGHTS, type Prosperity, type ProsperityParts } from "@/lib/prosperity";
+import type { Park } from "@/lib/api";
+import type { DistrictStyle } from "@/lib/style";
 import type { Zone } from "@/lib/zones";
 
 /** How lively a district is, what it looks like now, and what the next level needs. */
-export function ProsperityCard({ p, zone, n }: { p: Prosperity; zone: Zone | null; n: number }) {
+export function ProsperityCard({
+  p,
+  zone,
+  n,
+  park = null,
+  look = null,
+}: {
+  p: Prosperity;
+  zone: Zone | null;
+  n: number;
+  park?: Park | null;
+  look?: DistrictStyle | null;
+}) {
+  const shown = Math.max(p.level, park?.level ?? 0);
   const growth: string[] = GROWTH[zone ?? "residential"] ?? GROWTH.residential;
   const from = THRESHOLDS[p.level - 1];
   const pct = p.next == null ? 100 : Math.round(((p.score - from) / (p.next - from)) * 100);
@@ -14,14 +29,14 @@ export function ProsperityCard({ p, zone, n }: { p: Prosperity; zone: Zone | nul
     <section className="prosperity" aria-label="繁荣度">
       <div className="pros-head">
         <div className="pros-looks">
-          <TileThumb zone={zone} n={n} width={72} level={p.level} />
-          {p.next != null && (
+          <TileThumb zone={zone} n={n} width={72} level={shown} look={look} />
+          {p.next != null && shown < 5 && (
             <>
               <span className="pros-arrow" aria-hidden>
                 →
               </span>
               <span className="pros-next">
-                <TileThumb zone={zone} n={n} width={72} level={p.level + 1} />
+                <TileThumb zone={zone} n={n} width={72} level={shown + 1} look={look} />
               </span>
             </>
           )}
@@ -47,6 +62,11 @@ export function ProsperityCard({ p, zone, n }: { p: Prosperity; zone: Zone | nul
           </div>
         </div>
       </div>
+      {park && park.level > p.level && (
+        <div className="small">
+          这里属于园区「{park.name}」，园区合计 {park.score} 分，地图上按 {park.level} 级 · {LEVEL_NAMES[park.level as Prosperity["level"]]}显示。
+        </div>
+      )}
       {keys.length > 0 && (
         <ul className="pros-parts">
           {keys.map((k) => (

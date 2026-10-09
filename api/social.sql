@@ -99,3 +99,62 @@ CREATE TABLE IF NOT EXISTS social.checkins (
 	created_at timestamptz NOT NULL DEFAULT now(),
 	CONSTRAINT checkins_pk PRIMARY KEY (bitmap_number, day, address)
 );
+
+-- A district's look on the map (api/style.py): {"color": ..., "deco": [...]}.
+ALTER TABLE social.profiles ADD COLUMN IF NOT EXISTS style jsonb NULL;
+
+-- Recruiting residents (api/recruit.py). A notice counts only while created_by still owns
+-- the district, so it lapses by itself when the district is sold.
+CREATE TABLE IF NOT EXISTS social.recruitments (
+	bitmap_number int4 NOT NULL,
+	message text NOT NULL,
+	parcels int4[] NOT NULL DEFAULT '{}', -- tx_index of the plots on offer
+	created_by text NOT NULL,
+	updated_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT recruitments_pk PRIMARY KEY (bitmap_number)
+);
+CREATE TABLE IF NOT EXISTS social.applications (
+	bitmap_number int4 NOT NULL,
+	address text NOT NULL,
+	note text NOT NULL DEFAULT '',
+	created_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT applications_pk PRIMARY KEY (bitmap_number, address)
+);
+
+-- District polls (api/polls.py). The owner asks, the owner and residents vote.
+CREATE TABLE IF NOT EXISTS social.polls (
+	id bigserial NOT NULL,
+	bitmap_number int4 NOT NULL,
+	question text NOT NULL,
+	options text[] NOT NULL,
+	created_by text NOT NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	closes_at timestamptz NOT NULL,
+	closed_at timestamptz NULL, -- closed early by the owner
+	CONSTRAINT polls_pk PRIMARY KEY (id)
+);
+CREATE INDEX IF NOT EXISTS polls_bitmap_idx ON social.polls USING btree (bitmap_number, id);
+CREATE TABLE IF NOT EXISTS social.poll_votes (
+	poll_id int8 NOT NULL,
+	address text NOT NULL,
+	option int2 NOT NULL,
+	role text NOT NULL, -- owner | resident, when they voted
+	created_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT poll_votes_pk PRIMARY KEY (poll_id, address)
+);
+
+-- Parks (api/parks.py): connected districts in one quarter held by one address. A member
+-- counts only while owner_address still holds it.
+CREATE TABLE IF NOT EXISTS social.parks (
+	id bigserial NOT NULL,
+	name text NOT NULL,
+	owner_address text NOT NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT parks_pk PRIMARY KEY (id)
+);
+CREATE TABLE IF NOT EXISTS social.park_members (
+	bitmap_number int4 NOT NULL,
+	park_id int8 NOT NULL,
+	CONSTRAINT park_members_pk PRIMARY KEY (bitmap_number)
+);
+CREATE INDEX IF NOT EXISTS park_members_park_idx ON social.park_members USING btree (park_id);

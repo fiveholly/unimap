@@ -253,6 +253,108 @@ class SocialApi(unittest.TestCase):
         self.assertEqual(ranks[0]["owner"], ALICE.address)
         self.assertEqual([r["score"] for r in ranks], sorted((r["score"] for r in ranks), reverse=True))
 
+    # --- recruiting, polls, looks, parks ---
+
+    def test_recruit_and_apply(self):
+        r = self.client.put(f"/v1/districts/{DISTRICT}/recruit", json={"message": "找邻居", "parcels": [2, 3]}, headers=self.h(ALICE))
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["parcels"], [2, 3])
+        bad = self.client.put(f"/v1/districts/{DISTRICT}/recruit", json={"message": "x", "parcels": [1]}, headers=self.h(ALICE))
+        self.assertEqual(bad.status_code, 400)  # plot 1 is Bob's
+        self.assertEqual(self.client.put(f"/v1/districts/{DISTRICT}/recruit", json={"message": "x"}, headers=self.h(CAROL)).status_code, 403)
+        listed = self.client.get("/v1/recruiting").json()["districts"]
+        self.assertEqual([d["bitmap_number"] for d in listed], [DISTRICT])
+        self.assertEqual(self.client.put(f"/v1/districts/{DISTRICT}/application", json={"note": "hi"}, headers=self.h(BOB)).status_code, 400)
+        self.assertEqual(self.client.put(f"/v1/districts/{DISTRICT}/application", json={"note": "我想住 #2"}, headers=self.h(CAROL)).status_code, 200)
+        page = self.client.get(f"/v1/districts/{DISTRICT}", headers=self.h(CAROL)).json()
+        self.assertEqual((page["recruit"]["applications"], page["recruit"]["applied"]), (1, True))
+        self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}/applications", headers=self.h(CAROL)).status_code, 403)
+        apps = self.client.get(f"/v1/districts/{DISTRICT}/applications", headers=self.h(ALICE)).json()["applications"]
+        self.assertEqual([(a["address"], a["note"]) for a in apps], [(CAROL.address, "我想住 #2")])
+        self.assertEqual(self.client.put(f"/v1/districts/{OTHER}/application", json={}, headers=self.h(ALICE)).status_code, 404)
+        self.assertEqual(self.client.delete(f"/v1/districts/{DISTRICT}/recruit", headers=self.h(ALICE)).status_code, 200)
+        self.assertIsNone(self.client.get(f"/v1/districts/{DISTRICT}").json()["recruit"])
+
+    def test_polls(self):
+        new = lambda w, **kw: self.client.post(f"/v1/districts/{DISTRICT}/polls", json={"question": "修个广场？", "options": ["好", "不好"], **kw}, headers=self.h(w))
+        self.assertEqual(new(BOB).status_code, 403)
+        self.assertEqual(new(ALICE, options=["好", "好"]).status_code, 400)
+        poll = new(ALICE, days=3).json()
+        vote = lambda w, o: self.client.put(f"/v1/polls/{poll['id']}/vote", json={"option": o}, headers=self.h(w))
+        self.assertEqual(vote(CAROL, 0).status_code, 403)  # a visitor
+        self.assertEqual(vote(BOB, 5).status_code, 400)
+        self.assertEqual(vote(BOB, 0).json()["counts"], [1, 0])
+        self.assertEqual(vote(BOB, 1).json()["counts"], [0, 1])  # changed their mind
+        after = vote(ALICE, 1).json()
+        self.assertEqual((after["counts"], after["total"], after["my_vote"]), ([0, 2], 2, 1))
+        self.assertEqual(self.client.post(f"/v1/polls/{poll['id']}/close", headers=self.h(BOB)).status_code, 403)
+        self.assertTrue(self.client.post(f"/v1/polls/{poll['id']}/close", headers=self.h(ALICE)).json()["closed"])
+        self.assertEqual(vote(BOB, 0).status_code, 409)
+        listed = self.client.get(f"/v1/districts/{DISTRICT}/polls").json()["polls"]
+        self.assertEqual((listed[0]["id"], listed[0]["my_vote"]), (poll["id"], None))
+
+    def test_style_unlocks_with_level(self):
+        put = lambda w, body: self.client.put(f"/v1/districts/{OTHER}/style", json=body, headers=self.h(w))
+        self.assertEqual(put(ALICE, {"color": "red"}).status_code, 403)  # not Alice's district
+        self.assertEqual(put(CAROL, {"color": "pink"}).status_code, 400)
+        self.assertEqual(put(CAROL, {"color": "red", "deco": ["statue"]}).status_code, 403)  # needs level 5
+        self.assertEqual(put(CAROL, {"color": "red", "deco": ["flag"]}).status_code, 200)
+        page = self.client.get(f"/v1/districts/{OTHER}").json()
+        self.assertEqual(page["profile"]["style"], {"color": "red", "deco": ["flag"]})
+        tile = self.client.get(f"/v1/land?start={OTHER}&end={OTHER}").json()["tiles"][0]
+        self.assertEqual(tile["style"], {"color": "red", "deco": ["flag"]})
+        from api import style
+
+        self.assertEqual(style.visible({"color": "gold", "deco": ["flag", "statue"]}, 2), {"color": "orange", "deco": ["flag"]})
+
+    def test_parks(self):
+        from api import parks
+
+        self.assertTrue(parks.connected([100, 101, 109]))
+        self.assertFalse(parks.connected([100, 102]))
+        self.assertFalse(parks.connected([127, 128]))  # consecutive, but in quarters that don't touch
+        self.assertTrue(parks.connected([127, 1656]))  # face each other across a street
+        self.assertTrue(parks.connected([120, 1536]))  # across the street the other way
+        self.assertIsNone(parks.side(56, 0, 1))  # off the left edge of the map
+        for n in (0, 127, 1600, 1663, 3100, 3135):
+            for m in parks.neighbours(n):
+                self.assertIn(n, set(parks.neighbours(m)))
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "insert into bitmaps (inscription_id, inscription_number, bitmap_number, block_height) values "
+                "('d101i0', 10, 101, 300), ('d108i0', 11, 108, 301) on conflict do nothing;"
+                "insert into inscription_owners (inscription_id, created_height, outpoint, address, updated_height) values "
+                f"('d101i0', 300, 'e:0', '{ALICE.address}', 300), ('d108i0', 301, 'f:0', '{ALICE.address}', 301) "
+                "on conflict do nothing;"
+            )
+        make = lambda w, members, name="减半园": self.client.post("/v1/parks", json={"name": name, "members": members}, headers=self.h(w))
+        self.assertEqual(make(ALICE, [100, 101, 999]).status_code, 400)
+        self.assertEqual(make(CAROL, [100, 101]).status_code, 403)
+        park = make(ALICE, [100, 101, 108])
+        self.assertEqual(park.status_code, 201, park.text)
+        park = park.json()
+        self.assertEqual(park["members"], [100, 101, 108])
+        self.assertEqual(make(ALICE, [100, 101]).status_code, 409)
+        page = self.client.get("/v1/districts/101").json()
+        self.assertEqual(page["park"]["id"], park["id"])
+        self.assertEqual(page["level"], park["level"])
+        tiles = {t["bitmap_number"]: t for t in self.client.get("/v1/land?start=100&end=108").json()["tiles"]}
+        self.assertEqual({n for n, t in tiles.items() if t["park"] == park["id"]}, {100, 101, 108})
+        self.assertTrue(all(tiles[n]["level"] == park["level"] for n in (100, 101, 108)))
+        # Selling a district takes it out; one left is no park.
+        with self.conn.cursor() as cur:
+            cur.execute("update inscription_owners set address = 'bcrt1qbuyer' where inscription_id in ('d101i0', 'd108i0');")
+        try:
+            self.assertEqual(self.client.get(f"/v1/parks/{park['id']}").status_code, 404)
+            self.assertIsNone(self.client.get(f"/v1/districts/{DISTRICT}").json()["park"])
+        finally:
+            with self.conn.cursor() as cur:
+                cur.execute(f"update inscription_owners set address = '{ALICE.address}' where inscription_id in ('d101i0', 'd108i0');")
+        renamed = self.client.put(f"/v1/parks/{park['id']}", json={"name": "新名字", "members": [100, 108]}, headers=self.h(ALICE))
+        self.assertEqual((renamed.status_code, renamed.json()["members"]), (200, [100, 108]))
+        self.assertEqual(self.client.delete(f"/v1/parks/{park['id']}", headers=self.h(CAROL)).status_code, 403)
+        self.assertEqual(self.client.delete(f"/v1/parks/{park['id']}", headers=self.h(ALICE)).status_code, 200)
+
     # --- land changes hands ---
 
     def test_owner_change_moves_admin_rights(self):

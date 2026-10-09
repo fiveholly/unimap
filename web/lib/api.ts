@@ -2,6 +2,7 @@
 
 import { DEMO, demoApi } from "./demo";
 import type { Prosperity } from "./prosperity";
+import type { DistrictStyle } from "./style";
 
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 
@@ -65,6 +66,8 @@ export type Tile = {
   parcels: number;
   posts: number;
   level?: number | null; // prosperity 1-5, see lib/prosperity.ts
+  style?: DistrictStyle | null;
+  park?: number | null;
 };
 
 export type LandEvent = {
@@ -101,7 +104,7 @@ export type District = {
   bitmap_number: number;
   name: string;
   owner: string | null;
-  profile: { bio: string; cover: string | null; visitor_comments_on: boolean; pinned_post_id: number | null };
+  profile: { bio: string; cover: string | null; visitor_comments_on: boolean; pinned_post_id: number | null; style?: DistrictStyle | null };
   pinned_post: Post | null;
   followers: number;
   post_count: number;
@@ -109,6 +112,36 @@ export type District = {
   // Added with prosperity; the page hides them if an older API leaves them out.
   prosperity?: Prosperity;
   checked_in_today?: boolean;
+  level?: number; // as drawn on the map: a park member takes the park's level
+  park?: Park | null;
+  recruit?: Recruit | null;
+};
+
+export type Park = { id: number; name: string; owner: string; members: number[]; score: number; level: number };
+export type Recruit = { message: string; parcels: number[]; updated_at: string; applications: number; applied: boolean };
+export type Recruiting = {
+  bitmap_number: number;
+  name: string;
+  zone: string | null;
+  owner: string;
+  level: number;
+  message: string;
+  parcels: number[];
+  updated_at: string;
+};
+export type Application = { address: string; note: string; created_at: string };
+export type Poll = {
+  id: number;
+  bitmap_number: number;
+  question: string;
+  options: string[];
+  counts: number[];
+  total: number;
+  my_vote: number | null;
+  created_by: string;
+  created_at: string;
+  closes_at: string;
+  closed: boolean;
 };
 
 export type Ranking = { bitmap_number: number; name: string; zone: string | null; owner: string | null; score: number; level: number };

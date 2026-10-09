@@ -14,7 +14,7 @@ import psycopg2.extras
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import bip322, prosperity, roles
+from api import bip322, parks, prosperity, recruit, roles, style
 from api.auth import current_address, normalize_address, optional_address
 from api.db import cursor
 from api.land import EVENT_SELECT, _event
@@ -86,14 +86,15 @@ def _fetch_posts(cur, where, args, me, limit):
 
 def _profile(cur, bitmap_number):
     cur.execute(
-        "select bio, cover, visitor_comments_on, pinned_post_id, updated_by, updated_at "
+        "select bio, cover, visitor_comments_on, pinned_post_id, updated_by, updated_at, style "
         "from social.profiles where bitmap_number = %s;",
         (bitmap_number,),
     )
     row = cur.fetchone()
     if row is None:
-        return {"bio": "", "cover": None, "visitor_comments_on": True, "pinned_post_id": None}
+        return {"bio": "", "cover": None, "visitor_comments_on": True, "pinned_post_id": None, "style": None}
     return {
+        "style": row["style"],
         "bio": row["bio"],
         "cover": row["cover"],
         "visitor_comments_on": row["visitor_comments_on"],
@@ -140,6 +141,9 @@ def district(bitmap_number: int, viewer: str | None = Depends(optional_address))
             pinned = found[0] if found else None
     with cursor() as cur:
         prosper = prosperity.of(cur, bitmap_number)
+        levels, park_of = parks.scored(cur, bitmap_number, bitmap_number)
+        notice = recruit.get(cur, bitmap_number, viewer)
+    profile["style"] = style.visible(profile["style"], levels[bitmap_number])
     return {
         "bitmap_number": bitmap_number,
         "name": f"{bitmap_number}.bitmap",
@@ -150,6 +154,9 @@ def district(bitmap_number: int, viewer: str | None = Depends(optional_address))
         "post_count": counts["posts"],
         "prosperity": prosper,
         "checked_in_today": counts["checked_in"],
+        "level": levels[bitmap_number],
+        "park": park_of.get(bitmap_number),
+        "recruit": notice,
         "viewer": None
         if viewer is None
         else {
@@ -350,9 +357,7 @@ def create_post(bitmap_number: int, req: NewPost, address: str = Depends(current
         return _fetch_posts(cur, "p.id = %(id)s", {"id": row["id"]}, address, 1)[0]
 
 
-def _require_owner(cur, bitmap_number, address):
-    if roles.district_owner(cur, bitmap_number) != address:
-        raise HTTPException(403, "only the district owner can do this")
+_require_owner = roles.require_owner
 
 
 def _log(cur, bitmap_number, action, by, target=None, post_id=None):
