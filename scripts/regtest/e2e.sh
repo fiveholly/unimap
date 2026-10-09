@@ -11,6 +11,7 @@
 #   OPI_ORD                OPI's ord fork binary (ord/target/release/ord)
 #   OPI_DIR                OPI checkout (for modules/bitmap_index)
 #   PGURL                  postgres URL of an empty database, e.g. postgresql://postgres@localhost/unimap_e2e
+# Optional: KEEP_RUNNING=1 keeps bitcoind, ord and the API up after the checks.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -206,4 +207,10 @@ check "social: owner signs in with ord's BIP-322 signature" "yes" "$([ -n "$TOKE
 check "social: owner post accepted" "owner" "$(printf '%s' "$POST_JSON" | jq_ 'd["author"]["role"]')"
 check "social: post listed on district page" "gm from the owner" "$(api /v1/districts/$B/posts | jq_ 'd["posts"][0]["body"]')"
 check "API future block 404" "404" "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:$API_PORT/v1/land/999999)"
+if [ -n "${KEEP_RUNNING:-}" ]; then
+  # Leave everything up for manual or browser testing (API_CORS_ORIGINS reaches uvicorn).
+  echo "services running: API http://127.0.0.1:$API_PORT, ord http://127.0.0.1:$ORD_HTTP, district $B owner $OWNER_ADDR"
+  printf '%s\n' "$B" "$OWNER_ADDR" "$EXT" >"$WORK/dev-info"
+  wait
+fi
 exit $fail

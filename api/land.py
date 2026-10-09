@@ -1,10 +1,22 @@
 """Land API: districts, parcels and who holds them."""
 
+import os
+
 from fastapi import APIRouter, HTTPException
 
 from api.db import cursor
+from parcel_index.sources import Bitcoind
 
 router = APIRouter()
+MAX_RANGE = 1000
+
+
+def _bitcoind():
+    return Bitcoind(
+        os.getenv("BITCOIN_RPC_URL") or "http://localhost:8332/",
+        os.getenv("BITCOIN_RPC_USER"),
+        os.getenv("BITCOIN_RPC_PASSWD"),
+    )
 
 
 def _owner(outpoint, address, value):
@@ -47,6 +59,56 @@ def _parcel(row):
 def status():
     with cursor() as cur:
         return {"indexed_height": _heights(cur)}
+
+
+@router.get("/v1/land")
+def land_range(start: int, end: int):
+    """Map tiles for blocks start..end (inclusive): claimed or not, owner, parcel and post counts."""
+    if end < start or end - start + 1 > MAX_RANGE:
+        raise HTTPException(400, f"range must cover 1 to {MAX_RANGE} blocks")
+    with cursor() as cur:
+        tip = _heights(cur)["bitmap"]
+        if tip is None:
+            return {"tip": None, "tiles": []}
+        end = min(end, tip)
+        cur.execute(
+            "select b.bitmap_number, o.address, "
+            "(select count(*) from parcels p where p.bitmap_number = b.bitmap_number), "
+            "(select count(*) from social.posts s where s.bitmap_number = b.bitmap_number and s.removed_at is null) "
+            "from bitmaps b left join inscription_owners o on o.inscription_id = b.inscription_id "
+            "where b.bitmap_number between %s and %s;",
+            (start, end),
+        )
+        claimed = {n: (owner, parcels, posts) for n, owner, parcels, posts in cur.fetchall()}
+    tiles = []
+    for n in range(max(start, 0), end + 1):
+        owner, parcels, posts = claimed.get(n, (None, 0, 0))
+        tiles.append({"bitmap_number": n, "claimed": n in claimed, "owner": owner, "parcels": parcels, "posts": posts})
+    return {"tip": tip, "tiles": tiles}
+
+
+@router.get("/v1/land/{bitmap_number}/txs")
+def land_txs(bitmap_number: int):
+    """Output value of every transaction in the block (sats), for the Mondrian layout.
+    Transaction i is parcel i."""
+    with cursor() as cur:
+        tip = _heights(cur)["bitmap"]
+        if bitmap_number < 0 or tip is None or bitmap_number > tip:
+            raise HTTPException(404, "no such block yet")
+        cur.execute("select block_hash, tx_values from block_tx_values where block_height = %s;", (bitmap_number,))
+        row = cur.fetchone()
+    btc = _bitcoind()
+    block_hash = btc.block_hash(bitmap_number)
+    if row is not None and row[0] == block_hash:
+        return {"bitmap_number": bitmap_number, "tx_values": row[1]}
+    values = btc.tx_values(block_hash)
+    with cursor() as cur:
+        cur.execute(
+            "insert into block_tx_values (block_height, block_hash, tx_values) values (%s, %s, %s) "
+            "on conflict (block_height) do update set block_hash = excluded.block_hash, tx_values = excluded.tx_values;",
+            (bitmap_number, block_hash, values),
+        )
+    return {"bitmap_number": bitmap_number, "tx_values": values}
 
 
 @router.get("/v1/land/{bitmap_number}")
