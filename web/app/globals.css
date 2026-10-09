@@ -589,6 +589,33 @@ kbd {
 .city-controls > * {
   background: rgba(22, 21, 18, 0.9);
 }
+.city-levels {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  display: flex;
+  padding: 3px;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: rgba(22, 21, 18, 0.9);
+}
+.city-levels button {
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--fg-2);
+  background: transparent;
+  white-space: nowrap;
+}
+.city-levels button:hover {
+  color: var(--fg);
+}
+.city-levels button.on {
+  color: var(--fg);
+  background: var(--surface-2);
+}
 .city-error {
   position: absolute;
   left: 12px;
