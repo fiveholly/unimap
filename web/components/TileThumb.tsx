@@ -16,13 +16,16 @@ export function TileThumb({
   width = 96,
   level = null,
   look = null,
+  pets = null,
 }: {
   zone: Zone | null;
   n: number;
   width?: number;
   level?: number | null;
   look?: DistrictStyle | null;
+  pets?: string[] | null;
 }) {
+  const petTags = (pets ?? []).join(",");
   const ref = useRef<HTMLCanvasElement>(null);
   const height = Math.round((width * (TILE_H - CROP_TOP)) / TILE_W);
   useEffect(() => {
@@ -33,7 +36,7 @@ export function TileThumb({
     const ctx = cv.getContext("2d")!;
     ctx.clearRect(0, 0, cv.width, cv.height);
     const k = cv.width / TILE_W;
-    ctx.drawImage(tileSprite(zone, n, k > 1 ? 2 : 1, level, look), 0, -CROP_TOP * k, cv.width, TILE_H * k);
-  }, [zone, n, width, height, level, look]);
+    ctx.drawImage(tileSprite(zone, n, k > 1 ? 2 : 1, level, look, false, petTags ? petTags.split(",") : null), 0, -CROP_TOP * k, cv.width, TILE_H * k);
+  }, [zone, n, width, height, level, look, petTags]);
   return <canvas ref={ref} className="tile-thumb" style={{ width, height }} aria-hidden />;
 }

@@ -9,6 +9,7 @@ import { Composer } from "@/components/Composer";
 import { EventItem } from "@/components/EventItem";
 import { Mondrian } from "@/components/Mondrian";
 import { OwnerTools } from "@/components/OwnerTools";
+import { PetsCard } from "@/components/Pets";
 import { Polls } from "@/components/Polls";
 import { PostCard, RoleBadge, type PostActions } from "@/components/PostCard";
 import { ProsperityCard } from "@/components/ProsperityCard";
@@ -405,6 +406,7 @@ function DistrictView() {
               onChanged={() => loadDistrict()}
             />
           )}
+          <PetsCard pets={district.pets ?? []} />
           <section>
             <h2 className="section-title">最近变动</h2>
             <ul className="events">

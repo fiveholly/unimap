@@ -6,16 +6,19 @@ import { useEffect, useMemo, useState } from "react";
 import { short } from "@/components/Session";
 import { ShareMenu } from "@/components/ShareMenu";
 import { TileThumb } from "@/components/TileThumb";
-import { api, type Application, type District, type Land } from "@/lib/api";
+import { PetPicture } from "@/components/Pets";
+import { api, type Application, type District, type Land, type Showcase } from "@/lib/api";
 import { connected, reach } from "@/lib/parks";
+import { amountText, nextTier, PET_KEYS, PETS, type PetKey } from "@/lib/pets";
 import { parkText, recruitText } from "@/lib/share";
 import { COLORS, DECOS, MAX_DECOS, type DistrictStyle } from "@/lib/style";
 import type { Zone } from "@/lib/zones";
 
-type Section = "profile" | "look" | "recruit" | "park";
+type Section = "profile" | "look" | "pets" | "recruit" | "park";
 const SECTIONS: [Section, string][] = [
   ["profile", "资料"],
   ["look", "外观"],
+  ["pets", "藏品"],
   ["recruit", "招募"],
   ["park", "园区"],
 ];
@@ -72,6 +75,7 @@ export function OwnerTools({
       </div>
       {section === "profile" && <Profile district={district} onSave={(b) => save(`/v1/districts/${n}/profile`, "PUT", b)} onUnpin={onUnpin} />}
       {section === "look" && <Look n={n} zone={zone} level={district.level ?? district.prosperity?.level ?? 1} current={district.profile.style ?? null} onSave={(b) => save(`/v1/districts/${n}/style`, "PUT", b)} />}
+      {section === "pets" && <PetsForm n={n} token={token} save={save} />}
       {section === "recruit" && <RecruitForm n={n} district={district} land={land} token={token} txCount={txCount} save={save} />}
       {section === "park" && <ParkForm n={n} district={district} held={held} save={save} />}
       {error && <p className="error small">{error}</p>}
@@ -309,6 +313,83 @@ function ParkForm({ n, district, held, save }: { n: number; district: District; 
           }}
         >
           {park ? "保存园区" : "建立园区"}
+        </button>
+      </div>
+    </>
+  );
+}
+
+function PetsForm({ n, token, save }: { n: number; token: string | null; save: (path: string, method: string, body?: unknown) => Promise<boolean> }) {
+  const [view, setView] = useState<Showcase | null>(null);
+  const [chosen, setChosen] = useState<PetKey[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const load = (path = `/v1/districts/${n}/showcase`, method = "GET") => {
+    setBusy(true);
+    return api<Showcase>(path, { method, token })
+      .then((v) => {
+        setView(v);
+        setChosen(v.chosen);
+        setError(null);
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setBusy(false));
+  };
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [n, token]);
+  if (error && !view) return <p className="error small">{error}</p>;
+  if (!view) return <p className="muted small">正在查你钱包里的资产…</p>;
+  const held = Object.fromEntries(view.held.map((h) => [h.asset, h]));
+  const toggle = (k: PetKey) => setChosen(chosen.includes(k) ? chosen.filter((x) => x !== k) : [...chosen, k]);
+  return (
+    <>
+      <p className="muted small">
+        钱包里有代表性的资产，可以变成街区里的宠物：持有 DOG 就养一只狗，持有 Quantum Cats 就有猫，持有越多越热闹。展示等于公开你持有这些资产，所以默认不展示，勾选后才会出现在地图和街区主页上。
+      </p>
+      <ul className="pet-list">
+        {PET_KEYS.map((k) => {
+          const h = held[k];
+          const tier = h?.tier ?? 0;
+          const next = nextTier(k, tier);
+          return (
+            <li key={k} className={`pet-row${tier ? "" : " off"}`}>
+              <PetPicture asset={k} tier={Math.max(1, tier)} size={56} />
+              <span className="grow">
+                <b>
+                  {PETS[k].name} · {PETS[k].asset}
+                </b>
+                <span className="muted small">
+                  {tier ? `你持有 ${amountText(k, h.amount)}，现在是${PETS[k].looks[tier - 1]}` : "你的钱包里还没有"}
+                  {next != null && `；持有 ${amountText(k, String(next))} 就是${PETS[k].looks[tier]}`}
+                </span>
+              </span>
+              <label className="check">
+                <input type="checkbox" checked={chosen.includes(k)} disabled={!tier} onChange={() => toggle(k)} name={`pet-${k}`} />
+                展示
+              </label>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="dim small">
+        {view.checked_at ? `数量查于 ${new Date(view.checked_at).toLocaleString("zh-CN")}。` : ""}
+        {view.error ? "上次没能查到最新数量，先用之前的结果。" : ""}只看登录的这个钱包地址。
+      </p>
+      {error && <p className="error small">{error}</p>}
+      <div className="row end">
+        <button type="button" className="ghost" disabled={busy} onClick={() => load(`/v1/districts/${n}/showcase/refresh`, "POST")}>
+          {busy ? "查询中…" : "重新查询"}
+        </button>
+        <button
+          type="button"
+          className="primary"
+          onClick={async () => {
+            if (await save(`/v1/districts/${n}/showcase`, "PUT", { assets: chosen })) load();
+          }}
+        >
+          保存
         </button>
       </div>
     </>

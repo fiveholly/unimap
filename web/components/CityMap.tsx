@@ -359,7 +359,7 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
         if (!t) want.add(Math.floor(n / CHUNK));
         const zone = zoneOf(t?.zone);
         const plan = fade > 0 ? plans.current.get(n) : undefined;
-        const sprite = () => tileSprite(zone, n, res, t?.level ?? null, t?.style ?? null, t?.park != null);
+        const sprite = () => tileSprite(zone, n, res, t?.level ?? null, t?.style ?? null, t?.park != null, t?.pets ?? null);
         if (t?.park != null) {
           // Park members stand on one paved plaza: fill the seams between their tiles too.
           ctx.fillStyle = PAVED.t;

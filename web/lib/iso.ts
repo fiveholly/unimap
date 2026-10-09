@@ -1,6 +1,7 @@
 // Isometric district tiles: one illustrated building set per zone, drawn as flat polygons.
 // A tile is TILE_W x TILE_H; its ground diamond is centred at (CX, CY) and spans 128 x 64.
 
+import { parsePets, petsKey, type PetKey } from "./pets";
 import { COLORS, styleKey, type DistrictStyle } from "./style";
 import type { Zone } from "./zones";
 
@@ -141,6 +142,56 @@ function decorate(p: Painter, style: DistrictStyle) {
       p.ell(b[0], b[1] - 22.5, 2.4, 2.6, hex);
     }
   });
+}
+
+// Pets an owner shows from their wallet (lib/pets.ts), on the two front edges between the
+// decorations, drawn last of all. A higher tier is a bigger dog, or more cats.
+function dog(p: Painter, b: Pt, s: number, flip = false) {
+  const f = flip ? -1 : 1;
+  const X = (dx: number) => b[0] + dx * s * f;
+  const Y = (dy: number) => b[1] + dy * s;
+  p.ell(X(0.5), Y(0.4), 8 * s, 2.4 * s, "rgba(0,0,0,0.3)");
+  for (const dx of [-4.2, -2.6, 2.8, 4.4]) p.poly([[X(dx - 0.6), Y(0)], [X(dx + 0.6), Y(0)], [X(dx + 0.6), Y(-4.5)], [X(dx - 0.6), Y(-4.5)]], dx < 0 ? "#B07A38" : "#C48A44");
+  p.poly([[X(-5.4), Y(-6.5)], [X(-8.2), Y(-11)], [X(-6.6), Y(-11.4)], [X(-4.4), Y(-7.6)]], "#B07A38"); // tail up
+  p.ell(X(0), Y(-6.2), 6.2 * s, 3.3 * s, "#D9A35B");
+  p.ell(X(0.4), Y(-5.2), 4 * s, 1.6 * s, "#F2E6CF");
+  p.ell(X(5.6), Y(-10), 3.4 * s, 3 * s, "#D9A35B");
+  p.ell(X(8.2), Y(-9), 1.9 * s, 1.4 * s, "#F2E6CF");
+  p.ell(X(9.6), Y(-9.4), 0.7 * s, 0.6 * s, "#2E2C28");
+  p.poly([[X(3.6), Y(-11.6)], [X(4.4), Y(-15.4)], [X(6.4), Y(-12.4)]], "#B07A38"); // ear
+  p.ell(X(6.6), Y(-10.6), 0.55 * s, 0.6 * s, "#2E2C28");
+}
+const CAT_FUR = ["#8E9AAF", "#E0A15A", "#3B3A40"];
+function cat(p: Painter, b: Pt, s: number, fur: string) {
+  const X = (dx: number) => b[0] + dx * s;
+  const Y = (dy: number) => b[1] + dy * s;
+  const light = fur === "#3B3A40" ? "#5A5960" : "#F2EEE6";
+  p.ell(X(0.8), Y(0.3), 5.5 * s, 1.9 * s, "rgba(0,0,0,0.3)");
+  p.ell(X(3.6), Y(-0.6), 3.4 * s, 1 * s, fur); // tail round the feet
+  p.ell(X(0), Y(-4.4), 3.6 * s, 4.4 * s, fur);
+  p.ell(X(0), Y(-3.6), 2 * s, 2.8 * s, light);
+  p.ell(X(0), Y(-10), 3.3 * s, 2.9 * s, fur);
+  p.poly([[X(-3.1), Y(-10.6)], [X(-2.6), Y(-14.6)], [X(-0.6), Y(-12.4)]], fur);
+  p.poly([[X(3.1), Y(-10.6)], [X(2.6), Y(-14.6)], [X(0.6), Y(-12.4)]], fur);
+  for (const dx of [-1.3, 1.3]) p.ell(X(dx), Y(-10.3), 0.65 * s, 0.75 * s, "#B5E07A");
+  p.ell(X(0), Y(-9.1), 0.5 * s, 0.35 * s, "#E58A8A");
+}
+function showPets(p: Painter, pets: [PetKey, number][]) {
+  for (const [key, tier] of pets) {
+    if (key === "dog") {
+      if (tier >= 3) {
+        const k = p.box(-0.05, 0.78, 0.11, 0.11, 9, { l: "#8A6844", r: "#A9824F" });
+        p.roof(k, 7, { rb: "#C2553D", lb: "#9E4330", l: "#8A3828", r: "#B04A35" }, -0.05, 0.78);
+        const door = iso(0.06, 0.82);
+        p.ell(door[0] - 3, door[1] - 4, 2.2, 3, "#2E2418");
+      }
+      dog(p, iso(0.32, 0.9), tier >= 2 ? 1.15 : 0.85);
+      if (tier >= 3) dog(p, iso(-0.45, 0.95), 0.62, true);
+    } else {
+      const spots: [number, number, number][] = [[0.9, 0.3, 1], [0.86, 0.02, 0.85], [0.95, 0.52, 0.8]];
+      spots.slice(0, tier).forEach(([gx, gy, sc], i) => cat(p, iso(gx, gy), sc, CAT_FUR[i]));
+    }
+  }
 }
 
 // Things on a tile are drawn back to front by k = gx + gy.
@@ -398,12 +449,37 @@ export const GROUND: Record<Zone | "unknown", Faces & { t: string }> = {
 export const PAVED: Faces & { t: string } = { t: "#A8977A", l: "#5A4C38", r: "#6E5E46" };
 
 /** Shapes of one tile. variant picks heights and colours, so neighbours differ. */
-export function tileShapes(zone: Zone | null, variant: number, level: Lv = 3, style: DistrictStyle | null = null, paved = false): Shape[] {
+export function tileShapes(
+  zone: Zone | null,
+  variant: number,
+  level: Lv = 3,
+  style: DistrictStyle | null = null,
+  paved = false,
+  pets: string[] | null = null,
+): Shape[] {
   const p = new Painter();
   p.ground(paved ? PAVED : GROUND[zone ?? "unknown"]);
   if (zone) BUILD[zone](p, rng(variant), level);
   if (style?.deco.length) decorate(p, style);
+  const shown = parsePets(pets);
+  if (shown.length) showPets(p, shown);
   return p.out;
+}
+
+/** Just the pets of one asset and tier, for the 藏品 card. */
+export function petShapes(key: PetKey, tier: number): Shape[] {
+  const p = new Painter();
+  showPets(p, [[key, tier]]);
+  return p.out;
+}
+
+export function shapesBounds(shapes: Shape[]): [number, number, number, number] {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const s of shapes) {
+    const pts: Pt[] = "pts" in s ? s.pts : [[s.e[0] - s.e[2], s.e[1] - s.e[3]], [s.e[0] + s.e[2], s.e[1] + s.e[3]]];
+    for (const [x, y] of pts) [x0, y0, x1, y1] = [Math.min(x0, x), Math.min(y0, y), Math.max(x1, x), Math.max(y1, y)];
+  }
+  return [x0, y0, x1, y1];
 }
 
 export function drawShapes(ctx: CanvasRenderingContext2D, shapes: Shape[]) {
@@ -433,10 +509,11 @@ export function tileSprite(
   level: number | null = null,
   style: DistrictStyle | null = null,
   paved = false,
+  pets: string[] | null = null,
 ): HTMLCanvasElement {
   const variant = hash(n) % VARIANTS;
   const lv = (level != null && level >= 1 && level <= 5 ? Math.round(level) : 3) as Lv;
-  const key = `${zone}:${variant}:${res}:${lv}:${styleKey(style)}:${paved ? "p" : ""}`;
+  const key = `${zone}:${variant}:${res}:${lv}:${styleKey(style)}:${paved ? "p" : ""}:${petsKey(pets)}`;
   let c = sprites.get(key);
   if (!c) {
     c = document.createElement("canvas");
@@ -444,7 +521,7 @@ export function tileSprite(
     c.height = Math.ceil(TILE_H * res);
     const ctx = c.getContext("2d")!;
     ctx.scale(res, res);
-    drawShapes(ctx, tileShapes(zone, 9000 + variant, lv, style, paved));
+    drawShapes(ctx, tileShapes(zone, 9000 + variant, lv, style, paved, pets));
     sprites.set(key, c);
   }
   return c;
