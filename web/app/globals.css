@@ -400,6 +400,55 @@ label.check input {
   color: var(--fg-3);
   width: 220px;
 }
+.search {
+  position: relative;
+}
+.search-results {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 340px;
+  max-height: 70vh;
+  overflow-y: auto;
+  z-index: 60;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+.search-results p {
+  margin: 0;
+  padding: 8px 10px;
+}
+.search-results button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  height: auto;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  text-align: left;
+}
+.search-results button.active {
+  background: var(--surface-2);
+}
+.search-title {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .search:focus-within {
   border-color: var(--fg-3);
 }
@@ -1404,6 +1453,16 @@ kbd {
   }
   .search kbd {
     display: none;
+  }
+  .search {
+    position: static;
+  }
+  .search-results {
+    position: absolute;
+    left: 16px;
+    right: 16px;
+    width: auto;
+    top: calc(100% + 4px);
   }
   .d-title {
     font-size: 40px;

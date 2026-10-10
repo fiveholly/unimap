@@ -3,7 +3,7 @@
 // here from deterministic fake data; what the visitor does (posts, likes, follows, profile
 // edits) is kept in localStorage, and "重置演示数据" clears it.
 
-import type { Application, District, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, Role, LinkedWallet, Showcase, Tile, XAccount } from "./api";
+import type { Application, District, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, Role, LinkedWallet, SearchResults, Showcase, Tile, XAccount } from "./api";
 import { connected } from "./parks";
 import { MAX_SHOWN, PET_KEYS, PETS, type Pet, type PetKey } from "./pets";
 import { prosperity, THRESHOLDS, type ProsperityParts } from "./prosperity";
@@ -457,6 +457,32 @@ function district(n: number, me: string | null): District {
   };
 }
 
+// Search in the demo knows the visitor, the park next to the halving and the owner of 840001.
+function searchDemo(q: string): SearchResults {
+  const out: SearchResults = { districts: [], parks: [], people: [] };
+  if (!q) return out;
+  const m = q.match(/^#?(\d{1,7})(\.bitmap)?$/i);
+  if (m && +m[1] <= DEMO_TIP) out.districts.push(+m[1]);
+  const lower = q.toLowerCase();
+  out.parks = liveParks()
+    .filter((p) => p.name.toLowerCase().includes(lower))
+    .slice(0, 5)
+    .map((p) => ({ id: p.id, name: p.name, members: p.members.length, first: Math.min(...p.members) }));
+  const handle = lower.replace(/^@/, "");
+  const people: [string, number[]][] = [
+    [DEMO_ADDRESS, OWNED],
+    [SEED_PARK.owner, SEED_PARK.members],
+    [ownerOf(840001)!, [840001]],
+  ];
+  out.people = people
+    .filter(([a]) => (!m && q.length >= 6 && a.startsWith(lower)) || (!!handle && !!xOf(a)?.username.toLowerCase().includes(handle)))
+    .map(([address, ns]) => {
+      const sorted = [...ns].sort((x, y) => x - y);
+      return { address, x: xOf(address), districts: sorted.slice(0, 6), count: sorted.length };
+    });
+  return out;
+}
+
 const walletsView = (): LinkedWallet[] => [
   { address: DEMO_ADDRESS, main: true, me: true },
   ...(load().linked ?? []).map((address) => ({ address, main: false, me: false })),
@@ -490,6 +516,7 @@ function route(path: string, opts: Opts): unknown {
     const a = needMe();
     return { address: a, districts: OWNED, parcels: [OWN_PARCEL], follows: [...s.follows].sort((x, y) => x - y), x: s.x ?? null, wallets: walletsView() } satisfies Me;
   }
+  if (p === "/v1/search") return searchDemo((url.searchParams.get("q") ?? "").trim());
   if (p === "/v1/me/wallets") {
     needMe();
     if (method === "POST") {

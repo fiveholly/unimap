@@ -568,6 +568,38 @@ class SocialApi(unittest.TestCase):
                     "delete from social.holdings_checked;"
                 )
 
+    def test_search(self):
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "insert into bitmaps (inscription_id, inscription_number, bitmap_number, block_height) values "
+                "('d101i0', 10, 101, 300) on conflict do nothing;"
+                "insert into inscription_owners (inscription_id, created_height, outpoint, address, updated_height) values "
+                f"('d101i0', 300, 'e:0', '{ALICE.address}', 300) on conflict do nothing;"
+                f"insert into social.parks (id, name, owner_address) values (900, '减半_Village', '{ALICE.address}');"
+                "insert into social.park_members (bitmap_number, park_id) values (100, 900), (101, 900);"
+                f"insert into social.x_accounts (address, x_user_id, username, name) values ('{CAROL.address}', '7', 'carol_btc', 'Carol');"
+            )
+        s = lambda q: self.client.get("/v1/search", params={"q": q}).json()
+        try:
+            self.assertEqual(s(""), {"districts": [], "parks": [], "people": []})
+            self.assertEqual(s("105")["districts"], [105])
+            self.assertEqual(s("105.bitmap")["districts"], [105])
+            self.assertEqual(s("5000")["districts"], [])  # beyond the tip
+            self.assertEqual(s("village")["parks"], [{"id": 900, "name": "减半_Village", "members": 2, "first": 100}])
+            self.assertEqual(s("减半")["parks"][0]["id"], 900)
+            self.assertEqual(s("%")["parks"], [])  # no wildcards
+            carol = s("@Carol")["people"]
+            self.assertEqual([(p["address"], p["x"]["username"], p["districts"]) for p in carol], [(CAROL.address, "carol_btc", [OTHER])])
+            alice = s(ALICE.address[:12].upper())["people"]
+            self.assertEqual([p["address"] for p in alice], [ALICE.address])
+            self.assertTrue({100, 101} <= set(alice[0]["districts"]))  # test_parks may have given her 108 too
+            self.assertEqual(alice[0]["count"], len(alice[0]["districts"]))
+            self.assertEqual(s(ALICE.address[:4])["people"], [])  # too short for an address
+            self.assertEqual(s("bcrt1qbuyer")["people"], [])  # holds no district, no X
+        finally:
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.park_members where park_id = 900; delete from social.parks where id = 900; delete from social.x_accounts;")
+
     # --- land changes hands ---
 
     def test_owner_change_moves_admin_rights(self):
