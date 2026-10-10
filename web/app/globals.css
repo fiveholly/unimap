@@ -2183,6 +2183,56 @@ button.danger:hover:not(:disabled) {
 }
 
 /* ---------- for sale (在售) ---------- */
+/* ---------- 站内交易 ---------- */
+.sell-card {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sell-card p {
+  margin: 0;
+}
+.sell-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--fg-2);
+}
+.net-tag {
+  font-size: 12px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--danger) 55%, var(--line));
+  color: var(--danger);
+  white-space: nowrap;
+}
+.buy-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.buy-dialog h2,
+.buy-dialog p {
+  margin: 0;
+}
+.buy-sum {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 16px;
+  margin: 0;
+}
+.buy-sum dt {
+  color: var(--fg-2);
+}
+.buy-sum dd {
+  margin: 0;
+  text-align: right;
+}
+
 .sale-banner {
   display: flex;
   align-items: center;

@@ -3,7 +3,7 @@
 // here from deterministic fake data; what the visitor does (posts, likes, follows, profile
 // edits) is kept in localStorage, and "重置演示数据" clears it.
 
-import type { Application, Badge, Contest, ContestMetric, District, DistrictGame, Draw, Game, Season, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
+import type { Application, Badge, Contest, MarketListing, ContestMetric, District, DistrictGame, Draw, Game, Season, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
 import { CLAIM_BLOCKS, pick, rarityOf, ROUND, roundOf, SEASON, seasonOf, sha256, type Rarity } from "./game";
 import { connected } from "./parks";
 import { MAX_SHOWN, PET_KEYS, PETS, type Pet, type PetKey } from "./pets";
@@ -151,7 +151,10 @@ type State = {
   badges?: Badge[]; // the visitor's
   opened?: Record<number, string>; // treasures opened, by block height
   contests?: DemoContest[]; // 街区活动
+  market?: DemoListing[]; // 站内交易
+  dummies?: boolean; // the visitor made the two small outputs a purchase needs
 };
+type DemoListing = { id: number; n: number; seller: string; price: number; status: MarketListing["status"]; at: string; txid?: string };
 type DemoTip = { id: number; tipper: string; recipient: string; n: number; post_id: number | null; sats: number; comment: string; status: Tip["status"]; at: number; event?: [number, number] };
 type DemoContest = { id: number; bitmap_number: number; season: number; host: string; metric: ContestMetric; prizes: number[]; note: string; created_at: string; cancelled?: boolean;
   winners?: { address: string; score: number; prize_sats: number }[]; crowd?: [string, number][] };
@@ -183,6 +186,7 @@ function seedExtras(s: State) {
   s.bans ??= [{ address: fakeAddress(705), reason: "scam", banned_by: DEMO_ADDRESS, created_at: iso(2), expires_at: iso(-28) }];
   s.boot ??= Date.now();
   s.badges ??= [{ kind: "treasure", height: DEMO_TIP - 400, bitmap_number: 840001, tx_index: OWN_PARCEL.tx_index, rarity: "rare", created_at: iso(3) }];
+  s.market ??= [{ id: 1, n: 840005, seller: ownerOf(840005)!, price: 9_800_000, status: "active", at: iso(0.8) }];
   if (!s.contests) {
     s.contests = seedContests(s);
     const ids = (s.notifications ?? []).map((x) => x.id);
@@ -304,6 +308,13 @@ function contestView(c: DemoContest): Contest {
     ...(status === "running" ? { standings: contestStandings(c) } : {}),
     ...(status === "ended" ? { winners: (c.winners ?? []).map((w, i) => ({ ...w, place: i + 1, paid: paid(i + 1) })) } : {}),
   };
+}
+
+const DEMO_PSBT = "cHNidP8BAAoCAAAAAAAAAAAAAAA="; // an empty PSBT; the demo wallet hands it back as is
+let lastPrice: number | null = null; // the price the visitor last asked to list at
+function listingView(l: DemoListing): MarketListing {
+  return { id: l.id, inscription_id: inscriptionId(l.n), bitmap_number: l.n, tx_index: null, seller: l.seller, price_sats: l.price, postage_sats: 546,
+    status: l.status, created_at: l.at, txid: l.txid ?? null, buyer: null };
 }
 
 function seedNotifications(s: State): Notification[] {
@@ -467,12 +478,18 @@ function showcaseView(n: number): Showcase {
 const LISTED: Record<number, number> = { 840002: 4_200_000, 840005: 12_500_000, 840008: 6_900_000, 839998: 25_000_000 };
 function saleAt(n: number): number | null {
   if (!ownerOf(n)) return null;
+  const own = ownListing(n);
+  if (own) return Math.min(own.price, LISTED[n] ?? Infinity);
   if (LISTED[n]) return LISTED[n];
   const h = hash(n * 7 + 3);
   return h < 0.03 ? 300_000 + Math.round((h / 0.03) * 40) * 250_000 : null;
 }
+// 站内交易 in the demo: 840005's owner listed it in unimap for less than on Magic Eden.
+const ownListing = (n: number) => (load().market ?? []).find((x) => x.n === n && x.status === "active");
 function saleOf(n: number): Sale | null {
+  const own = ownListing(n);
   const price = saleAt(n);
+  if (own && (price == null || own.price <= price)) return { price_sats: own.price, market: "unimap", url: null, listed_at: own.at, listing_id: own.id };
   if (price == null) return null;
   return { price_sats: price, market: "magiceden", url: `https://magiceden.io/ordinals/item-details/${inscriptionId(n)}`, listed_at: iso(0.5 + hash(n) * 9) };
 }
@@ -1124,6 +1141,53 @@ function route(path: string, opts: Opts): unknown {
     c.cancelled = true;
     save();
     return contestView(c);
+  }
+  if (p === "/v1/market") return { open: true, network: "testnet4", fee_bps: 0, dummy_sats: 600 };
+  if (p === "/v1/market/listings" && method === "GET") {
+    const n = url.searchParams.get("bitmap_number");
+    return { listings: s.market!.filter((x) => x.status === "active" && (n == null || x.n === +n)).map(listingView) };
+  }
+  if (p === "/v1/market/listings/prepare") {
+    owns(Number(body.bitmap_number));
+    lastPrice = Number(body.price_sats);
+    return { psbt: DEMO_PSBT, psbt_hex: "", sign_inputs: [0], sighash: 0x83, inscription_id: inscriptionId(Number(body.bitmap_number)), postage_sats: 546 };
+  }
+  if (p === "/v1/market/listings" && method === "POST") {
+    const n = Number(body.bitmap_number), a = owns(n);
+    s.market!.forEach((x) => x.n === n && x.status === "active" && (x.status = "replaced"));
+    const l: DemoListing = { id: Math.max(0, ...s.market!.map((x) => x.id)) + 1, n, seller: a, price: lastPrice ?? 1_000_000, status: "active", at: new Date().toISOString() };
+    s.market!.push(l);
+    save();
+    return listingView(l);
+  }
+  if ((m = p.match(/^\/v1\/market\/listings\/(\d+)$/)) && method === "DELETE") {
+    const a = needMe(), l = s.market!.find((x) => x.id === +m![1]) ?? fail(404, "no such listing");
+    if (l.seller !== a) fail(403, "only the seller can take it down");
+    if (l.status === "active") l.status = "cancelled";
+    save();
+    return listingView(l);
+  }
+  if ((m = p.match(/^\/v1\/market\/listings\/(\d+)\/quote$/))) {
+    const a = needMe(), l = s.market!.find((x) => x.id === +m![1] && x.status === "active") ?? fail(409, "this listing is no longer for sale");
+    if (l.seller === a) fail(400, "you can't buy your own listing");
+    if (!s.dummies) fail(409, "need_dummies: the paying address needs two small outputs (up to 1000 sats) first");
+    const network = 141 * 3;
+    return { quote_id: l.id, psbt: DEMO_PSBT, psbt_hex: "", sign_inputs: [0, 1, 3], price_sats: l.price, fee_sats: 0, network_fee_sats: network, fee_rate: 3,
+      postage_sats: 546, total_sats: l.price + network, expires_in: 600 };
+  }
+  if (p === "/v1/market/dummies") return (needMe(), { psbt: DEMO_PSBT, psbt_hex: "", sign_inputs: [0], network_fee_sats: 513 });
+  if (p === "/v1/market/dummies/broadcast") {
+    needMe();
+    s.dummies = true;
+    save();
+    return { txid: sha256(`dummies:${Date.now()}`) };
+  }
+  if ((m = p.match(/^\/v1\/market\/quotes\/(\d+)\/submit$/))) {
+    const a = needMe(), l = s.market!.find((x) => x.id === +m![1] && x.status === "active") ?? fail(409, "this listing is no longer for sale");
+    l.status = "sold";
+    l.txid = sha256(`sale:${l.id}:${a}`);
+    save();
+    return { txid: l.txid, listing_id: l.id };
   }
   if (p === "/v1/tips/top") return tipTop(me);
   if (p === "/v1/tips" && method === "POST") {

@@ -186,7 +186,7 @@ CREATE TABLE IF NOT EXISTS social.holdings_checked (
 CREATE TABLE IF NOT EXISTS social.notifications (
 	id bigserial NOT NULL,
 	address text NOT NULL,
-	kind text NOT NULL, -- reply | like | post | follow | apply | tip | treasure | lucky | crown | event_win
+	kind text NOT NULL, -- reply | like | post | follow | apply | tip | treasure | lucky | crown | event_win | sold
 	actor text NOT NULL,
 	bitmap_number int4 NOT NULL,
 	post_id int8 NULL, -- the reply, the liked post or the new post
@@ -382,3 +382,36 @@ CREATE INDEX IF NOT EXISTS events_season_idx ON social.events USING btree (seaso
 ALTER TABLE social.tips ADD COLUMN IF NOT EXISTS event_id int8 NULL;
 ALTER TABLE social.tips ADD COLUMN IF NOT EXISTS event_place int2 NULL;
 CREATE INDEX IF NOT EXISTS tips_event_idx ON social.tips USING btree (event_id) WHERE event_id IS NOT NULL;
+
+-- 站内交易 (api/market.py): a listing is the seller's signed half of a PSBT; it lives while the
+-- inscription stays on outpoint. A quote is the purchase as handed to the buyer's wallet.
+CREATE TABLE IF NOT EXISTS social.market_listings (
+	id bigserial NOT NULL,
+	inscription_id text NOT NULL,
+	bitmap_number int4 NOT NULL,
+	tx_index int4 NULL, -- a parcel; null for a district
+	seller text NOT NULL,
+	price_sats int8 NOT NULL,
+	pay_to_script text NOT NULL, -- hex scriptPubKey the seller signed to be paid at
+	outpoint text NOT NULL, -- the output holding the inscription when it was listed
+	postage_sats int8 NOT NULL, -- that output's value, which goes to the buyer with it
+	psbt text NOT NULL, -- base64; the seller's input is final
+	status text NOT NULL DEFAULT 'active', -- active | sold | cancelled | replaced
+	buyer text NULL,
+	sold_txid text NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	updated_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT market_listings_pk PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS market_listings_one_active ON social.market_listings USING btree (inscription_id) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS market_listings_district_idx ON social.market_listings USING btree (bitmap_number) WHERE status = 'active';
+CREATE TABLE IF NOT EXISTS social.market_quotes (
+	id bigserial NOT NULL,
+	listing_id int8 NOT NULL,
+	buyer text NOT NULL,
+	psbt text NOT NULL, -- base64, as handed to the buyer
+	expires_at timestamptz NOT NULL,
+	used_at timestamptz NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT market_quotes_pk PRIMARY KEY (id)
+);

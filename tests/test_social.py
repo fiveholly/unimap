@@ -1022,6 +1022,205 @@ class SocialApi(unittest.TestCase):
                     (posts,),
                 )
 
+    def test_market(self):
+        from api import btc, market
+        from tests.test_market import SegwitKey, TaprootKey, txid
+
+        class FakeChain:
+            """bitcoind and ord in one: outputs, where inscriptions sit, and a mempool that checks every signature."""
+
+            def __init__(self):
+                self.utxos = {}  # outpoint: [value, scriptPubKey, inscriptions]
+                self.sent = []
+
+            def add(self, outpoint, value, spk, inscriptions=()):
+                self.utxos[outpoint] = [value, spk, list(inscriptions)]
+
+            def txout(self, op):
+                u = self.utxos.get(op)
+                return (u[0], u[1]) if u else None
+
+            def satpoint(self, iid):
+                return next((f"{op}:0" for op, u in self.utxos.items() if iid in u[2]), None)
+
+            def output(self, op):
+                u = self.utxos.get(op)
+                return {"value": u[0], "inscriptions": u[2], "runes": {}, "spent": False} if u else {"spent": True}
+
+            def cardinal_outputs(self, address):
+                spk = btc.address_script(address, "regtest")
+                return [{"outpoint": op, "value": u[0], "inscriptions": [], "runes": {}, "spent": False} for op, u in self.utxos.items() if u[1] == spk and not u[2]]
+
+            def fee_rate(self):
+                return 3.0
+
+            def test_accept(self, raw):
+                tx = btc.Tx.parse(bytes.fromhex(raw))
+                if any(t.outpoint not in self.utxos for t in tx.inputs):
+                    return False, "missing-inputs"
+                spent = [btc.TxOut(*self.utxos[t.outpoint][:2]) for t in tx.inputs]
+                for i, t in enumerate(tx.inputs):
+                    w = t.witness
+                    try:
+                        btc.check_signature(tx, i, spent, w[0], *(w[1:2] or [None]), t.script_sig[1:] or None)
+                    except btc.BadTx as e:
+                        return False, str(e)
+                if sum(o.value for o in tx.outputs) > sum(o.value for o in spent):
+                    return False, "bad-txns-in-belowout"
+                return True, None
+
+            def send(self, raw):
+                """Spend the inputs; inscriptions follow their first sat (each sits at offset 0 of its input)."""
+                tx = btc.Tx.parse(bytes.fromhex(raw))
+                at, moves = 0, []
+                for t in tx.inputs:
+                    value, _, ins = self.utxos.pop(t.outpoint)
+                    moves += [(at, i) for i in ins]
+                    at += value
+                edges, at = [], 0
+                for n, o in enumerate(tx.outputs):
+                    edges.append((at, at + o.value, n))
+                    at += o.value
+                for n, o in enumerate(tx.outputs):
+                    self.add(f"{tx.txid}:{n}", o.value, o.script_pubkey)
+                for offset, iid in moves:
+                    n = next(n for lo, hi, n in edges if lo <= offset < hi)
+                    self.utxos[f"{tx.txid}:{n}"][2].append(iid)
+                self.sent.append(tx)
+                return tx.txid
+
+        seller, buyer, buyer_tr, parcel_buyer = SegwitKey(1), SegwitKey(2), TaprootKey(20), TaprootKey(21)
+        self.assertEqual((seller.address(), buyer.address()), (ALICE.address, BOB.address))  # the test wallets' own keys
+        fake = FakeChain()
+        district_out, parcel_out = f"{txid(0xd100)}:0", f"{txid(0x9001)}:1"
+        fake.add(district_out, 546, btc.address_script(ALICE.address, "regtest"), ["d100i0"])
+        fake.add(parcel_out, 10_000, btc.address_script(BOB.address, "regtest"), ["p1i0"])
+        old_chain, market.chain = market.chain, fake
+        with self.conn.cursor() as cur:
+            cur.execute("update inscription_owners set outpoint = %s where inscription_id = 'd100i0';", (district_out,))
+            cur.execute("update inscription_owners set outpoint = %s where inscription_id = 'p1i0';", (parcel_out,))
+        post = lambda w, path, body=None: self.client.post(path, json=body or {}, headers=self.h(w))
+        try:
+            self.assertFalse(self.client.get("/v1/market").json()["open"])
+            self.assertEqual(post(ALICE, "/v1/market/listings/prepare", {"bitmap_number": 100, "price_sats": 50_000, "pay_to": ALICE.address}).status_code, 404)
+            os.environ["MARKET_NETWORK"] = "regtest"
+            self.assertEqual(self.client.get("/v1/market").json(), {"open": True, "network": "regtest", "fee_bps": 0, "dummy_sats": 600})
+            os.environ["MARKET_NETWORK"] = "mainnet"
+            self.assertFalse(self.client.get("/v1/market").json()["open"])  # not before the audit
+            os.environ.update(MARKET_NETWORK="regtest", MARKET_FEE_BPS="100", MARKET_FEE_ADDRESS=TaprootKey(30).address())
+
+            # Selling: only the holder; the wallet signs input 0 with SIGHASH_SINGLE|ANYONECANPAY.
+            ask = {"bitmap_number": 100, "price_sats": 50_000, "pay_to": ALICE.address}
+            self.assertEqual(post(BOB, "/v1/market/listings/prepare", ask).status_code, 403)
+            self.assertEqual(post(ALICE, "/v1/market/listings/prepare", {**ask, "pay_to": TaprootKey(3).address("tb")}).status_code, 400)
+            prep = post(ALICE, "/v1/market/listings/prepare", ask).json()
+            self.assertEqual((prep["sign_inputs"], prep["sighash"], prep["postage_sats"]), ([0], 0x83, 546))
+            p = btc.Psbt.parse(prep["psbt"])
+            self.assertEqual(p.get(0, btc.IN_SIGHASH_TYPE), b"\x83\x00\x00\x00")
+            spent = [p.witness_utxo(0)]
+            wrong = btc.Psbt.parse(prep["psbt"])
+            seller.sign(wrong, 0, spent, btc.SIGHASH_ALL)
+            self.assertEqual(post(ALICE, "/v1/market/listings", {"psbt": wrong.b64(), "bitmap_number": 100}).status_code, 400)
+            seller.sign(p, 0, spent, btc.SINGLE_ACP)
+            cheap = btc.Psbt.parse(p.b64())
+            cheap.tx.outputs[0] = btc.TxOut(5_000, cheap.tx.outputs[0].script_pubkey)  # someone lowering the price after signing
+            self.assertEqual(post(ALICE, "/v1/market/listings", {"psbt": cheap.b64(), "bitmap_number": 100}).status_code, 400)
+            listing = post(ALICE, "/v1/market/listings", {"psbt": p.b64(), "bitmap_number": 100})
+            self.assertEqual(listing.status_code, 201, listing.text)
+            listing = listing.json()
+            self.assertEqual((listing["status"], listing["price_sats"], listing["seller"]), ("active", 50_000, ALICE.address))
+            self.assertEqual([x["id"] for x in self.client.get("/v1/market/listings").json()["listings"]], [listing["id"]])
+            sale = self.client.get("/v1/land/100").json()["district"]["sale"]
+            self.assertEqual((sale["market"], sale["price_sats"], sale["listing_id"]), ("unimap", 50_000, listing["id"]))
+            self.assertEqual(self.client.get("/v1/land?start=100&end=100").json()["tiles"][0]["sale"], 50_000)
+
+            # Buying needs two dummies first; the dummy-making transaction pays the buyer only.
+            ask_buy = {"payment_address": BOB.address, "receive_address": buyer_tr.address()}
+            self.assertEqual(post(ALICE, f"/v1/market/listings/{listing['id']}/quote", ask_buy).status_code, 400)  # your own
+            self.assertEqual(post(BOB, f"/v1/market/listings/{listing['id']}/quote", {**ask_buy, "receive_address": BOB.address}).status_code, 400)
+            fake.add(f"{txid(0xb0b)}:0", 200_000, btc.address_script(BOB.address, "regtest"))
+            r = post(BOB, f"/v1/market/listings/{listing['id']}/quote", ask_buy)
+            self.assertEqual(r.status_code, 409)
+            self.assertIn("need_dummies", r.json()["detail"])
+            d = post(BOB, "/v1/market/dummies", ask_buy).json()
+            dp = btc.Psbt.parse(d["psbt"])
+            self.assertEqual([o.value for o in dp.tx.outputs[:2]], [600, 600])
+            for i in d["sign_inputs"]:
+                buyer.sign(dp, i, [dp.witness_utxo(j) for j in range(len(dp.tx.inputs))])
+            self.assertEqual(post(BOB, "/v1/market/dummies/broadcast", {"psbt": dp.b64()}).status_code, 200)
+
+            # The quote: dummies, the seller's input at 2, coins; outputs A+B, the inscription, the seller, the fee, new dummies, change.
+            q = post(BOB, f"/v1/market/listings/{listing['id']}/quote", ask_buy).json()
+            qp = btc.Psbt.parse(q["psbt"])
+            outs = [(o.value, o.script_pubkey) for o in qp.tx.outputs]
+            bob_spk, tr_spk = btc.address_script(BOB.address, "regtest"), btc.address_script(buyer_tr.address(), "regtest")
+            self.assertEqual(outs[:4], [(1200, bob_spk), (546, tr_spk), (50_000, btc.address_script(ALICE.address, "regtest")), (500, btc.address_script(os.environ["MARKET_FEE_ADDRESS"], "regtest"))])
+            self.assertEqual(outs[4:6], [(600, bob_spk), (600, bob_spk)])
+            self.assertEqual(q["sign_inputs"], [0, 1, 3])
+            self.assertEqual(q["total_sats"], 50_000 + 500 + q["network_fee_sats"])
+            spent = [qp.witness_utxo(i) for i in range(len(qp.tx.inputs))]
+            # A buyer wallet changing the transaction, or signing so outputs can change, is turned away.
+            bent = btc.Psbt.parse(q["psbt"])
+            bent.tx.outputs[1] = btc.TxOut(546, bob_spk)
+            self.assertEqual(post(BOB, f"/v1/market/quotes/{q['quote_id']}/submit", {"psbt": bent.b64()}).status_code, 400)
+            loose = btc.Psbt.parse(q["psbt"])
+            for i in q["sign_inputs"]:
+                buyer.sign(loose, i, spent, btc.SIGHASH_NONE)
+            self.assertEqual(post(BOB, f"/v1/market/quotes/{q['quote_id']}/submit", {"psbt": loose.b64()}).status_code, 400)
+            for i in q["sign_inputs"]:
+                buyer.sign(qp, i, spent)
+            self.assertEqual(post(CAROL, f"/v1/market/quotes/{q['quote_id']}/submit", {"psbt": qp.b64()}).status_code, 404)
+            r = post(BOB, f"/v1/market/quotes/{q['quote_id']}/submit", {"psbt": qp.b64()})
+            self.assertEqual(r.status_code, 200, r.text)
+            sale = fake.sent[-1]
+            self.assertEqual(r.json()["txid"], sale.txid)
+            # The district went to the buyer's taproot address, the price to the seller, nothing anywhere else.
+            self.assertEqual(fake.utxos[f"{sale.txid}:1"][1:], [tr_spk, ["d100i0"]])
+            self.assertEqual(fake.utxos[f"{sale.txid}:2"][:2], [50_000, btc.address_script(ALICE.address, "regtest")])
+            self.assertEqual(sum(len(u[2]) for u in fake.utxos.values()), 2)
+            self.assertEqual(self.client.get(f"/v1/market/listings/{listing['id']}").json()["status"], "sold")
+            self.assertEqual(post(BOB, f"/v1/market/quotes/{q['quote_id']}/submit", {"psbt": qp.b64()}).status_code, 409)
+            n = self.client.get("/v1/notifications", headers=self.h(ALICE)).json()["notifications"][0]
+            self.assertEqual((n["kind"], n["actor"], n["bitmap_number"]), ("sold", BOB.address, 100))
+
+            # A parcel, bought from a taproot wallet: its inputs carry the internal key, and it signs with SIGHASH_DEFAULT.
+            prep = post(BOB, "/v1/market/listings/prepare", {"bitmap_number": 100, "tx_index": 1, "price_sats": 20_000, "pay_to": BOB.address}).json()
+            p = btc.Psbt.parse(prep["psbt"])
+            buyer.sign(p, 0, [p.witness_utxo(0)], btc.SINGLE_ACP)
+            parcel = post(BOB, "/v1/market/listings", {"psbt": p.b64(), "bitmap_number": 100, "tx_index": 1}).json()
+            tr_spk = btc.address_script(parcel_buyer.address(), "regtest")
+            for k, v in enumerate((700, 800, 90_000)):
+                fake.add(f"{txid(0xca0 + k)}:0", v, tr_spk)
+            ask_tr = {"payment_address": parcel_buyer.address(), "payment_public_key": parcel_buyer.internal.hex(), "receive_address": parcel_buyer.address(), "fee_rate": 5}
+            q = post(CAROL, f"/v1/market/listings/{parcel['id']}/quote", ask_tr).json()
+            qp = btc.Psbt.parse(q["psbt"])
+            self.assertEqual(qp.get(0, btc.IN_TAP_INTERNAL_KEY), parcel_buyer.internal)
+            spent = [qp.witness_utxo(i) for i in range(len(qp.tx.inputs))]
+            for i in q["sign_inputs"]:
+                parcel_buyer.sign(qp, i, spent)
+            r = post(CAROL, f"/v1/market/quotes/{q['quote_id']}/submit", {"psbt": qp.b64()})
+            self.assertEqual(r.status_code, 200, r.text)
+            sale = fake.sent[-1]
+            self.assertEqual(fake.utxos[f"{sale.txid}:1"][1:], [tr_spk, ["p1i0"]])
+            self.assertGreaterEqual(sale.vsize() * 5, q["network_fee_sats"] - 60)  # the estimate is close to what was signed
+            self.assertLessEqual(sale.vsize() * 5, q["network_fee_sats"] + 60)
+
+            # A listing whose inscription moved by other means is gone; the seller can take a live one down.
+            with self.conn.cursor() as cur:
+                cur.execute("update inscription_owners set outpoint = %s, address = %s where inscription_id = 'd100i0';", (f"{fake.sent[0].txid}:9", ALICE.address))
+            self.assertEqual(self.client.get("/v1/market/listings").json()["listings"], [])
+        finally:
+            market.chain = old_chain
+            for k in ("MARKET_NETWORK", "MARKET_FEE_BPS", "MARKET_FEE_ADDRESS"):
+                os.environ.pop(k, None)
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "update inscription_owners set outpoint = 'a:0', address = %s where inscription_id = 'd100i0'; "
+                    "update inscription_owners set outpoint = 'd:0' where inscription_id = 'p1i0'; "
+                    "delete from social.market_quotes; delete from social.market_listings; delete from social.notifications where kind = 'sold';",
+                    (ALICE.address,),
+                )
+
     def test_lnurl_checks(self):
         from api import tips
 

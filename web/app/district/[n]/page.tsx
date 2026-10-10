@@ -12,6 +12,7 @@ import { OwnerTools } from "@/components/OwnerTools";
 import { PetsCard } from "@/components/Pets";
 import { Polls } from "@/components/Polls";
 import { Contests } from "@/components/Contests";
+import { BuyButton, SellCard } from "@/components/Market";
 import { PostCard, RoleBadge, type PostActions } from "@/components/PostCard";
 import { ProsperityCard } from "@/components/ProsperityCard";
 import { RecruitCard } from "@/components/Recruit";
@@ -241,6 +242,7 @@ function DistrictView() {
           {district.game && <DistrictBeat n={n} game={district.game} token={token} onOpened={loadDistrict} />}
           {won && <p className="win-note small">{won}</p>}
           {land.district?.sale && <SaleBanner sale={land.district.sale} mine={!!viewer && viewer.address === district.owner} />}
+          {isOwner && token && <SellCard n={n} token={token} />}
           {district.park && (
             <div className="park-banner">
               <span>{tn("属于园区 {name}", { name: <b>{district.park.name}</b> })}</span>
@@ -542,6 +544,7 @@ function SaleBanner({ sale, mine }: { sale: Sale; mine: boolean }) {
         {sale.listed_at && ` · ${timeAgo(Date.parse(sale.listed_at) / 1000)}`}
       </span>
       <span className="grow" />
+      {sale.market === "unimap" && sale.listing_id != null && !mine && <BuyButton listingId={sale.listing_id} price={sale.price_sats} />}
       {sale.url && (
         <a className="btn sm" href={sale.url} target="_blank" rel="noopener noreferrer">
           {t("去 {market} 看看", { market })} ↗

@@ -137,29 +137,42 @@ def refresh(force=False):
 
 
 # Listings of districts whose seller still holds them, from a marketplace heard from lately.
+# Live listings from the marketplace and from unimap's own market (api/market.py) alike, as
+# (bitmap_number, market, inscription_id, price_sats, listed_at, listing_id). Districts only.
 _LIVE = (
+    "from (select b.bitmap_number, l.market, l.inscription_id, l.price_sats, l.listed_at, null::int8 as listing_id "
     "from social.listings l join bitmaps b on b.inscription_id = l.inscription_id "
     "join inscription_owners o on o.inscription_id = l.inscription_id and o.address = l.seller "
     "join social.listings_checked c on c.market = l.market "
     "and c.ok_at > now() - make_interval(hours => %(stale)s) "
+    "union all select m.bitmap_number, 'unimap', m.inscription_id, m.price_sats, m.created_at, m.id "
+    "from social.market_listings m join inscription_owners o on o.inscription_id = m.inscription_id and o.outpoint = m.outpoint "
+    "where %(own)s and m.status = 'active' and m.tx_index is null) l "
 )
 
 
-def _sale(market, inscription_id, price, listed_at):
+def _sale(market, inscription_id, price, listed_at, listing_id=None):
     return {
         "price_sats": price,
         "market": market,
         "url": _provider().item_url(inscription_id) if market == _provider().market else None,
         "listed_at": listed_at.isoformat() if listed_at else None,
+        **({"listing_id": listing_id} if listing_id is not None else {}),
     }
+
+
+def _args(**kw):
+    from api import market  # market imports land, which imports this module
+
+    return {"stale": STALE_HOURS, "own": market.network() is not None, **kw}
 
 
 def in_range(cur, lo, hi):
     """{bitmap_number: price in sats} for districts lo..hi listed for sale."""
     cur.execute(
-        "select b.bitmap_number, min(l.price_sats) " + _LIVE + "where b.bitmap_number between %(lo)s and %(hi)s "
-        "group by b.bitmap_number;",
-        {"stale": STALE_HOURS, "lo": lo, "hi": hi},
+        "select l.bitmap_number, min(l.price_sats) " + _LIVE + "where l.bitmap_number between %(lo)s and %(hi)s "
+        "group by l.bitmap_number;",
+        _args(lo=lo, hi=hi),
     )
     return dict(cur.fetchall())
 
@@ -167,9 +180,9 @@ def in_range(cur, lo, hi):
 def of(cur, n):
     """The cheapest live listing of district n, or None."""
     cur.execute(
-        "select l.market, l.inscription_id, l.price_sats, l.listed_at " + _LIVE + "where b.bitmap_number = %(n)s "
-        "order by l.price_sats limit 1;",
-        {"stale": STALE_HOURS, "n": n},
+        "select l.market, l.inscription_id, l.price_sats, l.listed_at, l.listing_id " + _LIVE + "where l.bitmap_number = %(n)s "
+        "order by l.price_sats, l.market = 'unimap' desc limit 1;",
+        _args(n=n),
     )
     row = cur.fetchone()
     return _sale(*row) if row else None
@@ -181,9 +194,9 @@ def listings(limit: int = 50):
     limit = max(1, min(limit, 200))
     with cursor() as cur:
         cur.execute(
-            "select b.bitmap_number, l.market, l.inscription_id, l.price_sats, l.listed_at "
+            "select l.bitmap_number, l.market, l.inscription_id, l.price_sats, l.listed_at, l.listing_id "
             + _LIVE
-            + "order by l.price_sats, b.bitmap_number limit %(limit)s;",
-            {"stale": STALE_HOURS, "limit": limit},
+            + "order by l.price_sats, l.bitmap_number limit %(limit)s;",
+            _args(limit=limit),
         )
         return {"listings": [{"bitmap_number": n, **_sale(*rest)} for n, *rest in cur.fetchall()]}
