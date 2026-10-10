@@ -2822,3 +2822,32 @@ span.act.tip-btn {
   flex-direction: column;
   gap: 4px;
 }
+
+/* ---------- 地块交易: parcels for sale ---------- */
+.for-sale {
+  margin-top: 40px;
+}
+.rank-list .for-sale-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.rank-list .for-sale-row a {
+  flex: 1;
+  min-width: 0;
+  border-bottom: none;
+}
+.recruit-sale {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+.d-main .recruit-sale {
+  margin: 12px 0;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, #6fcf97 45%, transparent);
+  border-radius: 10px;
+}

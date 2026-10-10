@@ -13,7 +13,7 @@ import { PetsCard } from "@/components/Pets";
 import { Polls } from "@/components/Polls";
 import { Contests } from "@/components/Contests";
 import { AgentPanel } from "@/components/Agent";
-import { BuyButton, OfferButton, OffersCard, ParkSaleCard, SellCard } from "@/components/Market";
+import { BuyButton, OfferButton, OffersCard, ParcelsOnSale, ParkSaleCard, SellCard, useMarket } from "@/components/Market";
 import { PostCard, RoleBadge, type PostActions } from "@/components/PostCard";
 import { ProsperityCard } from "@/components/ProsperityCard";
 import { RecruitCard } from "@/components/Recruit";
@@ -24,7 +24,7 @@ import { useTip } from "@/components/BlockWatch";
 import { ClaimGuide, DistrictBeat } from "@/components/GameBits";
 import { TipButton } from "@/components/Tip";
 import { XHandle } from "@/components/X";
-import { api, ApiError, type District, type Land, type LandEvent, type Me, type Post, type Sale, type Tile } from "@/lib/api";
+import { api, ApiError, type District, type Land, type LandEvent, type MarketListing, type Me, type Post, type Sale, type Tile } from "@/lib/api";
 import { btc, epochName, MARKETS, timeAgo } from "@/lib/format";
 import { t, tn } from "@/lib/i18n";
 import { districtText, parkText } from "@/lib/share";
@@ -59,7 +59,7 @@ function DistrictView() {
   const [won, setWon] = useState<string | null>(null); // a badge the last check-in earned
   const { tip } = useTip();
   const [selected, setSelected] = useState<number | null>(search.get("parcel") ? Number(search.get("parcel")) : null);
-  const [tab, setTab] = useState<Tab>(search.get("tab") === "contests" ? "contests" : search.get("tab") === "agent" ? "agent" : "posts");
+  const [tab, setTab] = useState<Tab>((["contests", "agent", "parcels"] as const).find((k) => k === search.get("tab")) ?? "posts");
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -426,7 +426,7 @@ function DistrictView() {
           {tab === "polls" && <Polls n={n} token={token} canVote={!!viewer && viewer.role !== "visitor"} isOwner={isOwner} />}
           {tab === "contests" && <Contests n={n} token={token} me={viewer?.address ?? null} isOwner={isOwner} />}
           {tab === "agent" && isOwner && token && <AgentPanel n={n} token={token} />}
-          {tab === "parcels" && <ParcelList land={land} txValues={txValues} own={own} onPick={(i) => setSelected(i)} />}
+          {tab === "parcels" && <ParcelList land={land} txValues={txValues} own={own} token={token} onPick={(i) => setSelected(i)} />}
           {tab === "history" && (
             <ul className="events">
               {events.length === 0 && <li className="muted">{t("还没有认领或转手记录。")}</li>}
@@ -485,38 +485,61 @@ function DistrictView() {
   );
 }
 
-function ParcelList({ land, txValues, own, onPick }: { land: Land; txValues: number[] | null; own: Set<number>; onPick: (i: number) => void }) {
+function ParcelList({ land, txValues, own, token, onPick }: { land: Land; txValues: number[] | null; own: Set<number>; token: string | null; onPick: (i: number) => void }) {
+  const market = useMarket();
+  const n = land.bitmap_number;
+  const [listed, setListed] = useState<Map<number, MarketListing>>(new Map());
+  useEffect(() => {
+    if (!market?.open) return;
+    api<{ listings: MarketListing[] }>(`/v1/market/listings?bitmap_number=${n}`)
+      .then((r) => setListed(new Map(r.listings.filter((l) => l.tx_index != null && l.bitmap_number === n).map((l) => [l.tx_index!, l]))))
+      .catch(() => {});
+  }, [market?.open, n]);
   if (land.parcels.length === 0) return <p className="muted empty">{t("还没有地块被认领。")}</p>;
   return (
-    <div className="table-wrap">
-      <table className="table">
-        <thead>
-          <tr>
-            <th>{t("地块")}</th>
-            <th>{t("居民")}</th>
-            <th className="num">{t("交易金额")}</th>
-            <th className="num">{t("铭文")}</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {land.parcels.map((p) => (
-            <tr key={p.tx_index}>
-              <td>
-                <button type="button" className="link-btn" onClick={() => onPick(p.tx_index)}>
-                  #{p.tx_index}
-                </button>
-                {own.has(p.tx_index) && <span className="badge resident">{t("你的")}</span>}
-              </td>
-              <td className="mono">{short(p.owner?.address)}</td>
-              <td className="num mono">{txValues ? btc(txValues[p.tx_index]) : "—"}</td>
-              <td className="num mono">#{p.inscription_number}</td>
-              <td className="num">{!own.has(p.tx_index) && p.owner?.address && <OfferButton n={land.bitmap_number} txIndex={p.tx_index} />}</td>
+    <>
+      {token && [...own].map((i) => <SellCard key={i} n={n} txIndex={i} token={token} />)}
+      <ParcelsOnSale
+        items={[...listed.values()].sort((a, b) => a.price_sats - b.price_sats).map((l) => ({ listing_id: l.id, tx_index: l.tx_index!, price_sats: l.price_sats, seller: l.seller }))}
+        intro={t("这些地块在 unimap 挂了单，买下就是这里的居民：")}
+        onPick={onPick}
+      />
+      <div className="table-wrap">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>{t("地块")}</th>
+              <th>{t("居民")}</th>
+              <th className="num">{t("交易金额")}</th>
+              <th className="num">{t("铭文")}</th>
+              <th />
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {land.parcels.map((p) => (
+              <tr key={p.tx_index}>
+                <td>
+                  <button type="button" className="link-btn" onClick={() => onPick(p.tx_index)}>
+                    #{p.tx_index}
+                  </button>
+                  {own.has(p.tx_index) && <span className="badge resident">{t("你的")}</span>}
+                </td>
+                <td className="mono">{short(p.owner?.address)}</td>
+                <td className="num mono">{txValues ? btc(txValues[p.tx_index]) : "—"}</td>
+                <td className="num mono">#{p.inscription_number}</td>
+                <td className="num">
+                  {own.has(p.tx_index) || !p.owner?.address ? null : listed.has(p.tx_index) ? (
+                    <b className="mono sale-price">{btc(listed.get(p.tx_index)!.price_sats)}</b>
+                  ) : (
+                    <OfferButton n={n} txIndex={p.tx_index} />
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
 
