@@ -1,5 +1,7 @@
 """Wallet holdings on the map (藏品): a district's owner can show some of what their wallet
-holds as pets living on the district, a dog for DOG•GO•TO•THE•MOON, a cat for a Quantum Cat.
+holds as pets living on the district: a dog for DOG•GO•TO•THE•MOON, a cat for a Quantum Cat,
+a puppet for a Bitcoin Puppet, a monkey for a NodeMonke, a frog for a Bitcoin Frog and a
+standing stone for a Runestone. Up to MAX_SHOWN at once.
 
 ASSETS lists what can be shown and the amounts each tier starts at. Nothing shows until the
 owner picks it (social.showcase), and a pick only counts while the address that made it still
@@ -33,7 +35,12 @@ router = APIRouter()
 ASSETS = {
     "dog": {"kind": "rune", "rune": "DOGGOTOTHEMOON", "tiers": (1, 1_000_000, 100_000_000)},
     "cat": {"kind": "collection", "collection": "quantum-cats", "tiers": (1, 3, 10)},
+    "puppet": {"kind": "collection", "collection": "bitcoin-puppets", "tiers": (1, 3, 10)},
+    "monkey": {"kind": "collection", "collection": "nodemonkes", "tiers": (1, 3, 10)},
+    "frog": {"kind": "collection", "collection": "bitcoin-frogs", "tiers": (1, 5, 20)},
+    "runestone": {"kind": "collection", "collection": "runestone", "tiers": (1, 3, 10)},
 }
+MAX_SHOWN = 3  # pets one district can show at once; the tile has room for three
 REFRESH_HOURS = 6
 MIN_REFRESH_MINUTES = 10  # an owner's 刷新 can't ask the provider more often than this
 COLLECTIONS_DIR = Path(os.getenv("HOLDINGS_COLLECTIONS_DIR") or Path(__file__).parent / "collections")
@@ -254,6 +261,8 @@ class ShowcaseBody(BaseModel):
 def set_showcase(bitmap_number: int, req: ShowcaseBody, address: str = Depends(current_address)):
     if any(a not in ASSETS for a in req.assets) or len(set(req.assets)) != len(req.assets):
         raise HTTPException(400, f"assets are some of {', '.join(ASSETS)}")
+    if len(req.assets) > MAX_SHOWN:
+        raise HTTPException(400, f"show at most {MAX_SHOWN}")
     with cursor() as cur:
         roles.require_owner(cur, bitmap_number, address)
         cur.execute(

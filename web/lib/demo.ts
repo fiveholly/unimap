@@ -5,7 +5,7 @@
 
 import type { Application, District, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, Role, Showcase, Tile, XAccount } from "./api";
 import { connected } from "./parks";
-import { PET_KEYS, PETS, type Pet, type PetKey } from "./pets";
+import { MAX_SHOWN, PET_KEYS, PETS, type Pet, type PetKey } from "./pets";
 import { prosperity, THRESHOLDS, type ProsperityParts } from "./prosperity";
 import { COLORS, DECOS, visibleStyle, type DistrictStyle } from "./style";
 
@@ -259,15 +259,28 @@ function parts(n: number): ProsperityParts {
     neighbors30: Math.floor(hash(n * 7 + 4) * 150 * h * h) + near,
   };
 }
-// The visitor's wallet holds 2.5 million DOG and one Quantum Cat; nothing shows until they pick
-// it. Some other owners show made-up holdings, and 840001 shows off the top tiers.
-const DEMO_HOLDINGS: Partial<Record<PetKey, number>> = { dog: 2_500_000, cat: 1 };
+// The visitor's wallet holds 2.5 million DOG, a Quantum Cat, three Bitcoin Puppets, seven
+// Bitcoin Frogs and a Runestone, but no NodeMonkes; nothing shows until they pick it. Some other
+// owners show made-up holdings, and 840001 and its neighbours show off the top tiers.
+const DEMO_HOLDINGS: Partial<Record<PetKey, number>> = { dog: 2_500_000, cat: 1, puppet: 3, frog: 7, runestone: 1 };
+const SHOWCASE_STREET: Record<number, Partial<Record<PetKey, number>>> = {
+  840001: { dog: 420_000_000, cat: 12 },
+  840002: { puppet: 12, monkey: 4, frog: 25 },
+  840003: { monkey: 10, runestone: 11 },
+  840004: { runestone: 4, frog: 6, cat: 2 },
+};
 function holdingsOf(address: string | null, n: number): Partial<Record<PetKey, number>> {
   if (!address) return {};
   if (address === DEMO_ADDRESS) return DEMO_HOLDINGS;
-  if (n === 840001) return { dog: 420_000_000, cat: 12 };
+  if (SHOWCASE_STREET[n]) return SHOWCASE_STREET[n];
   if (hash(n + 61) > 0.14) return {};
-  return { dog: Math.floor(10 ** (hash(n + 62) * 9)), ...(hash(n + 63) < 0.5 ? { cat: 1 + Math.floor(hash(n + 64) * 4) } : {}) };
+  // Most show a dog, some a cat, a few one of the collections, never more than three.
+  const extra = PET_KEYS.slice(2)[Math.floor(hash(n + 65) * 4)];
+  return {
+    dog: Math.floor(10 ** (hash(n + 62) * 9)),
+    ...(hash(n + 63) < 0.5 ? { cat: 1 + Math.floor(hash(n + 64) * 4) } : {}),
+    ...(hash(n + 66) < 0.3 ? { [extra]: 1 + Math.floor(hash(n + 67) * 12) } : {}),
+  };
 }
 const petTier = (k: PetKey, amount: number) => PETS[k].tiers.filter((t) => amount >= t).length;
 function petsAt(n: number): Pet[] {
@@ -594,6 +607,7 @@ function route(path: string, opts: Opts): unknown {
     if (method === "PUT") {
       const assets = (body.assets as PetKey[]) ?? [];
       if (assets.some((k) => !(k in PETS))) fail(400, "没有这种藏品");
+      if (assets.length > MAX_SHOWN) fail(400, `一个街区最多摆 ${MAX_SHOWN} 种`);
       (s.showcase ??= {})[n] = assets;
       save();
     }

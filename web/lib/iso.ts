@@ -176,22 +176,137 @@ function cat(p: Painter, b: Pt, s: number, fur: string) {
   for (const dx of [-1.3, 1.3]) p.ell(X(dx), Y(-10.3), 0.65 * s, 0.75 * s, "#B5E07A");
   p.ell(X(0), Y(-9.1), 0.5 * s, 0.35 * s, "#E58A8A");
 }
+function puppet(p: Painter, b: Pt, s: number, cloth: string) {
+  const X = (dx: number) => b[0] + dx * s;
+  const Y = (dy: number) => b[1] + dy * s;
+  const line = (x0: number, y0: number, x1: number, y1: number, c = "rgba(237,234,227,0.55)", w = 0.25) =>
+    p.poly([[X(x0 - w), Y(y0)], [X(x0 + w), Y(y0)], [X(x1 + w), Y(y1)], [X(x1 - w), Y(y1)]], c);
+  p.ell(X(0.6), Y(0.4), 4.5 * s, 1.6 * s, "rgba(0,0,0,0.25)");
+  // Strings up to the wooden control bar it dangles from.
+  line(-3.6, -8, -3.4, -24);
+  line(3.6, -8, 3.4, -24);
+  line(0, -14.5, 0, -24);
+  line(-5, -24, 5, -24, "#8A6844", 0.7);
+  line(0, -26.5, 0, -21.5, "#8A6844", 0.6);
+  line(-1.4, -2.2, -1.6, 0, "#3B3A40", 0.5); // legs
+  line(1.4, -2.2, 1.6, 0, "#3B3A40", 0.5);
+  p.poly([[X(-2.6), Y(-2.2)], [X(2.6), Y(-2.2)], [X(1.8), Y(-8.6)], [X(-1.8), Y(-8.6)]], cloth);
+  line(-1.8, -8.2, -3.6, -6.4, cloth, 0.6); // arms, raised to the strings
+  line(1.8, -8.2, 3.6, -6.4, cloth, 0.6);
+  p.ell(X(0), Y(-11.4), 3 * s, 3 * s, "#F1C9A0");
+  for (const dx of [-1.1, 1.1]) p.ell(X(dx), Y(-11.8), 0.45 * s, 0.55 * s, "#2E2C28");
+  p.poly([[X(-1), Y(-10)], [X(1), Y(-10)], [X(0), Y(-9.4)]], "#B04A35");
+}
+function monkey(p: Painter, b: Pt, s: number, fur: string) {
+  const X = (dx: number) => b[0] + dx * s;
+  const Y = (dy: number) => b[1] + dy * s;
+  p.ell(X(0.6), Y(0.3), 5 * s, 1.8 * s, "rgba(0,0,0,0.3)");
+  for (const [dx, dy, r] of [[3.4, -1.2, 1], [5, -2.6, 0.9], [5.4, -4.6, 0.8], [4.6, -6.2, 0.7]] as const) p.ell(X(dx), Y(dy), r * s, r * s, fur); // tail
+  p.ell(X(0), Y(-3.8), 3.6 * s, 3.8 * s, fur);
+  p.ell(X(0), Y(-3.2), 2.2 * s, 2.6 * s, "#D9B48A");
+  for (const dx of [-3.4, 3.4]) p.ell(X(dx), Y(-10.2), 1.4 * s, 1.4 * s, "#D9B48A"); // ears
+  p.ell(X(0), Y(-10), 3.4 * s, 3.1 * s, fur);
+  p.ell(X(0), Y(-9.3), 2.4 * s, 2 * s, "#D9B48A");
+  for (const dx of [-0.9, 0.9]) p.ell(X(dx), Y(-10.2), 0.5 * s, 0.6 * s, "#2E2C28");
+  p.ell(X(0), Y(-8.6), 0.9 * s, 0.35 * s, "#8A5A3A");
+}
+function palm(p: Painter, b: Pt) {
+  const [x, y] = b;
+  p.ell(x + 3, y + 0.5, 7, 2.4, "rgba(0,0,0,0.28)");
+  p.poly([[x - 1.2, y], [x + 1.2, y], [x + 2.6, y - 22], [x + 0.6, y - 22]], "#8A6844");
+  const top: Pt = [x + 1.6, y - 22];
+  for (const [dx, dy] of [[-10, 3], [10, 4], [-7, -5], [8, -5], [0, -8]])
+    p.poly([top, [top[0] + dx, top[1] + dy], [top[0] + dx * 0.5, top[1] + dy * 0.5 - 2.2]], dx < 0 ? "#3A6E34" : "#5C9A4A");
+  p.ell(top[0] - 1, top[1] + 1.5, 1.4, 1.4, "#6B4A2A");
+  p.ell(top[0] + 1.4, top[1] + 1.8, 1.4, 1.4, "#6B4A2A");
+}
+function frog(p: Painter, b: Pt, s: number) {
+  const X = (dx: number) => b[0] + dx * s;
+  const Y = (dy: number) => b[1] + dy * s;
+  p.ell(X(0.4), Y(0.3), 4.6 * s, 1.5 * s, "rgba(0,0,0,0.3)");
+  p.ell(X(-3), Y(-0.6), 1.8 * s, 0.9 * s, "#4F8A3A"); // feet
+  p.ell(X(3), Y(-0.6), 1.8 * s, 0.9 * s, "#4F8A3A");
+  p.ell(X(0), Y(-2.6), 4 * s, 2.7 * s, "#6DAA52");
+  p.ell(X(0), Y(-2), 2.6 * s, 1.5 * s, "#C9E0A0");
+  for (const dx of [-1.9, 1.9]) {
+    p.ell(X(dx), Y(-5.2), 1.5 * s, 1.5 * s, "#6DAA52");
+    p.ell(X(dx), Y(-5.4), 0.8 * s, 0.85 * s, "#F2EEE6");
+    p.ell(X(dx), Y(-5.4), 0.4 * s, 0.5 * s, "#2E2C28");
+  }
+  p.poly([[X(-1.6), Y(-3.4)], [X(1.6), Y(-3.4)], [X(0), Y(-3)]], "#3A6E34");
+}
+function pond(p: Painter, b: Pt, rx: number) {
+  p.ell(b[0], b[1], rx + 2, (rx + 2) * 0.45, "#5A564C");
+  p.ell(b[0], b[1] - 0.6, rx, rx * 0.45, "#3F86B0");
+  p.ell(b[0] - rx * 0.35, b[1] - 0.8, rx * 0.4, rx * 0.12, "rgba(200,230,245,0.35)");
+  p.ell(b[0] + rx * 0.4, b[1] + 0.4, rx * 0.22, rx * 0.1, "#4F8A3A"); // a lily pad
+}
+function runestone(p: Painter, b: Pt, s: number) {
+  const X = (dx: number) => b[0] + dx * s;
+  const Y = (dy: number) => b[1] + dy * s;
+  p.ell(X(1), Y(0.6), 5.5 * s, 2 * s, "rgba(0,0,0,0.3)");
+  // A slab, its broad face to the front-left, rounded at the top.
+  p.poly([[X(-3.6), Y(-1.4)], [X(1.6), Y(1)], [X(1.6), Y(-13)], [X(0.2), Y(-15.6)], [X(-2.4), Y(-16.2)], [X(-3.6), Y(-14.6)]], "#7C776C");
+  p.poly([[X(1.6), Y(1)], [X(3.4), Y(0)], [X(3.4), Y(-13.6)], [X(2.2), Y(-15.4)], [X(0.2), Y(-15.6)], [X(1.6), Y(-13)]], "#A39D90");
+  // Carved runes that glow a little.
+  const cut = (x0: number, y0: number, x1: number, y1: number) =>
+    p.poly([[X(x0 - 0.3), Y(y0)], [X(x0 + 0.3), Y(y0)], [X(x1 + 0.3), Y(y1)], [X(x1 - 0.3), Y(y1)]], "#F7A23C");
+  cut(-1.6, -3.6, -1.6, -11.6);
+  cut(-1.6, -11.6, 0.2, -9.2);
+  cut(0.2, -9.2, -1.6, -7.6);
+  cut(-1.6, -7.6, 0.4, -4.4);
+}
+
+// Up to three pets on a tile, in the order the owner picked them: along the front-left edge,
+// the front-right edge, then the front corner. at(a, b) is a point a along the slot's edge and
+// b towards the tile's middle; the corner has less room, so a is squeezed there.
+type Slot = (a: number, b?: number) => Pt;
+const PET_SLOTS: Slot[] = [
+  (a, b = 0) => iso(0.3 + a, 0.9 - b),
+  (a, b = 0) => iso(0.9 - b, 0.3 + a),
+  (a, b = 0) => iso(0.7 + a * 0.35 - b, 0.7 - a * 0.35 - b),
+];
+const PUPPET_CLOTH = ["#C2553D", "#5B8DB8", "#E8B04A"];
+const MONKEY_FUR = ["#8A5A3A", "#6B4A2A"];
 function showPets(p: Painter, pets: [PetKey, number][]) {
-  for (const [key, tier] of pets) {
+  pets.slice(0, PET_SLOTS.length).forEach(([key, tier], i) => {
+    const at = PET_SLOTS[i];
     if (key === "dog") {
       if (tier >= 3) {
-        const k = p.box(-0.05, 0.78, 0.11, 0.11, 9, { l: "#8A6844", r: "#A9824F" });
-        p.roof(k, 7, { rb: "#C2553D", lb: "#9E4330", l: "#8A3828", r: "#B04A35" }, -0.05, 0.78);
-        const door = iso(0.06, 0.82);
+        const [gx, gy] = i === 0 ? [-0.05, 0.78] : i === 1 ? [0.78, -0.05] : [0.58, 0.58];
+        const k = p.box(gx, gy, 0.11, 0.11, 9, { l: "#8A6844", r: "#A9824F" });
+        p.roof(k, 7, { rb: "#C2553D", lb: "#9E4330", l: "#8A3828", r: "#B04A35" }, gx, gy);
+        const door = iso(gx + 0.11, gy + 0.04);
         p.ell(door[0] - 3, door[1] - 4, 2.2, 3, "#2E2418");
       }
-      dog(p, iso(0.32, 0.9), tier >= 2 ? 1.15 : 0.85);
-      if (tier >= 3) dog(p, iso(-0.45, 0.95), 0.62, true);
-    } else {
-      const spots: [number, number, number][] = [[0.9, 0.3, 1], [0.86, 0.02, 0.85], [0.95, 0.52, 0.8]];
-      spots.slice(0, tier).forEach(([gx, gy, sc], i) => cat(p, iso(gx, gy), sc, CAT_FUR[i]));
+      dog(p, at(0.02), tier >= 2 ? 1.15 : 0.85);
+      if (tier >= 3) dog(p, at(-0.75, -0.05), 0.62, true);
+    } else if (key === "cat") {
+      const spots: [number, number, number][] = [[0, 0, 1], [-0.28, 0.04, 0.85], [0.22, -0.05, 0.8]];
+      spots.slice(0, tier).forEach(([a, d, sc], j) => cat(p, at(a, d), sc, CAT_FUR[j]));
+    } else if (key === "puppet") {
+      if (tier >= 3) {
+        // A little puppet theatre behind them: a booth with a striped awning.
+        const [x, y] = at(-0.05, 0.22);
+        p.poly([[x - 13, y], [x + 13, y], [x + 13, y - 18], [x - 13, y - 18]], "#8A6844");
+        p.poly([[x - 10, y - 4], [x + 10, y - 4], [x + 10, y - 15], [x - 10, y - 15]], "#2E2418");
+        for (let j = 0; j < 4; j++) p.poly([[x - 14 + j * 7, y - 18], [x - 7 + j * 7, y - 18], [x - 7 + j * 7, y - 22], [x - 14 + j * 7, y - 22]], j % 2 ? "#F2EEE6" : "#C2553D");
+      }
+      const spots: [number, number][] = tier >= 2 ? [[-0.12, 0], [0.14, 0.02]] : [[0, 0]];
+      spots.forEach(([a, d], j) => puppet(p, at(a, d), 0.9, PUPPET_CLOTH[j]));
+    } else if (key === "monkey") {
+      if (tier >= 3) palm(p, at(-0.3, 0.1));
+      monkey(p, at(0.05), 1, MONKEY_FUR[0]);
+      if (tier >= 2) monkey(p, at(0.3, 0.02), 0.8, MONKEY_FUR[1]);
+    } else if (key === "frog") {
+      if (tier >= 2) pond(p, at(0, 0.08), tier >= 3 ? 15 : 11);
+      const spots: [number, number, number][] = tier >= 3 ? [[-0.12, 0.02, 0.9], [0.14, 0.04, 0.8], [0.02, 0.18, 0.7]] : [[tier >= 2 ? -0.08 : 0, 0, 1]];
+      spots.forEach(([a, d, sc]) => frog(p, at(a, d), sc));
+    } else if (key === "runestone") {
+      const stones: [number, number, number][] = tier >= 3 ? [[-0.22, 0.08, 0.9], [0.22, 0.08, 0.9], [0, 0.18, 1.2]] : [[0, 0, tier >= 2 ? 1.35 : 0.95]];
+      stones.forEach(([a, d, sc]) => runestone(p, at(a, d), sc));
     }
-  }
+  });
 }
 
 // Things on a tile are drawn back to front by k = gx + gy.

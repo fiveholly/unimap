@@ -455,11 +455,13 @@ class SocialApi(unittest.TestCase):
                 return {"DOGGOTOTHEMOON": Decimal("2500000.5"), "OTHERRUNE": Decimal(9)} if address == ALICE.address else {}
 
             def inscription_ids(self, address):
-                return iter(["cat1i0", "cat2i0", "notacati0"] if address == ALICE.address else [])
+                return iter(["cat1i0", "cat2i0", "notacati0", "frog1i0"] if address == ALICE.address else [])
 
         with tempfile.TemporaryDirectory() as d:
             with open(os.path.join(d, "quantum-cats.json"), "w") as f:
                 f.write('["cat1i0", {"id": "cat2i0"}, "cat3i0"]')
+            with open(os.path.join(d, "bitcoin-frogs.json"), "w") as f:
+                f.write('["frog1i0", "frog2i0"]')
             old_dir, holdings.COLLECTIONS_DIR = holdings.COLLECTIONS_DIR, holdings.Path(d)
             holdings.collection.cache_clear()
             holdings.provider = Fake()
@@ -468,11 +470,15 @@ class SocialApi(unittest.TestCase):
                 self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}/showcase", headers=self.h(CAROL)).status_code, 403)
                 # Nothing shows before the owner picks it, though the first look fetches holdings.
                 view = self.client.get(f"/v1/districts/{DISTRICT}/showcase", headers=self.h(ALICE)).json()
-                self.assertEqual({h["asset"]: (h["tier"], h["amount"]) for h in view["held"]}, {"dog": (2, "2500000.5"), "cat": (1, "2")})
+                held = {h["asset"]: (h["tier"], h["amount"]) for h in view["held"]}
+                self.assertEqual(set(held), set(holdings.ASSETS))
+                self.assertEqual((held["dog"], held["cat"], held["frog"], held["monkey"]), ((2, "2500000.5"), (1, "2"), (1, "1"), (0, "0")))
                 self.assertEqual((view["chosen"], view["shown"]), ([], []))
                 self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}").json()["pets"], [])
                 bad = self.client.put(f"/v1/districts/{DISTRICT}/showcase", json={"assets": ["unicorn"]}, headers=self.h(ALICE))
                 self.assertEqual(bad.status_code, 400)
+                four = self.client.put(f"/v1/districts/{DISTRICT}/showcase", json={"assets": ["dog", "cat", "frog", "monkey"]}, headers=self.h(ALICE))
+                self.assertEqual(four.status_code, 400)  # three at most
                 put = self.client.put(f"/v1/districts/{DISTRICT}/showcase", json={"assets": ["dog", "cat"]}, headers=self.h(ALICE))
                 self.assertEqual(put.status_code, 200, put.text)
                 self.assertEqual([p["asset"] for p in put.json()["shown"]], ["dog", "cat"])
