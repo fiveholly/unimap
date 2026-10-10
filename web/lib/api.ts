@@ -225,7 +225,7 @@ export type FeedItem = { type: "post"; time: number; post: Post } | { type: "eve
 /** The owner's view of what their wallet holds and what the district shows. */
 export type Showcase = { chosen: PetKey[]; held: Pet[]; wallets?: number; checked_at: string | null; error: string | null; shown: Pet[] };
 
-export type NotificationKind = "reply" | "like" | "post" | "follow" | "apply" | "tip" | "treasure" | "lucky" | "crown";
+export type NotificationKind = "reply" | "like" | "post" | "follow" | "apply" | "tip" | "treasure" | "lucky" | "crown" | "event_win";
 export type Notification = {
   id: number;
   kind: NotificationKind;
@@ -237,7 +237,7 @@ export type Notification = {
   snippet: string | null;
   amount_sats?: number; // tips
   comment?: string;
-  block_height?: number; // treasure, lucky: the block that drew it
+  block_height?: number; // treasure, lucky: the block that drew it; crown, event_win: the season's first block
   tx_index?: number; // treasure: the parcel
   rarity?: Rarity;
 };
@@ -263,6 +263,24 @@ export type Draw = {
 };
 export type LuckyRound = { since: number; until: number; block_hash: string; candidates: number; index: number | null; bitmap_number: number | null; owner: string | null };
 export type Game = { tip: number | null; round: LuckyRound | null; draws: Draw[]; badges: Badge[] | null; rules: { round: number; claim_blocks: number } };
+/** 街区活动 (api/events.py): an owner's prizes for whoever does the most in the district over a season. */
+export type ContestMetric = "posts" | "replies" | "checkins";
+export type Contest = {
+  id: number;
+  bitmap_number: number;
+  season: number;
+  since: number;
+  until: number;
+  host: string;
+  metric: ContestMetric;
+  prizes: number[];
+  total_sats: number;
+  note: string;
+  status: "upcoming" | "running" | "ended" | "cancelled";
+  created_at: string;
+  standings?: { address: string; score: number }[];
+  winners?: { place: number; address: string; score: number; prize_sats: number; paid: "settled" | "pending" | null }[];
+};
 export type SeasonRow = { bitmap_number: number; owner: string | null; score: number; parts?: Record<"posts" | "replies" | "checkins" | "tippers", number> };
 export type Season = {
   number: number | null;
