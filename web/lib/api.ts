@@ -159,7 +159,18 @@ export type Me = {
   follows: number[];
   x?: XAccount | null;
   wallets?: LinkedWallet[];
+  admin?: boolean; // a site admin (ADMIN_ADDRESSES)
+  banned?: boolean; // stopped from posting by a site admin
 };
+
+/** GET /v1/admin/reports: a reported post with its open reports. */
+export type ReportGroup = {
+  post: Post;
+  count: number;
+  reports: { reporter: string; reason: string; note: string; created_at: string }[];
+  author_banned: boolean;
+};
+export type Ban = { address: string; reason: string; banned_by: string; created_at: string; expires_at: string | null };
 
 /** One of the wallets linked together (关联钱包); main is the group's first address, me the one signed in. */
 export type LinkedWallet = { address: string; main: boolean; me: boolean };

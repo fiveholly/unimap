@@ -618,6 +618,45 @@ class SocialApi(unittest.TestCase):
         nobody = self.client.get("/v1/people/bcrt1qnobody").json()
         self.assertEqual((nobody["districts"], nobody["posts"], nobody["post_count"]), ([], [], 0))
 
+    def test_reports_and_bans(self):
+        os.environ["ADMIN_ADDRESSES"] = CAROL.address.upper()
+        try:
+            post = self.post(BOB, "买币加我微信").json()
+            report = lambda w, reason="spam", pid=post["id"]: self.client.post(
+                f"/v1/posts/{pid}/report", json={"reason": reason, "note": "广告"}, headers=self.h(w)
+            )
+            self.assertEqual(report(BOB).status_code, 400)  # not your own
+            self.assertEqual(report(ALICE, "nonsense").status_code, 400)
+            self.assertEqual(report(ALICE).status_code, 200)
+            self.assertEqual(report(ALICE, "scam").status_code, 200)  # again: updates, no second report
+            self.assertEqual(report(CAROL).status_code, 200)
+            self.assertEqual(self.client.get("/v1/admin/reports", headers=self.h(ALICE)).status_code, 403)
+            self.assertTrue(self.client.get("/v1/me", headers=self.h(CAROL)).json()["admin"])
+            self.assertFalse(self.client.get("/v1/me", headers=self.h(ALICE)).json()["admin"])
+            queue = self.client.get("/v1/admin/reports", headers=self.h(CAROL)).json()["reports"]
+            mine = [r for r in queue if r["post"]["id"] == post["id"]][0]
+            self.assertEqual((mine["count"], sorted(r["reason"] for r in mine["reports"])), (2, ["scam", "spam"]))
+            # Dismissing closes them; a new report reopens.
+            self.client.post(f"/v1/admin/reports/{post['id']}", json={"action": "dismiss"}, headers=self.h(CAROL))
+            queue = self.client.get("/v1/admin/reports", headers=self.h(CAROL)).json()["reports"]
+            self.assertNotIn(post["id"], [r["post"]["id"] for r in queue])
+            report(ALICE)
+            r = self.client.post(f"/v1/admin/reports/{post['id']}", json={"action": "remove"}, headers=self.h(CAROL))
+            self.assertEqual(r.status_code, 200)
+            self.assertTrue(self.client.get(f"/v1/posts/{post['id']}").json()["removed"])
+            # A banned address can't post anywhere until the ban is lifted.
+            self.assertEqual(self.client.post("/v1/admin/bans", json={"address": CAROL.address}, headers=self.h(CAROL)).status_code, 400)
+            self.assertEqual(self.client.post("/v1/admin/bans", json={"address": BOB.address, "days": 7}, headers=self.h(CAROL)).status_code, 200)
+            self.assertTrue(self.client.get("/v1/me", headers=self.h(BOB)).json()["banned"])
+            self.assertEqual(self.post(BOB, "我又来了").status_code, 403)
+            self.assertEqual([b["address"] for b in self.client.get("/v1/admin/bans", headers=self.h(CAROL)).json()["bans"]], [BOB.address])
+            self.client.delete(f"/v1/admin/bans/{BOB.address}", headers=self.h(CAROL))
+            self.assertEqual(self.post(BOB, "好好说话").status_code, 201)
+        finally:
+            os.environ.pop("ADMIN_ADDRESSES", None)
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.reports; delete from social.bans;")
+
     # --- land changes hands ---
 
     def test_owner_change_moves_admin_rights(self):

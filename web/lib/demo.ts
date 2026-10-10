@@ -3,7 +3,7 @@
 // here from deterministic fake data; what the visitor does (posts, likes, follows, profile
 // edits) is kept in localStorage, and "重置演示数据" clears it.
 
-import type { Application, District, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, Role, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
+import type { Application, District, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
 import { connected } from "./parks";
 import { MAX_SHOWN, PET_KEYS, PETS, type Pet, type PetKey } from "./pets";
 import { prosperity, THRESHOLDS, type ProsperityParts } from "./prosperity";
@@ -112,6 +112,15 @@ const SEEDS: Seed[] = [
   { n: 839998, who: "owner", body: "减半前两个区块。手续费那几天很高，所以这里被划成了 CBD。", ago: 0.9 },
   { n: 840002, who: 5, body: "地块 #5 的居民，路过打个招呼。", ago: 1.8 },
   { n: 767430, who: "owner", body: "第一个铭文出现的区块。数据区的起点。", ago: 12 },
+  { n: 840002, who: 9, body: "免费空投！连接钱包签名就能领 1000 枚 BITMAP 代币，名额有限 → bitmap-airdrop.example", ago: 0.3 },
+  { n: 840000, who: 31, body: "收地块，高价收，私信。收地块，高价收，私信。收地块，高价收，私信。", ago: 0.7 },
+];
+// Reports other wallets filed on the two spam seeds above, for the admin page.
+const SEED_REPORTS: [string, number, string, string][] = [
+  ["免费空投", 701, "scam", "钓鱼链接，让人签名转走铭文"],
+  ["免费空投", 702, "scam", ""],
+  ["免费空投", 703, "spam", ""],
+  ["收地块", 704, "spam", "同一句话刷了好几个街区"],
 ];
 
 type State = {
@@ -131,6 +140,8 @@ type State = {
   notifications?: Notification[]; // the visitor's, newest first
   x?: XAccount | null; // the visitor's linked X account
   linked?: string[]; // wallets the visitor linked to their own
+  reports?: { post_id: number; reporter: string; reason: string; note: string; created_at: string; resolved?: boolean }[];
+  bans?: Ban[];
 };
 type DemoPoll = { id: number; n: number; question: string; options: string[]; by: string; created_at: string; closes_at: string; closed_at: string | null; votes: Record<string, number> };
 
@@ -151,6 +162,11 @@ function seedExtras(s: State) {
   ];
   s.parks ??= [SEED_PARK];
   s.notifications ??= seedNotifications(s);
+  s.reports ??= SEED_REPORTS.flatMap(([start, who, reason, note], i) => {
+    const post = s.posts.find((p) => p.body?.startsWith(start));
+    return post ? [{ post_id: post.id, reporter: fakeAddress(who), reason, note, created_at: iso(0.2 - i * 0.03) }] : [];
+  });
+  s.bans ??= [{ address: fakeAddress(705), reason: "scam", banned_by: DEMO_ADDRESS, created_at: iso(2), expires_at: iso(-28) }];
   return s;
 }
 
@@ -508,6 +524,25 @@ const walletsView = (): LinkedWallet[] => [
   ...(load().linked ?? []).map((address) => ({ address, main: false, me: false })),
 ];
 
+const activeBans = () => (load().bans ?? []).filter((b) => !b.expires_at || Date.parse(b.expires_at) > Date.now());
+const isBanned = (a: string) => activeBans().some((b) => b.address === a);
+
+function reportGroups(me: string | null): ReportGroup[] {
+  const s = load();
+  const open = (s.reports ?? []).filter((r) => !r.resolved);
+  const ids = [...new Set(open.map((r) => r.post_id))];
+  return ids
+    .map((id) => ({ id, post: s.posts.find((x) => x.id === id && !x.removed), reports: open.filter((r) => r.post_id === id) }))
+    .filter((g) => g.post)
+    .map((g) => ({
+      post: view(g.post!, me),
+      count: g.reports.length,
+      reports: g.reports.map(({ reporter, reason, note, created_at }) => ({ reporter, reason, note, created_at })),
+      author_banned: isBanned(g.post!.author.address),
+    }))
+    .sort((a, b) => b.count - a.count);
+}
+
 type Opts = { method?: string; body?: unknown; token?: string | null };
 
 function route(path: string, opts: Opts): unknown {
@@ -534,7 +569,7 @@ function route(path: string, opts: Opts): unknown {
   if ((m = p.match(/^\/v1\/land\/(\d+)\/events$/))) return { events: events(+m[1]) };
   if (p === "/v1/me") {
     const a = needMe();
-    return { address: a, districts: OWNED, parcels: [OWN_PARCEL], follows: [...s.follows].sort((x, y) => x - y), x: s.x ?? null, wallets: walletsView() } satisfies Me;
+    return { address: a, districts: OWNED, parcels: [OWN_PARCEL], follows: [...s.follows].sort((x, y) => x - y), x: s.x ?? null, wallets: walletsView(), admin: true, banned: isBanned(a) } satisfies Me;
   }
   if ((m = p.match(/^\/v1\/people\/([^/]+)$/))) {
     const before = url.searchParams.get("before_id");
@@ -741,6 +776,7 @@ function route(path: string, opts: Opts): unknown {
     const a = needMe();
     const [role, parcel] = roleOf(a, n);
     const replyTo = (body.reply_to as number | null) ?? null;
+    if (isBanned(a)) fail(403, "this address is banned from posting");
     if ((s.mutes[n] ?? []).includes(a)) fail(403, "你在这个街区被禁言了");
     if (replyTo == null && role === "visitor") fail(403, "只有街区主人和居民可以发帖，访客可以回复");
     const post: Post = {
@@ -759,6 +795,49 @@ function route(path: string, opts: Opts): unknown {
   }
   if ((m = p.match(/^\/v1\/posts\/(\d+)\/replies$/)))
     return { replies: s.posts.filter((x) => x.reply_to === +m![1] && !x.removed).sort((a, b) => a.id - b.id).map((x) => view(x, me)) };
+  if ((m = p.match(/^\/v1\/posts\/(\d+)\/report$/)) && method === "POST") {
+    const a = needMe(), id = +m[1];
+    const post = s.posts.find((x) => x.id === id && !x.removed) ?? fail(404, "no such post");
+    if (post.author.address === a) fail(400, "you can't report your own post");
+    s.reports = (s.reports ?? []).filter((r) => !(r.post_id === id && r.reporter === a));
+    s.reports.push({ post_id: id, reporter: a, reason: String(body.reason), note: String(body.note ?? ""), created_at: new Date().toISOString() });
+    save();
+    return { ok: true };
+  }
+  if (p === "/v1/admin/reports") return { reports: reportGroups(me) };
+  if ((m = p.match(/^\/v1\/admin\/reports\/(\d+)$/)) && method === "POST") {
+    needMe();
+    const id = +m[1];
+    if (body.action === "remove") {
+      const post = s.posts.find((x) => x.id === id);
+      if (post && !post.removed) {
+        post.removed = true;
+        const parent = s.posts.find((x) => x.id === post.reply_to);
+        if (parent) parent.reply_count--;
+      }
+    }
+    for (const r of s.reports ?? []) if (r.post_id === id) r.resolved = true;
+    save();
+    return { ok: true };
+  }
+  if (p === "/v1/admin/bans") {
+    const a = needMe();
+    if (method === "POST") {
+      const address = String(body.address), days = body.days as number | null;
+      if (address === DEMO_ADDRESS) fail(400, "can't ban a site admin");
+      s.bans = (s.bans ?? []).filter((b) => b.address !== address);
+      s.bans.unshift({ address, reason: String(body.reason ?? ""), banned_by: a, created_at: new Date().toISOString(),
+        expires_at: days ? new Date(Date.now() + days * DAY * 1000).toISOString() : null });
+      save();
+    }
+    return { bans: activeBans() };
+  }
+  if ((m = p.match(/^\/v1\/admin\/bans\/(\w+)$/)) && method === "DELETE") {
+    needMe();
+    s.bans = (s.bans ?? []).filter((b) => b.address !== m![1]);
+    save();
+    return { ok: true };
+  }
   if ((m = p.match(/^\/v1\/posts\/(\d+)\/like$/))) {
     needMe();
     s.likes[+m[1]] = method === "PUT";

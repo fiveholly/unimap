@@ -78,6 +78,11 @@ media: none
 | GET | `/v1/me/wallets` | 关联在一起的钱包，主地址在前 |
 | POST | `/v1/me/wallets/nonce` / `/v1/me/wallets` | 给另一个地址发签名消息 `{"address"}` / 交回签名完成关联 `{"address", "nonce", "signature"}` |
 | DELETE | `/v1/me/wallets/{address}` | 解除一个关联的钱包（主地址不能解除） |
+| POST | `/v1/posts/{id}/report` | 举报帖子 `{"reason": "spam"\|"abuse"\|"scam"\|"other", "note"}`，不能举报自己的帖子，重复举报会覆盖上一次 |
+| GET | `/v1/admin/reports` | 站点管理员：有未处理举报的帖子，被举报次数多的在前 |
+| POST | `/v1/admin/reports/{post_id}` | 站点管理员处理举报 `{"action": "remove"\|"dismiss"}` |
+| GET / POST | `/v1/admin/bans` | 站点管理员：封禁列表 / 封禁地址 `{"address", "reason", "days"}`（`days` 为空是永久） |
+| DELETE | `/v1/admin/bans/{address}` | 站点管理员解除封禁 |
 
 ## 繁荣度
 
@@ -201,6 +206,14 @@ expires: …
 - 地图外面是海，每片大陆的海岸是各自的颜色。缩小到城区视图时街道太细，看不出是海，所以海峡两岸的楼会往后退，把岸边让给海。
 - 地图右上角显示当前所在的大陆和它的区块范围。
 - 园区的“跨马路相连”同样适用于海峡两岸。
+
+## 举报和站点管理
+
+登录的用户可以在帖子右上角的菜单里举报别人的帖子，理由是垃圾广告、骚扰或辱骂、诈骗或钓鱼、其他，可以附一句说明。
+
+站点管理员是 `ADMIN_ADDRESSES` 里列出的地址（逗号分隔，写在 `/etc/unimap/unimap.env`）。管理员在“我的土地”里能看到“站点管理”入口（`/admin`），那里按被举报次数列出帖子，可以删除帖子、不处理，或者封禁作者 7 天、30 天或永久。被封禁的地址在任何街区都不能发帖和回复，`/v1/me` 返回 `banned: true`，“我的土地”里会显示提示。管理员自己不能被封禁。
+
+这和街区主人的权力是分开的：街区主人在自己的街区删帖、禁言，不需要站点管理员；站点管理员处理的是全站范围的问题，比如到处发钓鱼链接的地址。
 
 ## 多语言（中文 / English）
 

@@ -14,7 +14,7 @@ import psycopg2.extras
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import bip322, holdings, notify, parks, prosperity, recruit, roles, style, wallets, xlink
+from api import bip322, holdings, moderation, notify, parks, prosperity, recruit, roles, style, wallets, xlink
 from api.auth import current_address, normalize_address, optional_address
 from api.db import cursor
 from api.land import EVENT_SELECT, _event
@@ -116,7 +116,17 @@ def me(address: str = Depends(current_address)):
         follows = [r[0] for r in cur.fetchall()]
         x = xlink.of(cur, address)
         linked = wallets.view(cur, address)
-    return {"address": address, "districts": districts, "parcels": parcels, "follows": follows, "x": x, "wallets": linked}
+        is_banned = moderation.banned(cur, address)
+    return {
+        "address": address,
+        "districts": districts,
+        "parcels": parcels,
+        "follows": follows,
+        "x": x,
+        "wallets": linked,
+        "admin": moderation.is_admin(address),
+        "banned": is_banned,
+    }
 
 
 @router.get("/v1/people/{address}")
@@ -364,6 +374,8 @@ def create_post(bitmap_number: int, req: NewPost, address: str = Depends(current
 
     with cursor(dict_rows=True) as cur:
         role, parcel = roles.role_in(cur, address, bitmap_number)
+        if moderation.banned(cur, address):
+            raise HTTPException(403, "this address is banned from posting")
         cur.execute(
             "select 1 from social.mutes where bitmap_number = %s and address = %s;", (bitmap_number, address)
         )

@@ -229,3 +229,26 @@ CREATE TABLE IF NOT EXISTS social.wallet_links (
 	CONSTRAINT wallet_links_not_self CHECK (address <> main_address)
 );
 CREATE INDEX IF NOT EXISTS wallet_links_main_idx ON social.wallet_links USING btree (main_address);
+
+-- Reports and site moderation (api/moderation.py). One report per post per reporter.
+CREATE TABLE IF NOT EXISTS social.reports (
+	post_id int8 NOT NULL,
+	reporter text NOT NULL,
+	reason text NOT NULL, -- spam | abuse | scam | other
+	note text NOT NULL DEFAULT '',
+	created_at timestamptz NOT NULL DEFAULT now(),
+	resolved_at timestamptz NULL,
+	resolved_by text NULL,
+	resolution text NULL, -- removed | dismissed
+	CONSTRAINT reports_pk PRIMARY KEY (post_id, reporter)
+);
+CREATE INDEX IF NOT EXISTS reports_open_idx ON social.reports USING btree (post_id) WHERE resolved_at IS NULL;
+-- Addresses a site admin stopped from posting anywhere, until expires_at (null: for good).
+CREATE TABLE IF NOT EXISTS social.bans (
+	address text NOT NULL,
+	reason text NOT NULL DEFAULT '',
+	banned_by text NOT NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	expires_at timestamptz NULL,
+	CONSTRAINT bans_pk PRIMARY KEY (address)
+);
