@@ -135,14 +135,23 @@ def ensure_soon(cur, tasks: BackgroundTasks):
     tip = top(cur)
     if tip is None:
         return
-    cur.execute("select 1 from social.block_draws where height = %s;", (tip,))
-    if cur.fetchone() is None:
+    cur.execute(
+        "select exists(select 1 from social.block_draws where height = %s), "
+        "exists(select 1 from social.seasons where number = %s and winners is not null);",
+        (tip, tip // 2016 - 1),  # the season just ended (api/seasons.py)
+    )
+    drawn, frozen = cur.fetchone()
+    if not drawn or (not frozen and tip >= 2016):
         tasks.add_task(_ensure_now)
 
 
 def _ensure_now():
+    from api import seasons  # seasons imports game
+
     with cursor() as cur:
-        ensure(cur)
+        tip = ensure(cur)
+        if tip is not None:
+            seasons.freeze(cur, tip)
 
 
 def lucky_now(cur):
@@ -254,10 +263,13 @@ def badges_of(cur, address):
 @router.get("/v1/game")
 def game(viewer: str | None = Depends(optional_address)):
     """The lucky district now, the latest blocks' treasures, and the rules, for the game page."""
+    from api import seasons  # seasons imports game
+
     with cursor() as cur:
         tip = ensure(cur)
         if tip is None:
             return {"tip": None, "round": None, "draws": [], "rules": RULES}
+        seasons.freeze(cur, tip)
         lucky, start = lucky_now(cur)
         round_ = None
         if start is not None:

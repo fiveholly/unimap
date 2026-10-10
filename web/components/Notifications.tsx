@@ -9,7 +9,7 @@ import { BadgeIcon } from "./Badge";
 import { useSession } from "./Session";
 import { api, type Notification } from "@/lib/api";
 import { short, timeAgo } from "@/lib/format";
-import { CLAIM_BLOCKS, RARITY_COLORS, RARITY_NAMES } from "@/lib/game";
+import { CLAIM_BLOCKS, RARITY_COLORS, RARITY_NAMES, SEASON } from "@/lib/game";
 import { t, tn } from "@/lib/i18n";
 
 // The notifications page tells the bell when it has marked things read.
@@ -109,6 +109,11 @@ function sentence(item: Item): [React.ReactNode, string] {
         `/district/${n.bitmap_number}`,
       ];
     }
+    case "crown":
+      return [
+        tn("你的街区 {place} 在第 {n} 赛季进了前三，戴上了王冠", { place, n: Math.floor((n.block_height ?? 0) / SEASON) }),
+        `/district/${n.bitmap_number}`,
+      ];
     case "lucky":
       return [
         tn("区块 {h} 抽中你的街区 {place} 做今日幸运街区，你得到一枚徽章", { h: <span className="mono">{(n.block_height ?? 0).toLocaleString("en-US")}</span>, place }),
@@ -155,8 +160,8 @@ export function NotificationList() {
           return (
             <li key={item.key} className={item.read ? "" : "unread"}>
               <Link href={href}>
-                {item.first.kind === "treasure" || item.first.kind === "lucky" ? (
-                  <BadgeIcon kind={item.first.kind} rarity={item.first.kind === "lucky" ? "rare" : (item.first.rarity ?? "common")} />
+                {item.first.kind === "treasure" || item.first.kind === "lucky" || item.first.kind === "crown" ? (
+                  <BadgeIcon kind={item.first.kind} rarity={item.first.kind === "treasure" ? (item.first.rarity ?? "common") : item.first.kind === "crown" ? "legendary" : "rare"} />
                 ) : (
                   <Avatar seed={item.first.actor} size={32} />
                 )}

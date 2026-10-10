@@ -76,6 +76,7 @@ export type Tile = {
   sale?: number | null; // asking price in sats while listed on a marketplace (api/listings.py)
   lucky?: boolean; // the lucky district this round (api/game.py)
   treasure?: Rarity | null; // the rarest open treasure on its parcels
+  crown?: number | null; // 1-3: placed in the last season (api/seasons.py)
 };
 
 /** A district's listing on a marketplace (在售): its price and where to buy. */
@@ -224,7 +225,7 @@ export type FeedItem = { type: "post"; time: number; post: Post } | { type: "eve
 /** The owner's view of what their wallet holds and what the district shows. */
 export type Showcase = { chosen: PetKey[]; held: Pet[]; wallets?: number; checked_at: string | null; error: string | null; shown: Pet[] };
 
-export type NotificationKind = "reply" | "like" | "post" | "follow" | "apply" | "tip" | "treasure" | "lucky";
+export type NotificationKind = "reply" | "like" | "post" | "follow" | "apply" | "tip" | "treasure" | "lucky" | "crown";
 export type Notification = {
   id: number;
   kind: NotificationKind;
@@ -244,7 +245,11 @@ export type Notification = {
 /** 区块节拍 (api/game.py). */
 export type Badge = { kind: BadgeKind; height: number; bitmap_number: number; tx_index: number | null; rarity: Rarity; created_at: string };
 export type OpenTreasure = { height: number; block_hash: string; tx_index: number; rarity: Rarity; closes_at: number; claimable: boolean };
-export type DistrictGame = { lucky: { since: number; until: number; visited: boolean } | null; treasures: OpenTreasure[] };
+export type DistrictGame = {
+  lucky: { since: number; until: number; visited: boolean } | null;
+  treasures: OpenTreasure[];
+  crown?: { rank: number; season: number } | null;
+};
 export type Draw = {
   height: number;
   block_hash: string;
@@ -258,3 +263,16 @@ export type Draw = {
 };
 export type LuckyRound = { since: number; until: number; block_hash: string; candidates: number; index: number | null; bitmap_number: number | null; owner: string | null };
 export type Game = { tip: number | null; round: LuckyRound | null; draws: Draw[]; badges: Badge[] | null; rules: { round: number; claim_blocks: number } };
+export type SeasonRow = { bitmap_number: number; owner: string | null; score: number; parts?: Record<"posts" | "replies" | "checkins" | "tippers", number> };
+export type Season = {
+  number: number | null;
+  since: number;
+  until: number;
+  tip: number;
+  started_at: string;
+  standings: SeasonRow[];
+  last: { number: number; winners: SeasonRow[] } | null;
+  weights: Record<"posts" | "replies" | "checkins" | "tippers", number>;
+  pool_sats: number;
+  pool_split: number[];
+};

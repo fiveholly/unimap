@@ -186,7 +186,7 @@ CREATE TABLE IF NOT EXISTS social.holdings_checked (
 CREATE TABLE IF NOT EXISTS social.notifications (
 	id bigserial NOT NULL,
 	address text NOT NULL,
-	kind text NOT NULL, -- reply | like | post | follow | apply | tip | treasure | lucky
+	kind text NOT NULL, -- reply | like | post | follow | apply | tip | treasure | lucky | crown
 	actor text NOT NULL,
 	bitmap_number int4 NOT NULL,
 	post_id int8 NULL, -- the reply, the liked post or the new post
@@ -328,7 +328,7 @@ CREATE INDEX IF NOT EXISTS block_draws_lucky_idx ON social.block_draws USING btr
 CREATE TABLE IF NOT EXISTS social.badges (
 	id bigserial NOT NULL,
 	address text NOT NULL,
-	kind text NOT NULL, -- treasure | lucky | lucky_visit
+	kind text NOT NULL, -- treasure | lucky | lucky_visit | crown
 	height int4 NOT NULL, -- the block that drew it
 	bitmap_number int4 NOT NULL,
 	tx_index int4 NULL, -- treasure: the parcel
@@ -350,3 +350,13 @@ BEGIN
 			UNIQUE NULLS NOT DISTINCT (address, kind, actor, bitmap_number, post_id, tip_id, block_height);
 	END IF;
 END $$;
+
+-- 难度调整赛季 (api/seasons.py): one row per season once its start time is known; winners are
+-- frozen when the season ends, and wear a crown on the map through the next season.
+CREATE TABLE IF NOT EXISTS social.seasons (
+	number int4 NOT NULL, -- blocks number*2016 .. number*2016+2015
+	start_time timestamptz NOT NULL, -- the first block's timestamp
+	winners jsonb NULL, -- [{bitmap_number, owner, score}], best first; null until the season ends
+	frozen_at timestamptz NULL,
+	CONSTRAINT seasons_pk PRIMARY KEY (number)
+);

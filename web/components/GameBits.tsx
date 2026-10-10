@@ -6,11 +6,12 @@ import { useEffect, useState } from "react";
 import { BadgeIcon } from "./Badge";
 import { useTip } from "./BlockWatch";
 import { api, type DistrictGame, type Game } from "@/lib/api";
-import { RARITY_COLORS, RARITY_NAMES } from "@/lib/game";
+import { birthdays, CROWN_COLORS, RARITY_COLORS, RARITY_NAMES, type Rarity } from "@/lib/game";
 import { t, tn } from "@/lib/i18n";
 
 const blocks = (n: number) => n.toLocaleString("en-US");
 const SHOWN = 3; // treasures listed on a district's page
+const CROWN_RARITY: Rarity[] = ["legendary", "epic", "rare"]; // as api/seasons.py
 
 /** Above the home map: today's lucky district and how long it has left. */
 export function LuckyStrip({ tip }: { tip: number }) {
@@ -46,11 +47,12 @@ export function LuckyStrip({ tip }: { tip: number }) {
 }
 
 /** On a district's page: its lucky round and the treasures on its parcels. */
-export function DistrictBeat({ game, token, onOpened }: { game: DistrictGame; token: string | null; onOpened: () => void }) {
+export function DistrictBeat({ n, game, token, onOpened }: { n: number; game: DistrictGame; token: string | null; onOpened: () => void }) {
   const { tip } = useTip();
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  if (!game.lucky && !game.treasures.length) return null;
+  const age = tip != null ? (birthdays(tip).find(([, a, b]) => a <= n && n <= b)?.[0] ?? null) : null;
+  if (!game.lucky && !game.treasures.length && !game.crown && age == null) return null;
   // The viewer's own treasures first; a district with many parcels can hold several at once.
   const sorted = [...game.treasures].sort((a, b) => Number(b.claimable) - Number(a.claimable) || b.height - a.height);
   const shown = sorted.slice(0, SHOWN), more = sorted.length - shown.length;
@@ -68,6 +70,26 @@ export function DistrictBeat({ game, token, onOpened }: { game: DistrictGame; to
   };
   return (
     <div className="beat-banner">
+      {game.crown && (
+        <div className="beat-row">
+          <BadgeIcon kind="crown" rarity={CROWN_RARITY[game.crown.rank - 1]} size={30} />
+          <div className="grow">
+            <b style={{ color: CROWN_COLORS[game.crown.rank - 1] }}>{t("第 {s} 赛季第 {n} 名", { s: game.crown.season, n: game.crown.rank })}</b>
+            <p className="muted small">{t("这个街区戴着王冠，直到这个赛季结束。")}</p>
+          </div>
+        </div>
+      )}
+      {age != null && (
+        <div className="beat-row">
+          <span className="beat-emoji" aria-hidden>
+            🎂
+          </span>
+          <div className="grow">
+            <b>{t("今天大约是 {n}.bitmap 的 {age} 岁生日", { n, age })}</b>
+            <p className="muted small">{t("这个区块是 {age} 年前的今天前后挖出来的。来签个到，祝它生日快乐。", { age })}</p>
+          </div>
+        </div>
+      )}
       {game.lucky && (
         <div className="beat-row lucky">
           <BadgeIcon kind="lucky" rarity="rare" size={30} />

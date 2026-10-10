@@ -1,6 +1,7 @@
 """In-app notifications (通知): someone replied to your post, liked it, posted in or followed
 your district, applied to live there, or tipped you sats (api/tips.py); or a block put a
-treasure on your parcel or made your district the lucky one (api/game.py). Each is written in
+treasure on your parcel or made your district the lucky one (api/game.py), or your district
+won a crown at the end of a season (api/seasons.py). Each is written in
 the same transaction as the action, for the address it concerns, and never for your own actions.
 """
 
@@ -12,7 +13,7 @@ from api.db import cursor
 
 router = APIRouter()
 
-KINDS = ("reply", "like", "post", "follow", "apply", "tip", "treasure", "lucky")
+KINDS = ("reply", "like", "post", "follow", "apply", "tip", "treasure", "lucky", "crown")
 PAGE = 30
 
 
@@ -57,7 +58,7 @@ def notifications(before: int | None = None, address: str = Depends(current_addr
                 "read": read,
                 "snippet": snippet,
                 **({"amount_sats": sats, "comment": comment} if kind == "tip" else {}),
-                **({"block_height": height} if kind in ("treasure", "lucky") else {}),
+                **({"block_height": height} if kind in ("treasure", "lucky", "crown") else {}),
                 **({"tx_index": tx, "rarity": rare} if kind == "treasure" else {}),
             }
             for i, kind, actor, n, post_id, at, read, snippet, sats, comment, height, tx, rare in cur.fetchall()

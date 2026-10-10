@@ -6,7 +6,7 @@ import { t } from "@/lib/i18n";
 
 const LUCKY_GOLD = "#F2B544";
 
-/** A badge's medal: a chest for a treasure, a star for a lucky round, a flag for a visit, ringed in its rarity's colour. */
+/** A badge's medal: a chest for a treasure, a star for a lucky round, a flag for a visit, a crown for a season's podium, ringed in its rarity's colour. */
 export function BadgeIcon({ kind, rarity, size = 32 }: { kind: BadgeKind; rarity: Rarity; size?: number }) {
   const c = kind === "lucky" ? LUCKY_GOLD : RARITY_COLORS[rarity];
   return (
@@ -20,6 +20,8 @@ export function BadgeIcon({ kind, rarity, size = 32 }: { kind: BadgeKind; rarity
             <path d="M9 14.5c0-3 2.5-4.5 7-4.5s7 1.5 7 4.5" />
             <path d="M15 14.5v3h2v-3" />
           </>
+        ) : kind === "crown" ? (
+          <path d="M8.5 21.5h15l1.5-10-5 4-4-7-4 7-5-4z" />
         ) : kind === "lucky" ? (
           <path d="m16 8.5 2.3 4.8 5.2.7-3.8 3.6.9 5.2-4.6-2.5-4.6 2.5.9-5.2-3.8-3.6 5.2-.7z" />
         ) : (
