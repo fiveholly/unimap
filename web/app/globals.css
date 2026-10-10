@@ -1612,3 +1612,81 @@ button.sm,
   flex-direction: column;
   gap: 10px;
 }
+
+/* ---------- notifications ---------- */
+.bell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  color: var(--fg-2);
+}
+.bell:hover,
+.bell.active {
+  color: var(--fg);
+  background: var(--surface-2);
+}
+.bell-count {
+  position: absolute;
+  top: 1px;
+  right: 0;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 17px;
+  text-align: center;
+}
+.notifications-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: flex-start;
+}
+.notifications {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  align-self: stretch;
+  border-top: 1px solid var(--line);
+}
+.notifications li a {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 4px;
+  border-bottom: 1px solid var(--line);
+}
+.notifications li a:hover {
+  background: var(--surface);
+}
+.notifications li.unread a {
+  background: rgba(247, 147, 26, 0.06);
+}
+.notifications .grow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.notifications .snippet {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.notifications li a > .dim {
+  white-space: nowrap;
+}
+@media (max-width: 640px) {
+  /* Signed in, the bell, avatar and 退出 share the first row with the search box. */
+  .me-link .mono {
+    display: none;
+  }
+}

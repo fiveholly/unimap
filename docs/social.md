@@ -145,3 +145,11 @@ media: none
 - **铭文系列。** 一个铭文属不属于某个系列，看 `api/collections/<slug>.json` 里的铭文 ID 清单。`scripts/fetch_collections.py` 从社区维护的 ordinals-collections 仓库下载，部署脚本会自动跑；清单缺失时这个宠物不显示。
 - **接口。** `/v1/land` 的格子带 `pets`（例如 `["dog:2", "cat:1"]`），街区主页带 `pets`（资产、档位、数量）。主人用 `GET /v1/districts/{n}/showcase` 看自己持有什么，`PUT` 同一路径保存选择，`POST …/showcase/refresh` 重新查询。
 - **只看登录的地址。** 一个人的资产分在几个钱包地址时，暂时只算登录的那个；以后可以加签名绑定多个地址。
+
+## 通知
+
+有人回复你的帖子、赞你的帖子、在你的街区发新帖、关注你的街区，或者申请入住你的街区时，会给你记一条通知（`api/notify.py`，表 `social.notifications`）。自己做的事不通知自己；同一个人对同一条帖子取消再点赞、取消再关注，只通知一次。
+
+- 顶栏的铃铛显示未读数，每分钟和每次换页时检查一次。通知页 `/notifications` 打开后把列表里的都标成已读，同一条帖子的点赞、同一个街区的关注合成一行。
+- 接口：`GET /v1/notifications?before=`（每页 30 条，带帖子摘要和未读数）、`GET /v1/notifications/unread`、`POST /v1/notifications/read`（`up_to` 不填就是全部）。
+- 下一步可以把同样的通知推到电报机器人或邮件。

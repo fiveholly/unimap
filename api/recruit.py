@@ -9,7 +9,7 @@ becomes a resident as soon as the indexer sees it. A notice lapses when the dist
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import parks, roles
+from api import notify, parks, roles
 from api.auth import current_address
 from api.db import cursor
 
@@ -142,6 +142,7 @@ def apply(bitmap_number: int, req: Application, address: str = Depends(current_a
             "on conflict (bitmap_number, address) do update set note = excluded.note;",
             (bitmap_number, address, req.note.strip()),
         )
+        notify.notify(cur, roles.district_owner(cur, bitmap_number), "apply", address, bitmap_number)
     return {"ok": True}
 
 
