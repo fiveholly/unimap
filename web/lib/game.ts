@@ -2,7 +2,11 @@
 // browser. A draw is SHA-256 of "<block hash>:treasure" (or ":lucky") read as a number, modulo the
 // number of candidates; the rarity of a treasure is the count of trailing zeros of the block hash.
 
+import { heightAt } from "./blocktime.ts";
+import { HALVING } from "./terrain.ts";
+
 export const ROUND = 144; // blocks a lucky district lasts, about a day
+export const SEASON = 2016; // blocks between difficulty adjustments, about two weeks (api/seasons.py)
 export const CLAIM_BLOCKS = 144; // blocks a treasure stays open
 
 export const RARITIES = ["common", "rare", "epic", "legendary"] as const;
@@ -11,8 +15,30 @@ export const RARITY_NAMES: Record<Rarity, string> = { common: "普通", rare: "�
 export const RARITY_COLORS: Record<Rarity, string> = { common: "#B8B2A6", rare: "#6FA8DC", epic: "#B48CE0", legendary: "#F2B544" };
 export const RARITY_ODDS: Record<Rarity, string> = { common: "15/16", rare: "1/16", epic: "1/256", legendary: "1/4096" };
 
-export type BadgeKind = "treasure" | "lucky" | "lucky_visit";
-export const BADGE_NAMES: Record<BadgeKind, string> = { treasure: "宝箱徽章", lucky: "幸运街区", lucky_visit: "幸运来访" };
+export type BadgeKind = "treasure" | "lucky" | "lucky_visit" | "crown";
+export const BADGE_NAMES: Record<BadgeKind, string> = { treasure: "宝箱徽章", lucky: "幸运街区", lucky_visit: "幸运来访", crown: "赛季王冠" };
+export const CROWN_COLORS = ["#F2B544", "#C9CED6", "#C98A55"] as const; // 1st, 2nd, 3rd
+
+/** Season n covers blocks [since, until]. */
+export const seasonOf = (h: number): [number, number, number] => {
+  const n = Math.floor(h / SEASON);
+  return [n, n * SEASON, n * SEASON + SEASON - 1];
+};
+
+/** The next halving block after h. */
+export const nextHalving = (h: number) => (Math.floor(h / HALVING) + 1) * HALVING;
+
+/** 街区生日: blocks mined around this calendar day in earlier years, as [age, first, last] (roughly; see lib/blocktime.ts). */
+export function birthdays(tip: number, now = new Date()): [number, number, number][] {
+  const out: [number, number, number][] = [];
+  const m = now.getUTCMonth(), d = now.getUTCDate();
+  for (let y = 2009; y < now.getUTCFullYear(); y++) {
+    const from = heightAt(Date.UTC(y, m, d) / 1000), to = heightAt(Date.UTC(y, m, d + 1) / 1000);
+    if (from == null || to == null || to <= from) continue;
+    out.push([now.getUTCFullYear() - y, from, Math.min(tip, to - 1)]);
+  }
+  return out.reverse();
+}
 
 export function rarityOf(blockHash: string): Rarity {
   const zeros = blockHash.length - blockHash.replace(/0+$/, "").length;

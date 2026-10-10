@@ -237,7 +237,7 @@ function DistrictView() {
           </div>
           {tipNote && <p className="muted small">{tipNote}</p>}
           {!land.claimed && <ClaimGuide n={n} fresh={tip != null && tip - n < 6} />}
-          {district.game && <DistrictBeat game={district.game} token={token} onOpened={loadDistrict} />}
+          {district.game && <DistrictBeat n={n} game={district.game} token={token} onOpened={loadDistrict} />}
           {won && <p className="win-note small">{won}</p>}
           {land.district?.sale && <SaleBanner sale={land.district.sale} mine={!!viewer && viewer.address === district.owner} />}
           {district.park && (

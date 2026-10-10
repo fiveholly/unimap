@@ -98,6 +98,10 @@ class Bitcoind:
     def tx_count(self, block_hash):
         return _call(self.url, "getblockheader", [block_hash], self.auth)["nTx"]
 
+    def block_time(self, block_hash):
+        """The block's timestamp (unix seconds), as its miner set it."""
+        return _call(self.url, "getblockheader", [block_hash], self.auth)["time"]
+
     def spent_outpoints(self, block_hash):
         """(block time, every "txid:vout" spent by the block's non-coinbase inputs)."""
         block = _call(self.url, "getblock", [block_hash, 2], self.auth)

@@ -3,8 +3,8 @@
 // here from deterministic fake data; what the visitor does (posts, likes, follows, profile
 // edits) is kept in localStorage, and "重置演示数据" clears it.
 
-import type { Application, Badge, District, DistrictGame, Draw, Game, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
-import { CLAIM_BLOCKS, pick, rarityOf, ROUND, roundOf, sha256, type Rarity } from "./game";
+import type { Application, Badge, District, DistrictGame, Draw, Game, Season, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
+import { CLAIM_BLOCKS, pick, rarityOf, ROUND, roundOf, seasonOf, sha256, type Rarity } from "./game";
 import { connected } from "./parks";
 import { MAX_SHOWN, PET_KEYS, PETS, type Pet, type PetKey } from "./pets";
 import { prosperity, THRESHOLDS, type ProsperityParts } from "./prosperity";
@@ -426,6 +426,7 @@ function tile(n: number): Tile {
     sale: saleAt(n),
     lucky: luckyNow()?.n === n,
     treasure: openTreasures().get(n) ?? null,
+    crown: crownOf(n),
   };
 }
 // ---- 区块节拍 -------------------------------------------------------------------
@@ -498,8 +499,32 @@ function districtGame(n: number, me: string | null): DistrictGame {
         claimable: me === DEMO_ADDRESS && n === OWN_PARCEL.bitmap_number && d.tx_index === OWN_PARCEL.tx_index });
   }
   const visited = !!me && (load().badges ?? []).some((b) => b.kind === "lucky_visit" && b.height === lucky?.since);
-  return { lucky: lucky?.n === n ? { since: lucky.since, until: lucky.since + ROUND - 1, visited } : null, treasures };
+  const rank = crownOf(n);
+  return {
+    lucky: lucky?.n === n ? { since: lucky.since, until: lucky.since + ROUND - 1, visited } : null,
+    treasures,
+    crown: rank ? { rank, season: seasonOf(tip)[0] - 1 } : null,
+  };
 }
+// 赛季: the last season's podium and this season's standings, made up from the demo's liveliest districts.
+let crownCache: number[] | undefined;
+const crowned = () => (crownCache ??= ((r) => [r[1], r[0], r[4]].filter(Boolean).map((x) => x.bitmap_number))(rankings()));
+const crownOf = (n: number) => (crowned().indexOf(n) + 1) || null;
+function seasonView(): Season {
+  const tip = demoTip(), [n, since, until] = seasonOf(tip);
+  const standings = rankings()
+    .slice(0, 14)
+    .map((r) => ({ bitmap_number: r.bitmap_number, owner: r.owner, score: Math.round(r.score * (0.25 + 0.35 * hash(r.bitmap_number + n))) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 10);
+  const winners = crowned().map((b, i) => ({ bitmap_number: b, owner: ownerOf(b), score: [412, 356, 298][i] }));
+  return {
+    number: n, since, until, tip, started_at: new Date(Date.now() - (tip - since) * 600_000).toISOString(), standings,
+    last: { number: n - 1, winners }, weights: { posts: 4, replies: 1.5, checkins: 1, tippers: 2 },
+    pool_sats: 210_000, pool_split: [105_000, 63_000, 42_000],
+  };
+}
+
 function gameView(me: string | null): Game {
   const tip = demoTip(), lucky = luckyNow();
   return {
@@ -735,6 +760,7 @@ function route(path: string, opts: Opts): unknown {
     return { indexed_height: { bitmap: tip, parcel: tip, owner: tip } };
   }
   if (p === "/v1/game") return gameView(me);
+  if (p === "/v1/season") return seasonView();
   if ((m = p.match(/^\/v1\/game\/treasures\/(\d+)\/open$/)) && method === "POST") {
     const a = needMe(), h = +m[1], d = drawAt(h);
     if (h > demoTip() || d.bitmap_number == null) fail(404, "no treasure at this block");

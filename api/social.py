@@ -14,7 +14,7 @@ import psycopg2.extras
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import bip322, game, holdings, moderation, notify, parks, prosperity, recruit, roles, style, tips, wallets, xlink
+from api import bip322, game, holdings, moderation, notify, parks, prosperity, recruit, roles, seasons, style, tips, wallets, xlink
 from api.auth import current_address, normalize_address, optional_address
 from api.db import cursor
 from api.land import EVENT_SELECT, _event
@@ -216,6 +216,8 @@ def district(bitmap_number: int, tasks: BackgroundTasks, viewer: str | None = De
         owner_x = xlink.of(cur, owner)
         tipped = tips.district_tips(cur, bitmap_number)
         beat = game.district_view(cur, bitmap_number, viewer)
+        tip = game.top(cur)
+        crown = seasons.crowns(cur, tip).get(bitmap_number) if tip is not None else None
         owner_tippable = tips.lightning_of(cur, owner) is not None
         # Pets on show keep their owner's balances fresh; the page doesn't wait for it.
         if holdings.chosen(cur, bitmap_number, owner) and holdings.stale_group(cur, owner):
@@ -238,7 +240,7 @@ def district(bitmap_number: int, tasks: BackgroundTasks, viewer: str | None = De
         "pets": pets,
         "tips": tipped,  # confirmed Lightning tips on the district and its posts, last 30 days
         "owner_tippable": owner_tippable,
-        "game": beat,  # lucky round and open treasures here (api/game.py)
+        "game": {**beat, "crown": crown and {"rank": crown, "season": tip // seasons.SEASON - 1}},  # api/game.py, api/seasons.py
         "viewer": None
         if viewer is None
         else {

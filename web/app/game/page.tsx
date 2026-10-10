@@ -6,8 +6,9 @@ import { useEffect, useState } from "react";
 import { BadgeIcon, BadgeList } from "@/components/Badge";
 import { useTip } from "@/components/BlockWatch";
 import { short, useSession } from "@/components/Session";
-import { api, type Draw, type Game } from "@/lib/api";
-import { CLAIM_BLOCKS, pick, RARITIES, RARITY_COLORS, RARITY_NAMES, RARITY_ODDS, rarityOf, ROUND } from "@/lib/game";
+import { api, type Draw, type Game, type Season } from "@/lib/api";
+import { birthdays, CLAIM_BLOCKS, CROWN_COLORS, nextHalving, pick, RARITIES, RARITY_COLORS, RARITY_NAMES, RARITY_ODDS, rarityOf, ROUND, SEASON } from "@/lib/game";
+import { HALVING } from "@/lib/terrain";
 import { t, tn } from "@/lib/i18n";
 
 const blocks = (n: number) => n.toLocaleString("en-US");
@@ -74,6 +75,9 @@ export default function GamePage() {
         </section>
       )}
 
+      <SeasonCard tip={tip} />
+      {tip != null && <Calendar tip={tip} />}
+
       {game && game.draws.length > 0 && (
         <section className="game-card">
           <h2 className="section-title">{t("最近的宝箱")}</h2>
@@ -133,9 +137,113 @@ export default function GamePage() {
           {t("矿工理论上能丢掉自己挖到的区块来换结果，但这要放弃 3 BTC 以上的出块奖励，比任何奖品都值钱。")}
         </p>
         <Verifier />
-        <p className="muted small">{t("接下来：按难度调整周期（2016 个区块）分赛季，赛季前几名的街区戴王冠，王冠和稀有徽章会铭刻成真正的铭文。")}</p>
+        <p className="muted small">{t("接下来：王冠和稀有徽章会铭刻成真正的铭文，挂在 unimap 的父铭文下面，可以收藏和交易。")}</p>
       </section>
     </div>
+  );
+}
+
+const days = (blocksLeft: number) => Math.max(0, Math.round((blocksLeft * 10) / 60 / 24));
+
+/** 难度调整赛季: this season's standings, the last season's crowns and the prize pool. */
+function SeasonCard({ tip }: { tip: number | null }) {
+  const [season, setSeason] = useState<Season | null>(null);
+  useEffect(() => {
+    api<Season>("/v1/season")
+      .then(setSeason)
+      .catch(() => {});
+  }, [tip]);
+  if (!season || season.number == null) return null;
+  const left = season.until - season.tip + 1;
+  const w = season.weights;
+  return (
+    <section className="game-card season">
+      <h2 className="section-title">{t("第 {n} 赛季", { n: season.number })}</h2>
+      <p className="muted small">
+        {t("区块 {a} 到 {b}，还剩 {n} 个区块（大约 {d} 天）。比特币每 {s} 个区块调整一次挖矿难度，赛季就跟着它走。", {
+          a: blocks(season.since),
+          b: blocks(season.until),
+          n: blocks(left),
+          d: days(left),
+          s: SEASON,
+        })}
+      </p>
+      <div className="round-bar">
+        <i style={{ width: `${Math.min(100, ((season.tip - season.since + 1) / SEASON) * 100)}%` }} />
+      </div>
+      {season.pool_sats > 0 && (
+        <p className="pool small">
+          {tn("本赛季奖池 {sats} 聪，赛季结束后由项目方用闪电发给前三名的主人：{split}", {
+            sats: <b className="mono">{blocks(season.pool_sats)}</b>,
+            split: <span className="mono">{season.pool_split.map(blocks).join(" / ")}</span>,
+          })}
+        </p>
+      )}
+      {season.standings.length ? (
+        <ol className="season-list">
+          {season.standings.map((r, i) => (
+            <li key={r.bitmap_number}>
+              <span className={`rank-no mono${i < 3 ? " top" : ""}`}>{i + 1}</span>
+              <Link className="mono grow" href={`/district/${r.bitmap_number}`}>
+                {r.bitmap_number}.bitmap
+              </Link>
+              <span className="muted small">{short(r.owner)}</span>
+              <b className="mono">{r.score}</b>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="muted small">{t("这个赛季刚开始，还没有街区得分。")}</p>
+      )}
+      <p className="muted small">
+        {t("得分：赛季里的帖子 × {p}，回复 × {r}，签到 × {c}，打赏的人 × {x}。前三名的街区戴王冠到下个赛季结束，主人得到一枚王冠徽章。", {
+          p: w.posts,
+          r: w.replies,
+          c: w.checkins,
+          x: w.tippers,
+        })}
+      </p>
+      {season.last && season.last.winners.length > 0 && (
+        <div className="last-winners">
+          <span className="small muted">{t("第 {n} 赛季的王冠", { n: season.last.number })}</span>
+          {season.last.winners.map((r, i) => (
+            <Link key={r.bitmap_number} className="chip mono" href={`/district/${r.bitmap_number}`} style={{ borderColor: CROWN_COLORS[i] }}>
+              <span style={{ color: CROWN_COLORS[i] }}>♛</span> {r.bitmap_number}
+            </Link>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** Today's birthdays and the next halving. */
+function Calendar({ tip }: { tip: number }) {
+  const next = nextHalving(tip), left = next - tip;
+  const since = tip % HALVING; // blocks since the last halving
+  const cakes = birthdays(tip);
+  return (
+    <section className="game-card">
+      <h2 className="section-title">{t("城市日历")}</h2>
+      {since < ROUND && (
+        <p className="festival">{t("全城节日：第 {n} 次减半刚刚过去，区块 {h} 开出了新的纪元。", { n: Math.floor(tip / HALVING), h: blocks(tip - since) })}</p>
+      )}
+      <p className="small">
+        {tn("下一次减半在区块 {h}，还有 {n} 个区块，大约 {d} 天。那一天是全城节日。", {
+          h: <b className="mono">{blocks(next)}</b>,
+          n: <b className="mono">{blocks(left)}</b>,
+          d: days(left),
+        })}
+      </p>
+      <p className="small">{t("今天过生日的街区（大约，按挖出的日期）：")}</p>
+      <div className="chips">
+        {cakes.map(([age, a, b]) => (
+          <Link key={age} className="chip small" href={`/?b=${a}`} title={`${blocks(a)} – ${blocks(b)}`}>
+            🎂 {t("{n} 岁", { n: age })} <span className="mono muted">{blocks(a)}</span>
+          </Link>
+        ))}
+      </div>
+    </section>
   );
 }
 

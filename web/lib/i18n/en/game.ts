@@ -69,8 +69,6 @@ export const game: Record<string, string> = {
     "Take the block hash (hex, as block explorers show it), append {lucky} or {treasure}, and compute its SHA-256. Read the result as one big number and take the remainder after dividing by the number of candidates: that is the index drawn, counting from 0. Districts are in number order; parcels are by district number, then transaction index.",
   "矿工理论上能丢掉自己挖到的区块来换结果，但这要放弃 3 BTC 以上的出块奖励，比任何奖品都值钱。":
     "In theory a miner could throw away a block they found to change the result, but that means giving up a block reward of over 3 BTC, worth more than any prize.",
-  "接下来：按难度调整周期（2016 个区块）分赛季，赛季前几名的街区戴王冠，王冠和稀有徽章会铭刻成真正的铭文。":
-    "Coming next: seasons that follow the difficulty adjustment (2016 blocks). Each season's top districts wear a crown, and crowns and rare badges will be inscribed as real inscriptions.",
   "验算": "Check",
   "✓ 和服务器的结果一致（序号 {n}）": "✓ Matches the server (index {n})",
   "✗ 和服务器给的序号 {n} 不一致": "✗ Doesn't match the server's index {n}",
@@ -92,4 +90,31 @@ export const game: Record<string, string> = {
   "Bitmap 的规矩是第一个铭刻这段文本的人得地。付款前刷新这一页，确认还没人抢先。":
     "Under Bitmap's rules, the first inscription of this text gets the land. Refresh this page before you pay to make sure nobody got there first.",
   "铭文上链后，几个区块内这里就会显示你是主人。": "Once the inscription is confirmed, this page shows you as the owner within a few blocks.",
+
+  // Seasons, crowns, the city calendar
+  "第 {n} 赛季": "Season {n}",
+  "区块 {a} 到 {b}，还剩 {n} 个区块（大约 {d} 天）。比特币每 {s} 个区块调整一次挖矿难度，赛季就跟着它走。":
+    "Blocks {a} to {b}, with {n} blocks (about {d} days) to go. Bitcoin adjusts its mining difficulty every {s} blocks, and seasons follow it.",
+  "本赛季奖池 {sats} 聪，赛季结束后由项目方用闪电发给前三名的主人：{split}":
+    "This season's prize pool is {sats} sats. When it ends, the project pays the owners of the top three over Lightning: {split}",
+  "这个赛季刚开始，还没有街区得分。": "The season has just begun, and no district has scored yet.",
+  "得分：赛季里的帖子 × {p}，回复 × {r}，签到 × {c}，打赏的人 × {x}。前三名的街区戴王冠到下个赛季结束，主人得到一枚王冠徽章。":
+    "Score: posts in the season × {p}, replies × {r}, check-ins × {c}, people who tipped × {x}. The top three districts wear a crown until the end of the next season, and their owners get a Crown badge.",
+  "第 {n} 赛季的王冠": "Crowns from season {n}",
+  "赛季王冠": "Season crown",
+  "上个赛季第 {n} 名": "No. {n} last season",
+  "第 {s} 赛季第 {n} 名": "No. {n} in season {s}",
+  "这个街区戴着王冠，直到这个赛季结束。": "This district wears a crown until the end of this season.",
+  "你的街区 {place} 在第 {n} 赛季进了前三，戴上了王冠": "Your district {place} finished in the top three of season {n} and wears a crown",
+  "接下来：王冠和稀有徽章会铭刻成真正的铭文，挂在 unimap 的父铭文下面，可以收藏和交易。":
+    "Coming next: crowns and rare badges will be inscribed as real inscriptions under unimap's parent inscription, to keep or trade.",
+  "城市日历": "City calendar",
+  "全城节日：第 {n} 次减半刚刚过去，区块 {h} 开出了新的纪元。": "City festival: halving {n} has just happened, and block {h} opened a new epoch.",
+  "下一次减半在区块 {h}，还有 {n} 个区块，大约 {d} 天。那一天是全城节日。": "The next halving is at block {h}, {n} blocks or about {d} days away. That day is a festival for the whole city.",
+  "今天过生日的街区（大约，按挖出的日期）：": "Districts with a birthday today (roughly, by the day they were mined):",
+  "{n} 岁": "Age {n}",
+  "生日": "Birthday",
+  "今天大约是它 {n} 岁生日": "About {n} years old today",
+  "今天大约是 {n}.bitmap 的 {age} 岁生日": "{n}.bitmap turns about {age} today",
+  "这个区块是 {age} 年前的今天前后挖出来的。来签个到，祝它生日快乐。": "This block was mined around this day {age} years ago. Check in to wish it a happy birthday.",
 };

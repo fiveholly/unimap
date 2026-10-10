@@ -893,6 +893,52 @@ class SocialApi(unittest.TestCase):
                 )
 
 
+    def test_seasons(self):
+        from api import seasons
+
+        hashes = {h: f"{h:061x}def" for h in range(1958, 2102)}
+        with self.conn.cursor() as cur:
+            cur.execute("insert into bitmap_block_hashes (block_height, block_hash) values (2100, 'h2100');")
+            cur.execute("insert into parcel_block_hashes (block_height, block_hash) select * from unnest(%s::int[], %s::text[]);", (list(hashes), list(hashes.values())))
+            # Season 0 (blocks 0-2015) began about 2101 blocks ago and ended 85 blocks ago (no bitcoind here, so ten minutes a block).
+            cur.execute(
+                "insert into social.posts (bitmap_number, author_address, author_role, body, signed_message, signature, created_at) values "
+                "(100, %s, 'owner', 'old', 'm', 'season-s1', now() - interval '2 days'), (100, %s, 'resident', 'old', 'm', 'season-s2', now() - interval '3 days') returning id;",
+                (ALICE.address, BOB.address),
+            )
+            old_posts = [r[0] for r in cur.fetchall()]
+            cur.execute("insert into social.checkins (address, bitmap_number, day) values (%s, 105, (now() at time zone 'utc')::date - 3);", (BOB.address,))
+        try:
+            r = self.client.get("/v1/season").json()
+            self.assertEqual((r["number"], r["since"], r["until"], r["tip"]), (1, 2016, 4031, 2101))
+            self.assertEqual([(w["bitmap_number"], w["owner"], w["score"]) for w in r["last"]["winners"]], [(100, ALICE.address, 8), (105, CAROL.address, 1)])
+            self.assertEqual(r["pool_sats"], 0)
+            # Winners' owners get a crown badge and a notification; the districts wear crowns on the map and their pages.
+            badge = next(b for b in self.client.get(f"/v1/people/{ALICE.address}").json()["badges"] if b["kind"] == "crown")
+            self.assertEqual((badge["height"], badge["bitmap_number"], badge["rarity"]), (0, 100, "legendary"))
+            n = next(x for x in self.client.get("/v1/notifications", headers=self.h(CAROL)).json()["notifications"] if x["kind"] == "crown")
+            self.assertEqual((n["bitmap_number"], n["block_height"]), (105, 0))
+            tiles = {t["bitmap_number"]: t for t in self.client.get("/v1/land?start=100&end=105").json()["tiles"]}
+            self.assertEqual((tiles[100]["crown"], tiles[105]["crown"], tiles[101]["crown"]), (1, 2, None))
+            self.assertEqual(self.client.get("/v1/districts/105").json()["game"]["crown"], {"rank": 2, "season": 0})
+            # Frozen once: later activity in that window doesn't change the winners.
+            with self.conn.cursor() as cur:
+                cur.execute("insert into social.checkins (address, bitmap_number, day) select %s, 105, (now() at time zone 'utc')::date - d from generate_series(4, 12) d;", (CAROL.address,))
+            self.assertEqual(self.client.get("/v1/season").json()["last"]["winners"][0]["bitmap_number"], 100)
+            os.environ["GAME_SEASON_POOL_SATS"] = "100000"
+            self.assertEqual(self.client.get("/v1/season").json()["pool_split"], [50000, 30000, 20000])
+            self.assertEqual(seasons.bounds(455), (917280, 919295))
+        finally:
+            os.environ.pop("GAME_SEASON_POOL_SATS", None)
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "delete from bitmap_block_hashes where block_height = 2100; delete from parcel_block_hashes; delete from social.block_draws; "
+                    "delete from social.badges; delete from social.seasons; delete from social.notifications where kind in ('treasure', 'lucky', 'crown'); "
+                    "delete from social.posts where id = any(%s); delete from social.checkins where bitmap_number = 105 and day < (now() at time zone 'utc')::date - 2;",
+                    (old_posts,),
+                )
+
+
     def test_lnurl_checks(self):
         from api import tips
 

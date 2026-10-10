@@ -8,7 +8,7 @@ import { short } from "./Session";
 import { api, type Land, type Tile } from "@/lib/api";
 import { btc, btcShort } from "@/lib/format";
 import { CX, CY, GROUND, PAVED, rng, TILE_H, TILE_W, tileSprite } from "@/lib/iso";
-import { RARITY_COLORS, RARITY_NAMES, type Rarity } from "@/lib/game";
+import { birthdays, CROWN_COLORS, RARITY_COLORS, RARITY_NAMES, type Rarity } from "@/lib/game";
 import { layout } from "@/lib/mondrian";
 import { side } from "@/lib/parks";
 import { bridgeAt, continent, CONTINENTS, epochOf, HALVING, isWater, nearStrait, shoreBlocks } from "@/lib/terrain";
@@ -88,6 +88,36 @@ function parcelPlan(txValues: number[], claimed: Set<number>, zone: Zone | null)
 }
 
 type View = { x: number; y: number; s: number };
+
+/** 赛季王冠: a crown floating over a district that placed in the last season. */
+function crown(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, color: string) {
+  const w = Math.max(10, 30 * s), h = w * 0.62;
+  ctx.fillStyle = color;
+  ctx.strokeStyle = "#1A1206";
+  ctx.lineWidth = Math.max(1, 1.5 * s);
+  ctx.beginPath();
+  ctx.moveTo(x - w / 2, y);
+  ctx.lineTo(x - w / 2, y - h * 0.75);
+  ctx.lineTo(x - w / 4, y - h * 0.35);
+  ctx.lineTo(x, y - h);
+  ctx.lineTo(x + w / 4, y - h * 0.35);
+  ctx.lineTo(x + w / 2, y - h * 0.75);
+  ctx.lineTo(x + w / 2, y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+}
+
+/** 街区生日: a cake on a district mined on this day in an earlier year. */
+function cake(ctx: CanvasRenderingContext2D, x: number, y: number, s: number) {
+  const w = Math.max(7, 18 * s), h = w * 0.55;
+  ctx.fillStyle = "#F4E1C1";
+  ctx.fillRect(x - w / 2, y - h, w, h);
+  ctx.fillStyle = "#E86A8A";
+  ctx.fillRect(x - w / 2, y - h, w, h * 0.3);
+  ctx.fillStyle = "#F2B544";
+  ctx.fillRect(x - w * 0.05, y - h * 1.6, w * 0.1, h * 0.6);
+}
 
 /** 宝箱: a small chest standing on a district, in its rarity's colour. */
 function chest(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, color: string) {
@@ -304,6 +334,8 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
     const lvl = levelOf(s);
     setLevel(lvl);
     const luckyLabel = `★ ${t("幸运街区")}`;
+    const cakes = birthdays(tip); // blocks mined around this day in earlier years
+    const birthday = (n: number) => cakes.some(([, a, b]) => a <= n && n <= b);
     {
       const qr = Math.max(0, Math.round(vy / QH - 1));
       const qc = Math.min(QUARTERS - 1, Math.max(0, Math.floor((vx - (qr & 1) * (QW / 2)) / QW)));
@@ -577,6 +609,8 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
           }
         }
         if (t?.treasure && s >= AREA_SCALE) chest(ctx, c.x + 34 * s, c.y - 6 * s, s, RARITY_COLORS[t.treasure]);
+        if (t?.claimed && s >= AREA_SCALE && birthday(n)) cake(ctx, c.x - 34 * s, c.y - 6 * s, s);
+        if (t?.crown && s >= AREA_SCALE) crown(ctx, c.x, c.y - 92 * s, s, CROWN_COLORS[t.crown - 1]);
         if (t?.lucky) {
           if (s >= SALE_TEXT_SCALE) labels.push([c.x, c.y - (t.sale ? 140 : 112) * s, luckyLabel, "lucky"]);
           ctx.strokeStyle = LUCKY;
@@ -907,6 +941,7 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
 
   const tile = tiles.current.get(selected);
   const zone = zoneOf(tile?.zone);
+  const birthdayAge = birthdays(tip).find(([, a, b]) => a <= selected && selected <= b)?.[0] ?? null;
   return (
     <div className="city" ref={box}>
       <div className="city-stage">
@@ -990,6 +1025,18 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
               <dd className="lucky-text">★ {t("今日幸运街区")}</dd>
             </>
           )}
+          {tile?.claimed && birthdayAge != null && (
+            <>
+              <dt>{t("生日")}</dt>
+              <dd>🎂 {t("今天大约是它 {n} 岁生日", { n: birthdayAge })}</dd>
+            </>
+          )}
+          {tile?.crown && (
+            <>
+              <dt>{t("赛季王冠")}</dt>
+              <dd style={{ color: CROWN_COLORS[tile.crown - 1] }}>{t("上个赛季第 {n} 名", { n: tile.crown })}</dd>
+            </>
+          )}
           {tile?.treasure && (
             <>
               <dt>{t("宝箱")}</dt>
@@ -1032,6 +1079,10 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
         <span>
           <i className="chest-dot" />
           {t("宝箱")}
+        </span>
+        <span>
+          <i className="crown-dot" />
+          {t("赛季王冠")}
         </span>
         <span className="grow" />
         <span className="muted">

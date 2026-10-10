@@ -4,7 +4,7 @@ import os
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
-from api import game, holdings, listings, parks, style
+from api import game, holdings, listings, parks, seasons, style
 from api.db import cursor
 from parcel_index.sources import Bitcoind
 
@@ -94,6 +94,7 @@ def land_range(start: int, end: int, tasks: BackgroundTasks):
         if listings.stale(cur):
             tasks.add_task(listings.refresh)
         beat = game.in_range(cur, max(start, 0), end)
+        crowned = seasons.crowns(cur, tip)
         game.ensure_soon(cur, tasks)
     tiles = []
     for n in range(max(start, 0), end + 1):
@@ -115,6 +116,7 @@ def land_range(start: int, end: int, tasks: BackgroundTasks):
                 "sale": sale.get(n),
                 "lucky": n in beat and beat[n]["lucky"],
                 "treasure": beat[n]["treasure"] if n in beat else None,
+                "crown": crowned.get(n),  # 1-3: placed in the last season (api/seasons.py)
             }
         )
     return {"tip": tip, "tiles": tiles}

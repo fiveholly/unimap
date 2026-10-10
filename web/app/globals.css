@@ -2220,6 +2220,7 @@ span.act.tip-btn {
   color: #f2b544;
 }
 .lucky-dot,
+.crown-dot,
 .chest-dot {
   display: inline-block;
   width: 10px;
@@ -2229,6 +2230,18 @@ span.act.tip-btn {
   border-radius: 50%;
   background: #f2b544;
   box-shadow: 0 0 6px #f2b544;
+}
+.crown-dot {
+  border-radius: 2px 2px 0 0;
+  background: #f2b544;
+  box-shadow: none;
+  clip-path: polygon(0 100%, 0 20%, 30% 55%, 50% 0, 70% 55%, 100% 20%, 100% 100%);
+}
+.beat-emoji {
+  width: 30px;
+  text-align: center;
+  font-size: 22px;
+  flex: none;
 }
 .chest-dot {
   border-radius: 2px;
@@ -2436,4 +2449,35 @@ span.act.tip-btn {
     bottom: 8px;
     width: auto;
   }
+}
+.season-list {
+  list-style: none;
+  margin: 12px 0;
+  padding: 0;
+}
+.season-list li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.pool {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, #f2b544 8%, transparent);
+}
+.last-winners {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+.festival {
+  padding: 10px 14px;
+  border-radius: 10px;
+  color: #1a1206;
+  background: #f2b544;
+  font-weight: 600;
 }
