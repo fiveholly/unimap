@@ -34,8 +34,17 @@ export default function MePage() {
           <Link className="small" href={`/address/${me.address}`}>
             {t("看看别人眼中的我的主页")}
           </Link>
+          {me.admin && (
+            <>
+              {" · "}
+              <Link className="small" href="/admin">
+                {t("站点管理")}
+              </Link>
+            </>
+          )}
         </div>
       </section>
+      {me.banned && <p className="notice small">{t("这个地址已被站点管理员禁止发帖。")}</p>}
       <XSection token={token} />
       {me.wallets && <WalletsSection token={token} initial={me.wallets} />}
       <Group title={t("街区")} count={me.districts.length} empty={t("这个地址没有持有街区。")}>

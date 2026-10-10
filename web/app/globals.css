@@ -1978,3 +1978,68 @@ button.sm,
     display: none;
   }
 }
+
+/* ---------- reports and site admin ---------- */
+.report-reasons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+  margin: 16px 0 12px;
+}
+.dialog textarea#report-note {
+  width: 100%;
+  margin-bottom: 12px;
+}
+button.danger,
+button.danger:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+}
+button.danger:hover:not(:disabled) {
+  border-color: var(--danger);
+}
+.admin .tabs {
+  margin-top: 20px;
+}
+.admin-empty {
+  padding: 32px 0;
+}
+.report-item {
+  padding: 20px 0;
+  border-bottom: 1px solid var(--line);
+}
+.report-summary {
+  margin: 0 0 4px;
+}
+.report-notes {
+  margin: 4px 0 12px;
+  padding-left: 18px;
+  overflow-wrap: anywhere;
+}
+.report-actions {
+  margin-top: 8px;
+}
+.ban-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ban-list li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+}
+.ban-list .grow {
+  min-width: 0;
+}
+.ban-list p {
+  margin: 4px 0 0;
+}
+.notice {
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+  border-radius: 10px;
+  color: var(--danger);
+}

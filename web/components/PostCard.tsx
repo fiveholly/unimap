@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { Avatar } from "./Avatar";
 import { Composer } from "./Composer";
+import { ReportDialog } from "./Report";
 import { short, useSession } from "./Session";
 import { ShareMenu } from "./ShareMenu";
 import { TweetEmbed, XHandle } from "./X";
@@ -49,6 +50,8 @@ export function PostCard({
   const [showReplies, setShowReplies] = useState(false);
   const [showSig, setShowSig] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [reporting, setReporting] = useState(false);
+  const [reported, setReported] = useState(false);
   const isReply = post.reply_to != null;
 
   const run = async (fn: () => Promise<void>) => {
@@ -88,6 +91,7 @@ export function PostCard({
   if (!isReply && actions?.isOwner && actions.onPin) menu.push([t("置顶"), () => actions.onPin!(post)]);
   if (actions?.isOwner && !mine && actions.onMute) menu.push([t("禁言作者"), () => actions.onMute!(post.author.address)]);
   if (mine || actions?.isOwner) menu.push([t("删除"), remove]);
+  if (token && !mine) menu.push([t("举报"), () => setReporting(true)]);
   // Authors are known by their land: the district they speak for, their parcel, or else their address.
   const a = post.author;
   const name =
@@ -140,6 +144,17 @@ export function PostCard({
           <span className="grow" />
           {menu.length > 0 && <PostMenu items={menu} />}
         </div>
+        {reporting && token && (
+          <ReportDialog
+            postId={post.id}
+            token={token}
+            close={(sent) => {
+              setReporting(false);
+              if (sent) setReported(true);
+            }}
+          />
+        )}
+        {reported && <p className="muted small">{t("已举报，管理员会处理。")}</p>}
         <p className="post-body">{post.body}</p>
         {tweetsIn(post.body).map((tw) => (
           <TweetEmbed key={tw.id} {...tw} />
