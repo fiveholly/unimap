@@ -186,7 +186,7 @@ CREATE TABLE IF NOT EXISTS social.holdings_checked (
 CREATE TABLE IF NOT EXISTS social.notifications (
 	id bigserial NOT NULL,
 	address text NOT NULL,
-	kind text NOT NULL, -- reply | like | post | follow | apply | tip | treasure | lucky | crown | event_win | sold
+	kind text NOT NULL, -- reply | like | post | follow | apply | tip | treasure | lucky | crown | event_win | sold | agent_draft | agent_alert
 	actor text NOT NULL,
 	bitmap_number int4 NOT NULL,
 	post_id int8 NULL, -- the reply, the liked post or the new post
@@ -415,3 +415,61 @@ CREATE TABLE IF NOT EXISTS social.market_quotes (
 	created_at timestamptz NOT NULL DEFAULT now(),
 	CONSTRAINT market_quotes_pk PRIMARY KEY (id)
 );
+
+-- 街区 agent (api/agent.py): a helper the owner grants, with a wallet signature, the right to
+-- draft posts for the district and publish those the owner approves, signed with its own key.
+CREATE TABLE IF NOT EXISTS social.agents (
+	id bigserial NOT NULL,
+	bitmap_number int4 NOT NULL,
+	owner text NOT NULL, -- who signed the grant
+	agent_key text NOT NULL, -- x-only public key (BIP-340), hex
+	agent_secret text NOT NULL, -- its private key; it can only sign posts under the grant
+	grant_message text NOT NULL,
+	grant_signature text NULL, -- null until the owner signs
+	posts_per_day int2 NOT NULL,
+	expires_at timestamptz NOT NULL,
+	persona text NOT NULL DEFAULT '',
+	tasks text[] NOT NULL DEFAULT '{welcome,digest,answers}',
+	watch jsonb NOT NULL DEFAULT '{}', -- {radius, max_price_sats}: listings nearby to tell the owner about
+	memory jsonb NOT NULL DEFAULT '[]', -- short notes the agent keeps between runs
+	state jsonb NOT NULL DEFAULT '{}', -- what it has already looked at
+	paid_until timestamptz NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	granted_at timestamptz NULL,
+	revoked_at timestamptz NULL,
+	last_run_at timestamptz NULL,
+	CONSTRAINT agents_pk PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS agents_one_live ON social.agents USING btree (bitmap_number)
+	WHERE grant_signature IS NOT NULL AND revoked_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS agents_key_idx ON social.agents USING btree (agent_key);
+CREATE TABLE IF NOT EXISTS social.agent_drafts (
+	id bigserial NOT NULL,
+	agent_id int8 NOT NULL,
+	bitmap_number int4 NOT NULL,
+	reply_to int8 NULL,
+	body text NOT NULL,
+	why text NOT NULL DEFAULT '', -- what prompted it, for the owner
+	task text NOT NULL, -- welcome | digest | answers
+	status text NOT NULL DEFAULT 'pending', -- pending | posted | discarded | expired
+	post_id int8 NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	decided_at timestamptz NULL,
+	CONSTRAINT agent_drafts_pk PRIMARY KEY (id)
+);
+CREATE INDEX IF NOT EXISTS agent_drafts_agent_idx ON social.agent_drafts USING btree (agent_id, id);
+CREATE TABLE IF NOT EXISTS social.agent_payments (
+	id bigserial NOT NULL,
+	agent_id int8 NOT NULL,
+	payer text NOT NULL,
+	amount_sats int8 NOT NULL,
+	invoice text NOT NULL,
+	verify_url text NOT NULL,
+	status text NOT NULL DEFAULT 'pending', -- pending | settled | expired
+	checked_at timestamptz NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	settled_at timestamptz NULL,
+	CONSTRAINT agent_payments_pk PRIMARY KEY (id)
+);
+ALTER TABLE social.posts ADD COLUMN IF NOT EXISTS agent_id int8 NULL; -- published by this agent
+CREATE INDEX IF NOT EXISTS posts_agent_idx ON social.posts USING btree (agent_id, created_at) WHERE agent_id IS NOT NULL;

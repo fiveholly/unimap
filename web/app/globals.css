@@ -531,6 +531,7 @@ kbd {
 .dialog .message,
 .sig .message {
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   font-family: var(--font-mono);
   font-size: 12px;
   background: var(--bg);
@@ -2668,4 +2669,135 @@ span.act.tip-btn {
   color: #1a1206;
   background: #f2b544;
   font-weight: 600;
+}
+
+/* 街区 agent (components/Agent.tsx) */
+.badge.agent {
+  color: var(--accent-text);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+}
+.agent {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.agent section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.agent p,
+.agent h3 {
+  margin: 0;
+}
+.agent-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+}
+.agent-setup {
+  border-style: dashed;
+}
+.agent-points {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--fg-2);
+}
+.agent .tag {
+  font-size: 12px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--fg-2);
+  white-space: nowrap;
+}
+.agent-brief {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+}
+.agent-brief li {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.agent-draft {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.agent-draft textarea {
+  width: 100%;
+  resize: vertical;
+}
+.agent-recent ul {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.agent-recent a {
+  overflow-wrap: anywhere;
+}
+.agent-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.agent-settings fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.agent-settings legend {
+  padding: 0;
+  margin-bottom: 4px;
+  color: var(--fg-2);
+}
+.agent-settings label.check {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
+}
+.agent-settings label.check input {
+  margin-top: 3px;
+}
+.agent-settings textarea {
+  width: 100%;
+}
+.agent-notes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.agent-notes li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.sig p {
+  overflow-wrap: anywhere;
 }

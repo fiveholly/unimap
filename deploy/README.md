@@ -39,7 +39,7 @@
    - 下载 Bitcoin Core 28.1 并对照官方 SHA256SUMS 校验，下载 ord 0.23.2 并对照写死的哈希校验，下载 Node 22；
    - 拉取 OPI、打补丁并编译它的 ord；
    - 建 Postgres 数据库和表，生成配置文件，构建网站；
-   - 安装并启动 9 个 systemd 服务。
+   - 安装并启动 10 个 systemd 服务。
 
 4. 用 `sudo deploy/status.sh` 查看各部分同步到了哪一块。
 
@@ -55,6 +55,7 @@
 | `unimap-owners` | 持有人追踪 | |
 | `unimap-zones` | 地段划分 | |
 | `unimap-api` | API | 8000 |
+| `unimap-agent` | 街区 agent：定时起草帖子、提醒挂单（没设 `ANTHROPIC_API_KEY` 时什么也不做） | |
 | `unimap-web` | 网站 | 3000 |
 
 Caddy 把 `https://域名/v1/*` 转给 API，其余转给网站。网站和 API 同源，所以不需要跨域设置。

@@ -1,0 +1,18 @@
+[Unit]
+Description=unimap: district agents (drafts, listing alerts)
+After=postgresql.service unimap-api.service
+
+[Service]
+User=unimap
+Group=unimap
+EnvironmentFile=/etc/unimap/unimap.env
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+WorkingDirectory=/opt/unimap/src
+Environment=PYTHONPATH=/opt/unimap/src
+ExecStart=/opt/unimap/venv/bin/python3 -m api.agent
+
+[Install]
+WantedBy=multi-user.target

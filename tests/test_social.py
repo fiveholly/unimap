@@ -3,6 +3,7 @@ database (its tables are dropped and recreated), e.g.
 TEST_PGURL=postgresql://postgres:postgres@localhost/unimap_test"""
 
 import base64
+import json
 import math
 import os
 import time
@@ -1220,6 +1221,196 @@ class SocialApi(unittest.TestCase):
                     "delete from social.market_quotes; delete from social.market_listings; delete from social.notifications where kind = 'sold';",
                     (ALICE.address,),
                 )
+
+    def test_agent(self):
+        import hashlib
+
+        from coincurve import PublicKeyXOnly
+
+        from api import agent, tips
+
+        class FakeModel:
+            """Answers each turn from a script of tool calls, and keeps what it was shown."""
+
+            def __init__(self, script):
+                self.script, self.seen = list(script), []
+
+            def __call__(self, system, messages, tools):
+                self.seen.append((system, [m for m in messages]))
+                calls = self.script.pop(0) if self.script else []
+                content = [{"type": "tool_use", "id": f"t{len(self.seen)}{i}", "name": name, "input": args}
+                           for i, (name, args) in enumerate(calls)]
+                return {"content": content or [{"type": "text", "text": "done"}], "stop_reason": "tool_use" if calls else "end_turn"}
+
+        class Lnurl:
+            paid = set()
+
+            @staticmethod
+            def ask_invoice(a, sats, comment):
+                return f"lnbc{sats * 10}n1agent", f"https://wallet.test/agent/{sats}"
+
+            @staticmethod
+            def settled(url):
+                return url in Lnurl.paid
+
+        post = lambda w, path, body=None: self.client.post(path, json=body, headers=self.h(w))
+        view = lambda w=ALICE: self.client.get(f"/v1/districts/{DISTRICT}/agent", headers=self.h(w))
+        old_model, old_lnurl = agent.model, tips.lnurl
+        tips.lnurl = Lnurl
+        try:
+            self.assertFalse(self.client.get("/v1/agent").json()["open"])
+            self.assertEqual(post(ALICE, f"/v1/districts/{DISTRICT}/agent/prepare", {}).status_code, 503)
+            os.environ["ANTHROPIC_API_KEY"] = "test"
+            self.assertTrue(self.client.get("/v1/agent").json()["open"])
+
+            # Only the owner grants it, with their own signature over the grant.
+            self.assertEqual(post(BOB, f"/v1/districts/{DISTRICT}/agent/prepare", {}).status_code, 403)
+            self.assertEqual(post(ALICE, f"/v1/districts/{DISTRICT}/agent/prepare", {"posts_per_day": 11}).status_code, 422)
+            g = post(ALICE, f"/v1/districts/{DISTRICT}/agent/prepare", {"posts_per_day": 2, "days": 10}).json()
+            self.assertIn(f"district: {DISTRICT}.bitmap", g["message"])
+            self.assertIn("posts per day: 2", g["message"])
+            self.assertEqual(post(ALICE, f"/v1/districts/{DISTRICT}/agent", {"id": g["id"], "signature": BOB.sign(g["message"])}).status_code, 401)
+            self.assertEqual(post(BOB, f"/v1/districts/{DISTRICT}/agent", {"id": g["id"], "signature": BOB.sign(g["message"])}).status_code, 403)
+            r = post(ALICE, f"/v1/districts/{DISTRICT}/agent", {"id": g["id"], "signature": ALICE.sign(g["message"])})
+            self.assertEqual(r.status_code, 200, r.text)
+            me = r.json()["agent"]
+            self.assertEqual((me["posts_per_day"], me["problem"], me["tasks"]), (2, None, ["welcome", "digest", "answers"]))
+            self.assertEqual(view(BOB).status_code, 403)
+            r = self.client.put(f"/v1/districts/{DISTRICT}/agent/settings", json={"persona": "叫我们的街「百号街」。", "tasks": ["welcome", "answers", "digest"]},
+                                headers=self.h(ALICE))
+            self.assertEqual(r.json()["agent"]["persona"], "叫我们的街「百号街」。")
+
+            # Something new: a resident moves in, and someone asks a question under the owner's post.
+            top = self.post(ALICE, "周六下午在市政厅喝茶。").json()
+            question = self.post(BOB, "几点开始？", reply_to=top["id"]).json()
+            with self.conn.cursor() as cur:
+                cur.execute("insert into land_events (block_height, block_time, kind, inscription_id, bitmap_number, tx_index, to_address) "
+                            "values (1000, extract(epoch from now())::int8, 'parcel_claimed', 'p9i0', %s, 9, %s);", (DISTRICT, CAROL.address))
+            agent.model = fake = FakeModel([
+                [("read_posts", {"limit": 5}), ("district_facts", {})],
+                [("draft_post", {"task": "welcome", "body": "欢迎新邻居！", "why": "a new resident"}),
+                 ("draft_reply", {"task": "answers", "post_id": top["id"], "body": "下午三点。", "why": "Bob asked when"}),
+                 ("draft_reply", {"task": "answers", "post_id": 999999, "body": "x", "why": "no such post"}),
+                 ("draft_post", {"task": "digest", "body": "本周百号街：一位新居民。", "why": "weekly digest"}),
+                 ("remember", {"note": "主人喜欢周六喝茶"})],
+                [("draft_post", {"task": "digest", "body": "one too many", "why": ""})],
+            ])
+            out = agent.run(me["id"])
+            self.assertEqual((out["drafts"], out["error"]), (3, None))
+            self.assertIsNone(agent.run(me["id"]))  # it just looked
+            system, messages = fake.seen[0]
+            self.assertIn("百号街", system)
+            self.assertIn(CAROL.address[:6], messages[0]["content"])
+            self.assertIn("几点开始", messages[0]["content"])
+            self.assertIn("[digest]", messages[0]["content"])
+            facts = json.loads(fake.seen[1][1][-1]["content"][1]["content"])
+            self.assertEqual(facts["posts_last_7_days"], 1)
+            refused = [json.loads(c["content"]) for c in fake.seen[2][1][-1]["content"]]
+            self.assertIn("error", refused[2])
+            self.assertIn("error", json.loads(fake.seen[3][1][-1]["content"][0]["content"]))  # a fourth draft
+            v = view().json()
+            drafts = {d["task"]: d for d in v["drafts"]}
+            self.assertEqual(sorted(drafts), ["answers", "digest", "welcome"])
+            self.assertEqual(drafts["answers"]["reply_to"], top["id"])
+            self.assertEqual(v["agent"]["memory"], ["主人喜欢周六喝茶"])
+            n = self.client.get("/v1/notifications", headers=self.h(ALICE)).json()["notifications"]
+            self.assertIn(("agent_draft", DISTRICT), [(x["kind"], x["bitmap_number"]) for x in n])
+
+            # Nothing new, nothing to do: the model isn't asked again.
+            with self.conn.cursor() as cur:
+                cur.execute("update social.agents set last_run_at = now() - interval '2 hours' where id = %s;", (me["id"],))
+            fake.seen.clear()
+            self.assertEqual(agent.run(me["id"])["drafts"], 0)
+            self.assertEqual(fake.seen, [])
+            self.assertEqual(post(ALICE, f"/v1/districts/{DISTRICT}/agent/run").status_code, 429)  # it just looked
+            with self.conn.cursor() as cur:
+                cur.execute("update social.agents set last_run_at = now() - interval '11 minutes' where id = %s;", (me["id"],))
+            self.assertEqual(post(ALICE, f"/v1/districts/{DISTRICT}/agent/run").status_code, 202)
+            self.assertIsNone(view().json()["agent"]["last"]["error"])
+
+            # The owner approves, maybe after an edit; the post is signed by the agent's key under the grant.
+            self.assertEqual(post(BOB, f"/v1/agent/drafts/{drafts['answers']['id']}/publish", {}).status_code, 403)
+            r = post(ALICE, f"/v1/agent/drafts/{drafts['answers']['id']}/publish", {"body": "下午三点，市政厅见。"})
+            self.assertEqual(r.status_code, 201, r.text)
+            p = r.json()
+            self.assertEqual((p["body"], p["reply_to"], p["author"]["address"], p["agent"]["grant_id"]), ("下午三点，市政厅见。", top["id"], ALICE.address, me["id"]))
+            self.assertTrue(PublicKeyXOnly(bytes.fromhex(p["agent"]["key"])).verify(bytes.fromhex(p["signature"]), hashlib.sha256(p["signed_message"].encode()).digest()))
+            self.assertIn(f"grant: {me['id']}", p["signed_message"])
+            self.assertTrue(p["signed_message"].endswith("下午三点，市政厅见。"))
+            record = self.client.get(f"/v1/agent/grants/{me['id']}").json()
+            self.assertTrue(bip322.verify(record["owner"], record["message"], record["signature"]))
+            self.assertIn(f"agent key: {p['agent']['key']}", record["message"])
+            n = self.client.get("/v1/notifications", headers=self.h(BOB)).json()["notifications"][0]
+            self.assertEqual((n["kind"], n["post_id"]), ("reply", p["id"]))
+            self.assertEqual(post(ALICE, f"/v1/agent/drafts/{drafts['answers']['id']}/publish", {}).status_code, 409)
+            # The grant's daily limit holds.
+            self.assertEqual(post(ALICE, f"/v1/agent/drafts/{drafts['welcome']['id']}/publish", {}).status_code, 201)
+            with self.conn.cursor() as cur:
+                cur.execute("insert into social.agent_drafts (agent_id, bitmap_number, body, task) values (%s, %s, 'extra', 'digest') returning id;",
+                            (me["id"], DISTRICT))
+                extra = cur.fetchone()[0]
+            self.assertEqual(post(ALICE, f"/v1/agent/drafts/{extra}/publish", {}).status_code, 429)
+            self.assertEqual(self.client.delete(f"/v1/agent/drafts/{extra}", headers=self.h(ALICE)).status_code, 200)
+            self.assertEqual(post(ALICE, f"/v1/agent/drafts/{extra}/publish", {}).status_code, 409)
+            self.assertEqual(view().json()["agent"]["posted_today"], 2)
+
+            # Watching nearby listings: told once per district.
+            self.client.put(f"/v1/districts/{DISTRICT}/agent/settings", json={"persona": "叫我们的街「百号街」。", "watch": {"radius": 10, "max_price_sats": 1000}},
+                            headers=self.h(ALICE))
+            with self.conn.cursor() as cur:
+                cur.execute("insert into social.listings values ('d105i0', 900, %s, 'magiceden', null); "
+                            "insert into social.listings_checked values ('magiceden', now(), now()) on conflict (market) do update set ok_at = now();",
+                            (CAROL.address,))
+            with self.conn.cursor() as cur:
+                a = agent._row(cur, "id = %s", (me["id"],))
+            self.assertEqual((agent.watch(a), agent.watch(a)), (1, 0))
+            n = self.client.get("/v1/notifications", headers=self.h(ALICE)).json()["notifications"][0]
+            self.assertEqual((n["kind"], n["bitmap_number"]), ("agent_alert", OTHER))
+
+            # With a price set, it stops until the owner pays; a confirmed payment buys PAID_DAYS.
+            os.environ.update(AGENT_PRICE_SATS="2100", AGENT_LIGHTNING_ADDRESS="agents@unimap.test")
+            self.assertEqual(view().json()["agent"]["problem"], "unpaid")
+            self.assertEqual(post(ALICE, f"/v1/agent/drafts/{drafts['digest']['id']}/publish", {}).status_code, 409)
+            bill = post(ALICE, f"/v1/districts/{DISTRICT}/agent/pay").json()
+            self.assertEqual((bill["amount_sats"], bill["invoice"]), (2100, "lnbc21000n1agent"))
+            status = lambda w: self.client.get(f"/v1/agent/payments/{bill['id']}", headers=self.h(w))
+            self.assertEqual(status(BOB).status_code, 404)
+            self.assertEqual(status(ALICE).json()["status"], "pending")
+            Lnurl.paid.add("https://wallet.test/agent/2100")
+            with self.conn.cursor() as cur:
+                cur.execute("update social.agent_payments set checked_at = null;")
+            self.assertEqual(status(ALICE).json()["status"], "settled")
+            v = view().json()["agent"]
+            self.assertIsNone(v["problem"])
+            self.assertGreater(v["paid_until"], v["granted_at"])
+
+            # A new grant keeps the settings; selling the district ends it.
+            g2 = post(ALICE, f"/v1/districts/{DISTRICT}/agent/prepare", {"posts_per_day": 3}).json()
+            v = post(ALICE, f"/v1/districts/{DISTRICT}/agent", {"id": g2["id"], "signature": ALICE.sign(g2["message"])}).json()
+            self.assertEqual((v["agent"]["id"], v["agent"]["persona"], v["agent"]["problem"], v["drafts"]), (g2["id"], "叫我们的街「百号街」。", None, []))
+            self.assertIsNotNone(self.client.get(f"/v1/agent/grants/{me['id']}").json()["revoked_at"])
+            with self.conn.cursor() as cur:
+                cur.execute("update inscription_owners set address = %s where inscription_id = 'd100i0';", (CAROL.address,))
+                a = agent._row(cur, "id = %s", (g2["id"],))
+                self.assertEqual(agent.problem(cur, a), "owner_changed")
+                cur.execute("update inscription_owners set address = %s where inscription_id = 'd100i0';", (ALICE.address,))
+            self.assertEqual(self.client.delete(f"/v1/districts/{DISTRICT}/agent", headers=self.h(ALICE)).status_code, 200)
+            self.assertIsNone(view().json()["agent"])
+            self.assertIsNone(agent.run(g2["id"], agent.MANUAL_GAP))
+            # Switched on again later, it keeps the paid time and the settings, and starts reading from now.
+            g3 = post(ALICE, f"/v1/districts/{DISTRICT}/agent/prepare", {}).json()
+            v = post(ALICE, f"/v1/districts/{DISTRICT}/agent", {"id": g3["id"], "signature": ALICE.sign(g3["message"])}).json()["agent"]
+            self.assertEqual((v["problem"], v["persona"]), (None, "叫我们的街「百号街」。"))
+            self.client.delete(f"/v1/districts/{DISTRICT}/agent", headers=self.h(ALICE))
+            # Its posts stay, still checkable against the old grant.
+            self.assertEqual(self.client.get(f"/v1/posts/{p['id']}").json()["agent"]["grant_id"], me["id"])
+        finally:
+            agent.model, tips.lnurl = old_model, old_lnurl
+            for k in ("ANTHROPIC_API_KEY", "AGENT_PRICE_SATS", "AGENT_LIGHTNING_ADDRESS"):
+                os.environ.pop(k, None)
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.listings; delete from social.listings_checked; delete from land_events where inscription_id = 'p9i0'; "
+                            "delete from social.notifications where kind like 'agent%%';")
 
     def test_lnurl_checks(self):
         from api import tips
