@@ -135,16 +135,20 @@ media: none
 
 ## 藏品（钱包资产变成宠物）
 
-街区主人可以把钱包里有代表性的资产展示成街区里的宠物。第一批两种，定义在 `api/holdings.py` 的 `ASSETS`（前端 `web/lib/pets.ts` 同步）：
+街区主人可以把钱包里有代表性的资产展示成街区里的宠物和摆设，一个街区最多同时摆 3 种（`MAX_SHOWN`），按勾选的顺序摆在左前边、右前边和前角。一共六种，定义在 `api/holdings.py` 的 `ASSETS`（前端 `web/lib/pets.ts` 同步）：
 
 | 资产 | 类型 | 1 档 | 2 档 | 3 档 |
 |---|---|---|---|---|
 | DOG•GO•TO•THE•MOON | Rune | 持有就有一只小狗 | 100 万起是一只大狗 | 1 亿起有狗窝和第二只狗 |
 | Quantum Cats | 铭文系列 | 1 只：一只猫 | 3 只起：两只猫 | 10 只起：一群猫 |
+| Bitcoin Puppets | 铭文系列 | 1 个：一个提线木偶 | 3 个起：两个木偶 | 10 个起：加一座木偶戏台 |
+| NodeMonkes | 铭文系列 | 1 只：一只猴子 | 3 只起：两只猴子 | 10 只起：加一棵椰子树 |
+| Bitcoin Frogs | 铭文系列 | 1 只：一只青蛙 | 5 只起：青蛙和池塘 | 20 只起：一池青蛙 |
+| Runestone | 铭文 | 1 块：一块符文石 | 3 块起：一块大符文石 | 10 块起：一圈符文石 |
 
 - **默认不展示。** 展示等于公开钱包里有什么，所以主人要在「管理街区 → 藏品」里逐项勾选。选择记在 `social.showcase`，只在做选择的地址还持有这个街区时算数；街区转手后，新主人的钱包不会自动露出来。
 - **数据来源。** 持有量从 Hiro 的公开 Ordinals 和 Runes 接口查（`HOLDINGS_API_URL`、`HOLDINGS_API_KEY` 可改），结果缓存在 `social.holdings`，6 小时内不重复查；地图只读缓存。主人点「重新查询」最多 10 分钟一次。查询失败时继续用上次的结果。自己的 ord 节点目前没开地址和 Runes 索引，以后开了可以换成自己的数据。
-- **铭文系列。** 一个铭文属不属于某个系列，看 `api/collections/<slug>.json` 里的铭文 ID 清单。`scripts/fetch_collections.py` 从社区维护的 ordinals-collections 仓库下载，部署脚本会自动跑；清单缺失时这个宠物不显示。
+- **铭文系列。** 一个铭文属不属于某个系列，看 `api/collections/<slug>.json` 里的铭文 ID 清单。`scripts/fetch_collections.py` 从社区维护的 ordinals-collections 仓库下载（`quantum-cats`、`bitcoin-puppets`、`nodemonkes`、`bitcoin-frogs`、`runestone`），部署脚本会自动跑；清单缺失时这个宠物不显示。这几个 slug 还没有对着那个仓库核对过，部署后看脚本的输出，哪个下载失败就改成仓库里的实际名字。
 - **接口。** `/v1/land` 的格子带 `pets`（例如 `["dog:2", "cat:1"]`），街区主页带 `pets`（资产、档位、数量）。主人用 `GET /v1/districts/{n}/showcase` 看自己持有什么，`PUT` 同一路径保存选择，`POST …/showcase/refresh` 重新查询。
 - **只看登录的地址。** 一个人的资产分在几个钱包地址时，暂时只算登录的那个；以后可以加签名绑定多个地址。
 

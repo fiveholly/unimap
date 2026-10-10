@@ -9,7 +9,7 @@ import { TileThumb } from "@/components/TileThumb";
 import { PetPicture } from "@/components/Pets";
 import { api, type Application, type District, type Land, type Showcase } from "@/lib/api";
 import { connected, reach } from "@/lib/parks";
-import { amountText, nextTier, PET_KEYS, PETS, type PetKey } from "@/lib/pets";
+import { amountText, MAX_SHOWN, nextTier, PET_KEYS, PETS, type PetKey } from "@/lib/pets";
 import { parkText, recruitText } from "@/lib/share";
 import { COLORS, DECOS, MAX_DECOS, type DistrictStyle } from "@/lib/style";
 import type { Zone } from "@/lib/zones";
@@ -342,11 +342,11 @@ function PetsForm({ n, token, save }: { n: number; token: string | null; save: (
   if (error && !view) return <p className="error small">{error}</p>;
   if (!view) return <p className="muted small">正在查你钱包里的资产…</p>;
   const held = Object.fromEntries(view.held.map((h) => [h.asset, h]));
-  const toggle = (k: PetKey) => setChosen(chosen.includes(k) ? chosen.filter((x) => x !== k) : [...chosen, k]);
+  const toggle = (k: PetKey) => setChosen(chosen.includes(k) ? chosen.filter((x) => x !== k) : chosen.length < MAX_SHOWN ? [...chosen, k] : chosen);
   return (
     <>
       <p className="muted small">
-        钱包里有代表性的资产，可以变成街区里的宠物：持有 DOG 就养一只狗，持有 Quantum Cats 就有猫，持有越多越热闹。展示等于公开你持有这些资产，所以默认不展示，勾选后才会出现在地图和街区主页上。
+        钱包里有代表性的资产，可以变成街区里的宠物和摆设：持有 DOG 就养一只狗，持有 Quantum Cats 就有猫，还有木偶、猴子、青蛙和符文石，持有越多越热闹。展示等于公开你持有这些资产，所以默认不展示，勾选后才会出现在地图和街区主页上。一个街区最多同时摆 {MAX_SHOWN} 种。
       </p>
       <ul className="pet-list">
         {PET_KEYS.map((k) => {
@@ -366,7 +366,7 @@ function PetsForm({ n, token, save }: { n: number; token: string | null; save: (
                 </span>
               </span>
               <label className="check">
-                <input type="checkbox" checked={chosen.includes(k)} disabled={!tier} onChange={() => toggle(k)} name={`pet-${k}`} />
+                <input type="checkbox" checked={chosen.includes(k)} disabled={!tier || (!chosen.includes(k) && chosen.length >= MAX_SHOWN)} onChange={() => toggle(k)} name={`pet-${k}`} />
                 展示
               </label>
             </li>
