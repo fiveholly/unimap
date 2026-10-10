@@ -9,6 +9,7 @@ import { api, type Land, type Tile } from "@/lib/api";
 import { CX, CY, GROUND, PAVED, rng, TILE_H, TILE_W, tileSprite } from "@/lib/iso";
 import { layout } from "@/lib/mondrian";
 import { side } from "@/lib/parks";
+import { bridgeAt, continent, epochOf, HALVING, isWater, nearStrait, shoreBlocks } from "@/lib/terrain";
 import { LANDMARKS, ZONE_ORDER, ZONES, zoneOf, type Zone } from "@/lib/zones";
 
 // Blocks are grouped into quarters of 8 x 8, laid out like a city's street grid: inside a
@@ -142,7 +143,68 @@ function drawStreet(ctx: CanvasRenderingContext2D, x: number, y: number, s: numb
   ctx.lineTo(x + ux * 0.5 * s, y + 6 * s + uy * 0.5 * s);
   ctx.stroke();
   ctx.setLineDash([]);
-} // world point at the canvas centre, and zoom
+}
+
+const SEA = "#10242E";
+// Blocks of a strait's shore given to the sea when zoomed out, more the further out.
+const shoreDepth = (s: number) => (s < COMPACT_SCALE ? 1.8 : 0.9);
+const WATER = "#1A3D4E";
+
+/** A street cell that is sea, between two continents (lib/terrain.ts), with a bridge across it
+ * along u (1) or v (2), or none (0). */
+function drawWater(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, seed: number, bridge: 0 | 1 | 2) {
+  const d = (hw: number, hh: number, dy = 0) => {
+    ctx.beginPath();
+    ctx.moveTo(x, y - hh + dy);
+    ctx.lineTo(x + hw, y + dy);
+    ctx.lineTo(x, y + hh + dy);
+    ctx.lineTo(x - hw, y + dy);
+    ctx.closePath();
+  };
+  ctx.fillStyle = WATER;
+  d(64.5 * s, 32.5 * s, 8 * s);
+  ctx.fill();
+  if (s > 0.25) {
+    const rand = rng(seed);
+    ctx.strokeStyle = "rgba(150,200,215,0.28)";
+    ctx.lineWidth = Math.max(0.6, 1.4 * s);
+    for (let i = 0; i < 2; i++) {
+      const wx = x + (rand() - 0.5) * 60 * s, wy = y + 8 * s + (rand() - 0.5) * 26 * s;
+      ctx.beginPath();
+      ctx.moveTo(wx - 9 * s, wy);
+      ctx.quadraticCurveTo(wx - 4.5 * s, wy - 3 * s, wx, wy);
+      ctx.quadraticCurveTo(wx + 4.5 * s, wy + 3 * s, wx + 9 * s, wy);
+      ctx.stroke();
+    }
+  }
+  if (!bridge) return;
+  // The deck runs from one bank to the other; w is half its width, across the span.
+  const [ax, ay] = bridge === 1 ? [64, 32] : [-64, 32];
+  const [bx, by] = bridge === 1 ? [-64, 32] : [64, 32];
+  const w = 0.17, lift = 2 * s;
+  const pt = (a: number, b: number): [number, number] => [x + (ax * a + bx * b) * s, y + (ay * a + by * b) * s - lift];
+  const quad = (pts: [number, number][], fill: string) => {
+    ctx.fillStyle = fill;
+    ctx.beginPath();
+    ctx.moveTo(...pts[0]);
+    for (const p of pts.slice(1)) ctx.lineTo(...p);
+    ctx.closePath();
+    ctx.fill();
+  };
+  const down = ([px, py]: [number, number]): [number, number] => [px, py + 7 * s];
+  const front = [pt(-0.5, w), pt(0.5, w)];
+  quad([front[0], front[1], down(front[1]), down(front[0])], "#4E4436");
+  quad([pt(-0.5, -w), pt(0.5, -w), pt(0.5, w), pt(-0.5, w)], "#8C7B60");
+  ctx.strokeStyle = "#BFAE8C";
+  ctx.lineWidth = Math.max(0.6, 1.2 * s);
+  for (const k of [-w, w]) {
+    ctx.beginPath();
+    ctx.moveTo(...pt(-0.5, k));
+    ctx.lineTo(...pt(0.5, k));
+    ctx.stroke();
+  }
+}
+// world point at the canvas centre, and zoom
 
 const quarterCentre = (q: number): [number, number] => {
   const qc = q % QUARTERS, qr = Math.floor(q / QUARTERS);
@@ -186,6 +248,7 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
   const plans = useRef(new Map<number, Plan | "loading" | "failed">());
   const parkNames = useRef(new Map<number, string | null>()); // null while loading
   const [level, setLevel] = useState<Level>("block");
+  const [epoch, setEpoch] = useState(epochOf(focus)); // the continent at the view's centre
   const hover = useRef<number | null>(null);
   const frame = useRef(0);
   const [selected, setSelected] = useState<number>(focus);
@@ -213,6 +276,11 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
     const toScreen = (wx: number, wy: number): [number, number] => [(wx - vx) * s + w / 2, (wy - vy) * s + h / 2];
     const lvl = levelOf(s);
     setLevel(lvl);
+    {
+      const qr = Math.max(0, Math.round(vy / QH - 1));
+      const qc = Math.min(QUARTERS - 1, Math.max(0, Math.floor((vx - (qr & 1) * (QW / 2)) / QW)));
+      setEpoch(epochOf(Math.min(tip, (qr * QUARTERS + qc) * PER_Q + PER_Q / 2)));
+    }
 
     // Quarter rows on screen; buildings rise up to a tile height above their ground.
     const [, y0] = toWorld(0, 0), [, y1] = toWorld(w, h + TILE_H * s);
@@ -227,6 +295,37 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
         if (cx + (QW / 2) * s < 0 || cx - (QW / 2) * s > w || cy - QH * s > h || cy + QH * s < 0) continue;
         quarters.push(q);
       }
+    // The sea, and each quarter's shore, in its continent's colour, peeking out past the map's edges.
+    ctx.fillStyle = SEA;
+    ctx.fillRect(0, 0, w, h);
+    if (s > 0.12) {
+      // Ripples, fixed to the world so they pan with it; most end up under the land.
+      const G = 150, [wx0, wy0] = toWorld(0, 0), [wx1, wy1] = toWorld(w, h);
+      ctx.strokeStyle = "rgba(140,190,205,0.16)";
+      ctx.lineWidth = Math.max(0.8, 1.6 * s);
+      ctx.beginPath();
+      for (let gy = Math.floor(wy0 / G); gy <= wy1 / G; gy++)
+        for (let gx = Math.floor(wx0 / G); gx <= wx1 / G; gx++) {
+          const r = rng(gx * 7919 + gy * 104729);
+          if (r() < 0.45) continue;
+          const [x, y] = toScreen(gx * G + r() * G, gy * G + r() * G);
+          ctx.moveTo(x - 14 * s, y);
+          ctx.quadraticCurveTo(x - 7 * s, y - 4 * s, x, y);
+          ctx.quadraticCurveTo(x + 7 * s, y + 4 * s, x + 14 * s, y);
+        }
+      ctx.stroke();
+    }
+    for (const q of quarters) {
+      const [cx, cy] = toScreen(...quarterCentre(q));
+      ctx.fillStyle = continent(epochOf(q * PER_Q)).shore;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - (QH + 14) * s);
+      ctx.lineTo(cx + (QW / 2 + 28) * s, cy + 6 * s);
+      ctx.lineTo(cx, cy + (QH + 26) * s);
+      ctx.lineTo(cx - (QW / 2 + 28) * s, cy + 6 * s);
+      ctx.closePath();
+      ctx.fill();
+    }
     const want = new Set<number>();
     const labels: [number, number, string, "landmark" | "park"][] = [];
     const parkCells = new Map<number, [number, number][]>(); // park id -> screen centres of its members
@@ -270,6 +369,29 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
         ctx.fillStyle = STREET;
         diamond(cx, cy, (QW / 2) * s, QH * s);
         ctx.fill();
+        // Zoomed out a street is too thin to read as sea, so a strait also takes the edge of the
+        // blocks on its shores, and their buildings stand back from it.
+        const shore = shoreBlocks(q), depth = shoreDepth(s);
+        if (nearStrait(q))
+          for (let i = 0; i < 2 * CELL - 1; i++) {
+            const [u, v] = i < CELL ? [SIDE, i] : [i - CELL, SIDE];
+            if (isWater(q, u, v)) drawWater(ctx, ...toScreen(...cellCentre(q, u, v)), s, q * 97 + i, 0);
+          }
+        if (shore.length) {
+          ctx.fillStyle = WATER;
+          ctx.beginPath();
+          for (const [u, v, du, dv] of shore) {
+            const m = 0.5 - depth; // the band's inner edge, from the block's centre
+            const [u0, u1] = du > 0 ? [u + m, u + 0.5] : du < 0 ? [u - 0.5, u - m] : [u - 0.5, u + 0.5];
+            const [v0, v1] = dv > 0 ? [v + m, v + 0.5] : dv < 0 ? [v - 0.5, v - m] : [v - 0.5, v + 0.5];
+            const pts = [cellCentre(q, u0, v0), cellCentre(q, u1, v0), cellCentre(q, u1, v1), cellCentre(q, u0, v1)].map((p) => toScreen(...p));
+            // A little below the ground, like the sea in the street cells.
+            ctx.moveTo(pts[0][0], pts[0][1] + 8 * s);
+            for (const p of pts.slice(1)) ctx.lineTo(p[0], p[1] + 8 * s);
+            ctx.closePath();
+          }
+          ctx.fill();
+        }
         let info = areas.current.get(q);
         if (!info) {
           const count = new Map<Zone, number>();
@@ -311,21 +433,22 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
         }
         const [icx, icy] = toScreen(...cellCentre(q, 3.5, 3.5));
         if (!info.slots.length) continue;
+        const fit = shore.length ? 1 - (2 * depth) / SIDE : 1;
         if (s < COMPACT_SCALE) {
           // Too small for nine: one building, of the zone with the most plots.
           const tally = new Map<Zone | null, number>();
           for (const z of info.slots) tally.set(z, (tally.get(z) ?? 0) + 1);
           const zone = info.slots.includes("landmark") ? "landmark" : [...tally].sort((a, b) => b[1] - a[1])[0][0];
-          const k = SIDE;
+          const k = SIDE * fit;
           ctx.drawImage(tileSprite(zone, q, resFor(k), info.level), icx - CX * k * s, icy - CY * k * s, TILE_W * k * s, TILE_H * k * s);
           continue;
         }
-        const k = SIDE / SLOTS;
+        const k = (SIDE / SLOTS) * fit;
         for (const idx of [0, 1, 3, 2, 4, 6, 5, 7, 8]) {
           const i = idx % SLOTS, j = Math.floor(idx / SLOTS);
           const zone = idx < info.slots.length ? info.slots[idx] : null;
           if (!zone) continue;
-          const px = icx + ((i - j) * SIDE * 64 * s) / SLOTS, py = icy - SIDE * 32 * s + ((i + j + 1) * SIDE * 32 * s) / SLOTS;
+          const px = icx + (((i - j) * SIDE * 64 * s) / SLOTS) * fit, py = icy + (-SIDE * 32 * s + ((i + j + 1) * SIDE * 32 * s) / SLOTS) * fit;
           ctx.drawImage(tileSprite(zone, q * 9 + idx, resFor(k), info.level), px - CX * k * s, py - CY * k * s, TILE_W * k * s, TILE_H * k * s);
         }
       }
@@ -334,7 +457,7 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
       const res = resFor(1);
       const visible: number[] = [];
       // Every cell on screen, blocks and streets, drawn back to front.
-      type Cell = { y: number; x: number; n: number | null; road: 0 | 1 | 2 | 3 | 4 };
+      type Cell = { y: number; x: number; n: number | null; road: 0 | 1 | 2 | 3 | 4; q: number; u: number; v: number };
       const cells: Cell[] = [];
       for (const q of quarters)
         for (let v = 0; v < CELL; v++)
@@ -343,13 +466,14 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
             const [x, y] = toScreen(wx, wy);
             if (x < -64 * s || x > w + 64 * s || y < -32 * s || y - (CY - 0) * s > h) continue;
             const n = u < SIDE && v < SIDE ? q * PER_Q + v * SIDE + u : null;
-            if (n != null && n > tip) cells.push({ x, y, n: null, road: 4 });
-            else cells.push({ x, y, n, road: n != null ? 0 : u === SIDE && v === SIDE ? 3 : u === SIDE ? 1 : 2 });
+            if (n != null && n > tip) cells.push({ x, y, n: null, road: 4, q, u, v });
+            else cells.push({ x, y, n, road: n != null ? 0 : u === SIDE && v === SIDE ? 3 : u === SIDE ? 1 : 2, q, u, v });
           }
       cells.sort((a, b) => a.y - b.y || a.x - b.x);
       for (const c of cells) {
         if (c.n == null) {
-          drawStreet(ctx, c.x, c.y, s, c.road as 1 | 2 | 3 | 4);
+          if (c.road !== 4 && nearStrait(c.q) && isWater(c.q, c.u, c.v)) drawWater(ctx, c.x, c.y, s, c.q * 97 + c.v * CELL + c.u, bridgeAt(c.q, c.u, c.v));
+          else drawStreet(ctx, c.x, c.y, s, c.road as 1 | 2 | 3 | 4);
           continue;
         }
         const n = c.n;
@@ -670,6 +794,12 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
             最新区块
           </button>
         </div>
+        <div className="city-continent" aria-live="polite">
+          <b>{continent(epoch).name}</b>
+          <span className="mono">
+            {(epoch * HALVING).toLocaleString("en-US")} – {epoch < Math.floor(tip / HALVING) ? ((epoch + 1) * HALVING - 1).toLocaleString("en-US") : "今天"}
+          </span>
+        </div>
         {error && <p className="city-error small">地图数据加载失败：{error}</p>}
       </div>
 
@@ -722,7 +852,7 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
         ))}
         <span className="grow" />
         <span className="muted">
-          {level === "area" ? "每一片约 64 个区块，楼的种类按其中各地段的多少来摆。点击放大" : level === "parcel" ? "每一块地是区块里的一笔交易；立起来的是已认领的地块" : "拖动平移，滚轮缩放，点击街区查看；放大到最近可看到地块"}
+          {level === "area" ? "每一片约 64 个区块，楼的种类按其中各地段的多少来摆。每次减半隔出一片大陆，海峡上有桥。点击放大" : level === "parcel" ? "每一块地是区块里的一笔交易；立起来的是已认领的地块" : "拖动平移，滚轮缩放，点击街区查看；放大到最近可看到地块"}
         </span>
       </div>
     </div>
