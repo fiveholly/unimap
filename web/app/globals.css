@@ -561,6 +561,68 @@ kbd {
   font-size: 26px;
   margin-bottom: 6px;
 }
+.welcome {
+  margin-bottom: 20px;
+  padding: 16px 20px 6px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+.welcome-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.welcome-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.welcome-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px 28px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+.welcome-steps li {
+  counter-increment: step;
+}
+.welcome-steps li b::before {
+  content: counter(step) " · ";
+  color: var(--accent-text);
+}
+.welcome-steps p {
+  margin: 6px 0 10px;
+}
+.welcome-steps a {
+  color: var(--accent-text);
+}
+.birthday {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.birthday label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--fg-2);
+}
+.birthday input {
+  color-scheme: dark;
+}
+.birthday .error {
+  flex-basis: 100%;
+  margin: 0;
+}
+.welcome-reopen {
+  display: block;
+  margin: -8px 0 14px;
+}
 .city {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 300px;
@@ -1281,6 +1343,9 @@ kbd {
   }
   .city-continent span {
     display: none;
+  }
+  .welcome-steps {
+    grid-template-columns: 1fr;
   }
   .header-inner {
     padding: 0 16px;
