@@ -181,3 +181,19 @@ CREATE TABLE IF NOT EXISTS social.holdings_checked (
 	error text NULL, -- the provider's last failure; the cache above is then older
 	CONSTRAINT holdings_checked_pk PRIMARY KEY (address)
 );
+
+-- In-app notifications (api/notify.py), for the address they concern.
+CREATE TABLE IF NOT EXISTS social.notifications (
+	id bigserial NOT NULL,
+	address text NOT NULL,
+	kind text NOT NULL, -- reply | like | post | follow | apply
+	actor text NOT NULL,
+	bitmap_number int4 NOT NULL,
+	post_id int8 NULL, -- the reply, the liked post or the new post
+	created_at timestamptz NOT NULL DEFAULT now(),
+	read_at timestamptz NULL,
+	CONSTRAINT notifications_pk PRIMARY KEY (id),
+	-- one per like, follow or application, even if it is undone and done again
+	CONSTRAINT notifications_once UNIQUE NULLS NOT DISTINCT (address, kind, actor, bitmap_number, post_id)
+);
+CREATE INDEX IF NOT EXISTS notifications_address_idx ON social.notifications USING btree (address, id);

@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { Avatar } from "./Avatar";
+import { Bell } from "./Notifications";
 import { short, useSession } from "./Session";
 import { WALLETS, type WalletId } from "@/lib/wallets";
 
@@ -94,6 +96,7 @@ function WalletButton() {
   if (address) {
     return (
       <div className="wallet">
+        <Bell />
         <Link href="/me" className="me-link" title={address}>
           <Avatar seed={address} size={22} />
           <span className="mono">{short(address)}</span>
@@ -141,7 +144,9 @@ function LoginDialog({ close }: { close: () => void }) {
   };
 
   const browserWallets = WALLETS.filter((w) => w.id !== "manual");
-  return (
+  // Into <body>: the header's backdrop-filter would otherwise make it the box a fixed
+  // overlay is placed in, and on phones the dialog ends up above the screen.
+  return createPortal(
     <div className="dialog-backdrop" role="dialog" aria-modal="true" aria-labelledby="login-title" onClick={(e) => e.target === e.currentTarget && !busy && close()}>
       <div className="dialog">
         <h2 id="login-title">连接钱包</h2>
@@ -177,6 +182,7 @@ function LoginDialog({ close }: { close: () => void }) {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

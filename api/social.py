@@ -14,7 +14,7 @@ import psycopg2.extras
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import bip322, holdings, parks, prosperity, recruit, roles, style
+from api import bip322, holdings, notify, parks, prosperity, recruit, roles, style
 from api.auth import current_address, normalize_address, optional_address
 from api.db import cursor
 from api.land import EVENT_SELECT, _event
@@ -322,7 +322,8 @@ def create_post(bitmap_number: int, req: NewPost, address: str = Depends(current
                 raise HTTPException(403, "only the district owner and residents can post; visitors can reply")
         else:
             cur.execute(
-                "select bitmap_number, reply_to, removed_at from social.posts where id = %s;", (req.reply_to,)
+                "select bitmap_number, reply_to, removed_at, author_address from social.posts where id = %s;",
+                (req.reply_to,),
             )
             parent = cur.fetchone()
             if parent is None or parent["removed_at"] is not None or parent["bitmap_number"] != bitmap_number:
@@ -359,6 +360,10 @@ def create_post(bitmap_number: int, req: NewPost, address: str = Depends(current
         row = cur.fetchone()
         if row is None:
             raise HTTPException(409, "this signature was already used")
+        if req.reply_to is None:
+            notify.notify(cur, roles.district_owner(cur, bitmap_number), "post", address, bitmap_number, row["id"])
+        else:
+            notify.notify(cur, parent["author_address"], "reply", address, bitmap_number, row["id"])
         return _fetch_posts(cur, "p.id = %(id)s", {"id": row["id"]}, address, 1)[0]
 
 
@@ -501,6 +506,7 @@ def follow(bitmap_number: int, address: str = Depends(current_address)):
             "insert into social.follows (address, bitmap_number) values (%s, %s) on conflict do nothing;",
             (address, bitmap_number),
         )
+        notify.notify(cur, roles.district_owner(cur, bitmap_number), "follow", address, bitmap_number)
     return {"ok": True}
 
 
@@ -514,12 +520,16 @@ def unfollow(bitmap_number: int, address: str = Depends(current_address)):
 @router.put("/v1/posts/{post_id}/like")
 def like(post_id: int, address: str = Depends(current_address)):
     with cursor() as cur:
-        cur.execute("select 1 from social.posts where id = %s and removed_at is null;", (post_id,))
-        if cur.fetchone() is None:
+        cur.execute(
+            "select author_address, bitmap_number from social.posts where id = %s and removed_at is null;", (post_id,)
+        )
+        post = cur.fetchone()
+        if post is None:
             raise HTTPException(404, "no such post")
         cur.execute(
             "insert into social.likes (address, post_id) values (%s, %s) on conflict do nothing;", (address, post_id)
         )
+        notify.notify(cur, post[0], "like", address, post[1], post_id)
     return {"ok": True}
 
 

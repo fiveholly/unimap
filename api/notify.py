@@ -1,0 +1,80 @@
+"""In-app notifications (通知): someone replied to your post, liked it, posted in or followed
+your district, or applied to live there. Each is written in the same transaction as the
+action, for the address it concerns, and never for your own actions.
+"""
+
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
+
+from api.auth import current_address
+from api.db import cursor
+
+router = APIRouter()
+
+KINDS = ("reply", "like", "post", "follow", "apply")
+PAGE = 30
+
+
+def notify(cur, address, kind, actor, bitmap_number, post_id=None):
+    """Tell address that actor did kind. A like or follow repeated after an undo isn't told twice."""
+    assert kind in KINDS
+    if not address or address == actor:
+        return
+    cur.execute(
+        "insert into social.notifications (address, kind, actor, bitmap_number, post_id) values (%s, %s, %s, %s, %s) "
+        "on conflict do nothing;",
+        (address, kind, actor, bitmap_number, post_id),
+    )
+
+
+def _unread(cur, address):
+    cur.execute("select count(*) from social.notifications where address = %s and read_at is null;", (address,))
+    return cur.fetchone()[0]
+
+
+@router.get("/v1/notifications")
+def notifications(before: int | None = None, address: str = Depends(current_address)):
+    """Newest first, PAGE at a time; each with the post it is about, if any."""
+    with cursor() as cur:
+        cur.execute(
+            "select n.id, n.kind, n.actor, n.bitmap_number, n.post_id, n.created_at, n.read_at is not null, "
+            "case when p.removed_at is null then left(p.body, 140) end "
+            "from social.notifications n left join social.posts p on p.id = n.post_id "
+            "where n.address = %s and (%s::int8 is null or n.id < %s) order by n.id desc limit %s;",
+            (address, before, before, PAGE),
+        )
+        rows = [
+            {
+                "id": i,
+                "kind": kind,
+                "actor": actor,
+                "bitmap_number": n,
+                "post_id": post_id,
+                "created_at": at.isoformat(),
+                "read": read,
+                "snippet": snippet,
+            }
+            for i, kind, actor, n, post_id, at, read, snippet in cur.fetchall()
+        ]
+        return {"notifications": rows, "unread": _unread(cur, address)}
+
+
+@router.get("/v1/notifications/unread")
+def unread(address: str = Depends(current_address)):
+    with cursor() as cur:
+        return {"unread": _unread(cur, address)}
+
+
+class ReadBody(BaseModel):
+    up_to: int | None = None  # mark read up to this id; all if left out
+
+
+@router.post("/v1/notifications/read")
+def mark_read(req: ReadBody, address: str = Depends(current_address)):
+    with cursor() as cur:
+        cur.execute(
+            "update social.notifications set read_at = now() where address = %s and read_at is null "
+            "and (%s::int8 is null or id <= %s);",
+            (address, req.up_to, req.up_to),
+        )
+        return {"unread": _unread(cur, address)}

@@ -3,7 +3,7 @@
 // here from deterministic fake data; what the visitor does (posts, likes, follows, profile
 // edits) is kept in localStorage, and "重置演示数据" clears it.
 
-import type { Application, District, FeedItem, Land, LandEvent, Me, Parcel, Park, Poll, Post, Ranking, Recruiting, Role, Showcase, Tile } from "./api";
+import type { Application, District, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, Role, Showcase, Tile } from "./api";
 import { connected } from "./parks";
 import { PET_KEYS, PETS, type Pet, type PetKey } from "./pets";
 import { prosperity, THRESHOLDS, type ProsperityParts } from "./prosperity";
@@ -125,6 +125,7 @@ type State = {
   polls?: DemoPoll[];
   parks?: { id: number; name: string; owner: string; members: number[] }[];
   showcase?: Record<number, PetKey[]>; // what the visitor chose to show on their districts
+  notifications?: Notification[]; // the visitor's, newest first
 };
 type DemoPoll = { id: number; n: number; question: string; options: string[]; by: string; created_at: string; closes_at: string; closed_at: string | null; votes: Record<string, number> };
 
@@ -144,7 +145,30 @@ function seedExtras(s: State) {
       created_at: iso(20), closes_at: iso(13), closed_at: null, votes: { a: 1, b: 1, c: 0 } },
   ];
   s.parks ??= [SEED_PARK];
+  s.notifications ??= seedNotifications(s);
   return s;
+}
+
+// What the visitor's wallet hears about: replies on their posts, likes, new followers of
+// 840000 and someone asking to live there.
+function seedNotifications(s: State): Notification[] {
+  const mine = s.posts.filter((p) => p.author.address === DEMO_ADDRESS && p.reply_to == null);
+  const out: Omit<Notification, "id">[] = [];
+  const at = (hoursAgo: number) => new Date((NOW - hoursAgo * 3600) * 1000).toISOString();
+  const add = (n: Omit<Notification, "id" | "read" | "snippet"> & { snippet?: string | null }, read = false) =>
+    out.push({ snippet: null, read, ...n });
+  for (const p of mine)
+    for (const r of s.posts.filter((x) => x.reply_to === p.id && x.author.address !== DEMO_ADDRESS))
+      add({ kind: "reply", actor: r.author.address, bitmap_number: p.bitmap_number, post_id: r.id, created_at: r.created_at, snippet: r.body });
+  if (mine[0])
+    for (let i = 0; i < 4; i++) add({ kind: "like", actor: fakeAddress(500 + i), bitmap_number: mine[0].bitmap_number, post_id: mine[0].id, created_at: at(1 + i * 2), snippet: mine[0].body });
+  add({ kind: "follow", actor: fakeAddress(611), bitmap_number: 840000, post_id: null, created_at: at(0.4) });
+  add({ kind: "follow", actor: fakeAddress(612), bitmap_number: 840000, post_id: null, created_at: at(5) });
+  add({ kind: "apply", actor: fakeAddress(613), bitmap_number: 840000, post_id: null, created_at: at(0.2) });
+  add({ kind: "follow", actor: fakeAddress(614), bitmap_number: 812345, post_id: null, created_at: at(80) }, true);
+  return out
+    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+    .map((n, i, all) => ({ ...n, id: all.length - i, read: n.read || Date.parse(n.created_at) < (NOW - 3 * DAY) * 1000 }));
 }
 
 const KEY = "unimap.demo";
@@ -519,6 +543,21 @@ function route(path: string, opts: Opts): unknown {
     s.styles![n] = st;
     save();
     return st;
+  }
+  if (p === "/v1/notifications" || p === "/v1/notifications/unread" || p === "/v1/notifications/read") {
+    const a = needMe();
+    const list = a === DEMO_ADDRESS ? s.notifications! : [];
+    if (p === "/v1/notifications/read") {
+      const upTo = (body.up_to as number | null) ?? Infinity;
+      for (const n of list) if (n.id <= upTo) n.read = true;
+      save();
+    }
+    const unread = list.filter((n) => !n.read).length;
+    if (p === "/v1/notifications") {
+      const before = Number(url.searchParams.get("before") ?? Infinity);
+      return { notifications: list.filter((n) => n.id < before).slice(0, 30), unread };
+    }
+    return { unread };
   }
   if ((m = p.match(/^\/v1\/districts\/(\d+)\/showcase(\/refresh)?$/))) {
     const n = +m[1];

@@ -162,3 +162,15 @@ export type FeedItem = { type: "post"; time: number; post: Post } | { type: "eve
 
 /** The owner's view of what their wallet holds and what the district shows. */
 export type Showcase = { chosen: PetKey[]; held: Pet[]; checked_at: string | null; error: string | null; shown: Pet[] };
+
+export type NotificationKind = "reply" | "like" | "post" | "follow" | "apply";
+export type Notification = {
+  id: number;
+  kind: NotificationKind;
+  actor: string;
+  bitmap_number: number;
+  post_id: number | null;
+  created_at: string;
+  read: boolean;
+  snippet: string | null;
+};

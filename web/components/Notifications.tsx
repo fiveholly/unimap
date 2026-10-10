@@ -1,0 +1,143 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
+
+import { Avatar } from "./Avatar";
+import { useSession } from "./Session";
+import { api, type Notification } from "@/lib/api";
+import { short, timeAgo } from "@/lib/format";
+
+// The notifications page tells the bell when it has marked things read.
+const READ_EVENT = "unimap:notifications-read";
+export const announceRead = () => window.dispatchEvent(new Event(READ_EVENT));
+
+/** The bell in the header, with the unread count. Checks every minute and on each page change. */
+export function Bell() {
+  const { token } = useSession();
+  const path = usePathname();
+  const [unread, setUnread] = useState(0);
+  useEffect(() => {
+    if (!token) return setUnread(0);
+    let live = true;
+    const check = () =>
+      api<{ unread: number }>("/v1/notifications/unread", { token })
+        .then((r) => live && setUnread(r.unread))
+        .catch(() => {});
+    check();
+    const timer = setInterval(() => document.visibilityState === "visible" && check(), 60_000);
+    window.addEventListener(READ_EVENT, check);
+    return () => {
+      live = false;
+      clearInterval(timer);
+      window.removeEventListener(READ_EVENT, check);
+    };
+  }, [token, path]);
+  return (
+    <Link href="/notifications" className={`bell${path === "/notifications" ? " active" : ""}`} aria-label={unread ? `通知，${unread} 条未读` : "通知"}>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+        <path d="M10.3 21a1.9 1.9 0 0 0 3.4 0" />
+      </svg>
+      {unread > 0 && <span className="bell-count">{unread > 99 ? "99+" : unread}</span>}
+    </Link>
+  );
+}
+
+/** Likes on one post and follows of one district fold into one line. */
+type Item = { key: string; first: Notification; actors: string[]; read: boolean };
+function group(list: Notification[]): Item[] {
+  const out: Item[] = [];
+  const at = new Map<string, Item>();
+  for (const n of list) {
+    const fold = n.kind === "like" ? `like:${n.post_id}` : n.kind === "follow" ? `follow:${n.bitmap_number}` : null;
+    const item = fold ? at.get(fold) : undefined;
+    if (item) {
+      if (!item.actors.includes(n.actor)) item.actors.push(n.actor);
+      item.read &&= n.read;
+      continue;
+    }
+    const fresh = { key: `${n.id}`, first: n, actors: [n.actor], read: n.read };
+    out.push(fresh);
+    if (fold) at.set(fold, fresh);
+  }
+  return out;
+}
+
+function sentence(item: Item): [React.ReactNode, string] {
+  const n = item.first;
+  const who = (
+    <b className="mono">
+      {short(item.actors[0])}
+      {item.actors.length > 1 && <span className="muted"> 等 {item.actors.length} 人</span>}
+    </b>
+  );
+  const place = <span className="mono">{n.bitmap_number}.bitmap</span>;
+  const post = n.post_id != null ? `/post/${n.post_id}` : `/district/${n.bitmap_number}`;
+  switch (n.kind) {
+    case "reply":
+      return [<>{who} 回复了你在 {place} 的帖子</>, post];
+    case "like":
+      return [<>{who} 赞了你在 {place} 的帖子</>, post];
+    case "post":
+      return [<>{who} 在你的街区 {place} 发了帖子</>, post];
+    case "follow":
+      return [<>{who} 关注了你的街区 {place}</>, `/district/${n.bitmap_number}`];
+    case "apply":
+      return [<>{who} 申请入住你的街区 {place}，去「管理街区 → 招募」看看</>, `/district/${n.bitmap_number}`];
+  }
+}
+
+export function NotificationList() {
+  const { token, ready } = useSession();
+  const [list, setList] = useState<Notification[] | null>(null);
+  const [more, setMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const load = (before?: number) =>
+    api<{ notifications: Notification[] }>(`/v1/notifications${before ? `?before=${before}` : ""}`, { token })
+      .then((r) => {
+        setList((old) => (before ? [...(old ?? []), ...r.notifications] : r.notifications));
+        setMore(r.notifications.length >= 30);
+        // Seen once listed: mark read up to the newest, and let the bell know.
+        const newest = r.notifications[0]?.id;
+        if (!before && newest && r.notifications.some((x) => !x.read))
+          api("/v1/notifications/read", { method: "POST", body: { up_to: newest }, token }).then(announceRead, () => {});
+      })
+      .catch((e) => setError(e.message));
+  useEffect(() => {
+    if (token) load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+  if (!ready) return null;
+  if (!token) return <p className="muted">连接钱包后可以看到你的通知。</p>;
+  if (error) return <p className="error">{error}</p>;
+  if (!list) return <p className="muted">加载中…</p>;
+  if (!list.length) return <p className="muted">还没有通知。有人回复、点赞你的帖子，关注你的街区或者申请入住时，会在这里告诉你。</p>;
+  return (
+    <>
+      <ul className="notifications">
+        {group(list).map((item) => {
+          const [text, href] = sentence(item);
+          return (
+            <li key={item.key} className={item.read ? "" : "unread"}>
+              <Link href={href}>
+                <Avatar seed={item.first.actor} size={32} />
+                <span className="grow">
+                  <span>{text}</span>
+                  {item.first.snippet && <span className="snippet muted small">{item.first.snippet}</span>}
+                </span>
+                <span className="dim small">{timeAgo(new Date(item.first.created_at).getTime() / 1000)}</span>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+      {more && (
+        <button type="button" className="ghost" onClick={() => load(list[list.length - 1].id)}>
+          更早的通知
+        </button>
+      )}
+    </>
+  );
+}

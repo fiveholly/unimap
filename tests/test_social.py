@@ -271,6 +271,8 @@ class SocialApi(unittest.TestCase):
         self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}/applications", headers=self.h(CAROL)).status_code, 403)
         apps = self.client.get(f"/v1/districts/{DISTRICT}/applications", headers=self.h(ALICE)).json()["applications"]
         self.assertEqual([(a["address"], a["note"]) for a in apps], [(CAROL.address, "我想住 #2")])
+        told = self.client.get("/v1/notifications", headers=self.h(ALICE)).json()["notifications"]
+        self.assertIn(("apply", CAROL.address, DISTRICT), [(n["kind"], n["actor"], n["bitmap_number"]) for n in told])
         self.assertEqual(self.client.put(f"/v1/districts/{OTHER}/application", json={}, headers=self.h(ALICE)).status_code, 404)
         self.assertEqual(self.client.delete(f"/v1/districts/{DISTRICT}/recruit", headers=self.h(ALICE)).status_code, 200)
         self.assertIsNone(self.client.get(f"/v1/districts/{DISTRICT}").json()["recruit"])
@@ -354,6 +356,31 @@ class SocialApi(unittest.TestCase):
         self.assertEqual((renamed.status_code, renamed.json()["members"]), (200, [100, 108]))
         self.assertEqual(self.client.delete(f"/v1/parks/{park['id']}", headers=self.h(CAROL)).status_code, 403)
         self.assertEqual(self.client.delete(f"/v1/parks/{park['id']}", headers=self.h(ALICE)).status_code, 200)
+
+    def test_notifications(self):
+        with self.conn.cursor() as cur:
+            cur.execute("delete from social.notifications;")
+        inbox = lambda w: self.client.get("/v1/notifications", headers=self.h(w)).json()
+        top = self.post(BOB, "a resident's post").json()
+        self.post(CAROL, "a visitor's reply", reply_to=top["id"])
+        self.post(BOB, "replying to my own post", reply_to=top["id"])
+        for _ in range(2):  # like, undo, like again: told once
+            self.client.put(f"/v1/posts/{top['id']}/like", headers=self.h(CAROL))
+            self.client.delete(f"/v1/posts/{top['id']}/like", headers=self.h(CAROL))
+        self.client.put(f"/v1/posts/{top['id']}/like", headers=self.h(BOB))  # your own like isn't news
+        self.client.put(f"/v1/districts/{DISTRICT}/follow", headers=self.h(CAROL))
+        alice, bob = inbox(ALICE), inbox(BOB)
+        self.assertEqual([(n["kind"], n["actor"]) for n in alice["notifications"]], [("follow", CAROL.address), ("post", BOB.address)])
+        self.assertEqual(alice["notifications"][1]["snippet"], "a resident's post")
+        self.assertEqual([(n["kind"], n["actor"]) for n in bob["notifications"]], [("like", CAROL.address), ("reply", CAROL.address)])
+        self.assertEqual((bob["unread"], inbox(CAROL)["unread"]), (2, 0))
+        self.assertEqual(self.client.get("/v1/notifications", headers={}).status_code, 401)
+        newest = bob["notifications"][0]["id"]
+        self.assertEqual(self.client.post("/v1/notifications/read", json={"up_to": newest - 1}, headers=self.h(BOB)).json()["unread"], 1)
+        self.assertEqual(self.client.post("/v1/notifications/read", json={}, headers=self.h(BOB)).json()["unread"], 0)
+        self.assertTrue(all(n["read"] for n in inbox(BOB)["notifications"]))
+        self.assertEqual(self.client.get("/v1/notifications/unread", headers=self.h(ALICE)).json()["unread"], 2)
+        self.client.delete(f"/v1/districts/{DISTRICT}/follow", headers=self.h(CAROL))
 
     def test_holdings_showcase(self):
         import tempfile
