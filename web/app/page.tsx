@@ -7,6 +7,7 @@ import { CityMap } from "@/components/CityMap";
 import { EventItem } from "@/components/EventItem";
 import { PostCard } from "@/components/PostCard";
 import { useSession } from "@/components/Session";
+import { Welcome } from "@/components/Welcome";
 import { api, type FeedItem } from "@/lib/api";
 import { epochName } from "@/lib/format";
 
@@ -46,6 +47,7 @@ function HomeView() {
           </div>
         )}
       </section>
+      {tip != null && <Welcome tip={tip} />}
       {error && <p className="error">连不上 unimap 服务：{error}</p>}
       {tip == null && !error && <div className="city-skeleton" aria-label="地图加载中" />}
       {tip != null && <CityMap tip={tip} focus={focus} />}
