@@ -217,3 +217,15 @@ CREATE TABLE IF NOT EXISTS social.x_link_states (
 	expires_at timestamptz NOT NULL,
 	CONSTRAINT x_link_states_pk PRIMARY KEY (state)
 );
+
+-- Wallets linked together (api/wallets.py): one person, several addresses. Each linked
+-- address points at the group's main address, the one that was signed in when it was linked.
+-- The main address has no row of its own.
+CREATE TABLE IF NOT EXISTS social.wallet_links (
+	address text NOT NULL,
+	main_address text NOT NULL,
+	linked_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT wallet_links_pk PRIMARY KEY (address),
+	CONSTRAINT wallet_links_not_self CHECK (address <> main_address)
+);
+CREATE INDEX IF NOT EXISTS wallet_links_main_idx ON social.wallet_links USING btree (main_address);
