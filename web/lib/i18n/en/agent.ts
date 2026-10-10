@@ -38,8 +38,8 @@ export const agent: Record<string, string> = {
   "开通街区 agent": "Switch on the district agent",
   "它帮你打理这个街区：欢迎新居民、每周写一份周报、回答大家的问题，还能帮你盯着附近的挂单。":
     "It helps you look after the district: it welcomes new residents, writes a weekly digest, answers people's questions, and can watch nearby listings for you.",
-  "它只写草稿，每一条都要你点确认才会发出去，发出的帖子标着「agent 代发」。":
-    "It only writes drafts. Nothing goes out until you approve it, and what goes out is marked “posted by agent”.",
+  "默认它只写草稿，每一条都要你点确认才会发出去。发出的帖子都标着「agent 代发」。":
+    "By default it only writes drafts, and nothing goes out until you approve it. Everything it posts is marked “posted by agent”.",
   "你的钱包签一份授权，写明它能在这里做什么、每天最多几条、什么时候到期。它有自己的密钥，只能签帖子，拿不到你的钱包，也动不了任何资产。":
     "Your wallet signs a grant saying what it may do here, how many posts a day and until when. It has its own key, which can only sign posts: it never gets your wallet and can't move anything.",
   "随时可以撤销。街区卖掉以后，授权自动失效。": "Revoke it any time. If the district is sold, the grant ends by itself.",
@@ -83,4 +83,14 @@ export const agent: Record<string, string> = {
   "你已经不是这个街区的主人，授权失效了。": "You no longer hold this district, so the grant has ended.",
   "使用时间到了，续费后继续工作。": "Its paid time is up. Renew to carry on.",
   "这个地址被禁止发帖，agent 也停下了。": "This address is banned from posting, so the agent has stopped too.",
+  "自己发：{tasks}。其他的写成草稿等你确认。": "Posts on its own: {tasks}. Everything else waits as a draft for you.",
+  "只写草稿，每条都等你确认。": "Only writes drafts. Each one waits for you.",
+  "自己发的": "Posted on its own",
+  "它自己发的帖子，你在帖子上随时可以删掉。": "It posted this on its own. You can delete it from the post any time.",
+  "允许它自己发帖": "Let it post on its own",
+  "授权里会写上这一条。欢迎新居民和周报写好就直接发，不超过每天的条数；回答问题默认仍然等你确认，可以在设置里改。":
+    "The grant will say so. Welcomes and the weekly digest go out as soon as they're written, within the daily limit. Answers to questions still wait for you unless you change it in settings.",
+  "哪些不用等你确认，写好就发": "What goes out without waiting for you",
+  "一天最多发授权里写的条数，超出的照样写成草稿等你。": "It posts at most the daily limit in the grant. Anything over that waits as a draft.",
+  "你的街区 {place} 的 agent 自己发了帖子": "The agent for your district {place} posted on its own",
 };

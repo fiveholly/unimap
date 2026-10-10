@@ -279,7 +279,7 @@ export type FeedItem = { type: "post"; time: number; post: Post } | { type: "eve
 /** The owner's view of what their wallet holds and what the district shows. */
 export type Showcase = { chosen: PetKey[]; held: Pet[]; wallets?: number; checked_at: string | null; error: string | null; shown: Pet[] };
 
-export type NotificationKind = "reply" | "like" | "post" | "follow" | "apply" | "tip" | "treasure" | "lucky" | "crown" | "event_win" | "sold" | "offer" | "offer_accepted" | "agent_draft" | "agent_alert";
+export type NotificationKind = "reply" | "like" | "post" | "follow" | "apply" | "tip" | "treasure" | "lucky" | "crown" | "event_win" | "sold" | "offer" | "offer_accepted" | "agent_draft" | "agent_posted" | "agent_alert";
 export type Notification = {
   id: number;
   kind: NotificationKind;
@@ -363,12 +363,14 @@ export type Agent = {
   paid_until: string | null;
   persona: string;
   tasks: AgentTask[];
+  may_publish: boolean; // the signed grant lets it post without asking
+  auto_tasks: AgentTask[]; // the tasks it posts on its own
   watch: { radius?: number; max_price_sats?: number };
   memory: string[];
   problem: AgentProblem | null;
   last_run_at: string | null;
   running: boolean;
-  last: { at: string; drafts: number; error: string | null } | null;
+  last: { at: string; drafts: number; posted?: number; error: string | null } | null;
 };
 export type AgentDraft = {
   id: number;
@@ -380,6 +382,7 @@ export type AgentDraft = {
   post_id: number | null;
   created_at: string;
   decided_at: string | null;
+  auto?: boolean; // it posted this without the owner looking first
 };
 export type AgentBriefing =
   | { kind: "applications"; count: number }

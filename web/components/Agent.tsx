@@ -80,6 +80,11 @@ export function AgentPanel({ n, token }: { n: number; token: string }) {
             {t("授权到 {date} · 今天发了 {x}/{y} 条", { date: date(a.expires_at), x: a.posted_today, y: a.posts_per_day })}
             {a.last && ` · ${t("上次查看 {ago}", { ago: timeAgo(Date.parse(a.last.at) / 1000) })}`}
           </p>
+          <p className="small">
+            {a.may_publish && a.auto_tasks.length > 0
+              ? t("自己发：{tasks}。其他的写成草稿等你确认。", { tasks: a.auto_tasks.map((k) => t(TASK_NAMES[k])).join(t("、")) })
+              : t("只写草稿，每条都等你确认。")}
+          </p>
           {a.problem && <p className="callout small">{t(PROBLEMS[a.problem])}</p>}
           {info.price_sats > 0 && (
             <p className="small">
@@ -147,10 +152,11 @@ export function AgentPanel({ n, token }: { n: number; token: string }) {
           {view.recent.length > 0 && (
             <details className="agent-recent">
               <summary className="small muted">{t("最近处理过的 {n} 条", { n: view.recent.length })}</summary>
+              {view.recent.some((d) => d.auto) && <p className="muted small">{t("它自己发的帖子，你在帖子上随时可以删掉。")}</p>}
               <ul>
                 {view.recent.map((d) => (
                   <li key={d.id} className="small">
-                    <span className="tag">{d.status === "posted" ? t("已发出") : d.status === "discarded" ? t("丢掉了") : t("过期了")}</span>{" "}
+                    <span className="tag">{d.status === "posted" ? (d.auto ? t("自己发的") : t("已发出")) : d.status === "discarded" ? t("丢掉了") : t("过期了")}</span>{" "}
                     {d.post_id ? <Link href={`/post/${d.post_id}`}>{d.body.slice(0, 60)}</Link> : <span className="muted">{d.body.slice(0, 60)}</span>}
                   </li>
                 ))}
@@ -200,13 +206,14 @@ function AgentSetup({ n, token, info, current, onDone, onCancel }: { n: number; 
   const { sign } = useSession();
   const [perDay, setPerDay] = useState(current?.posts_per_day ?? 3);
   const [days, setDays] = useState(30);
+  const [mayPublish, setMayPublish] = useState(current?.may_publish ?? false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const go = async () => {
     setError(null);
     setBusy(true);
     try {
-      const g = await api<{ id: number; message: string }>(`/v1/districts/${n}/agent/prepare`, { method: "POST", token, body: { posts_per_day: perDay, days } });
+      const g = await api<{ id: number; message: string }>(`/v1/districts/${n}/agent/prepare`, { method: "POST", token, body: { posts_per_day: perDay, days, may_publish: mayPublish } });
       const signature = await sign(g.message);
       await api(`/v1/districts/${n}/agent`, { method: "POST", token, body: { id: g.id, signature } });
       onDone();
@@ -224,7 +231,7 @@ function AgentSetup({ n, token, info, current, onDone, onCancel }: { n: number; 
         <>
           <p className="small">{t("它帮你打理这个街区：欢迎新居民、每周写一份周报、回答大家的问题，还能帮你盯着附近的挂单。")}</p>
           <ul className="small agent-points">
-            <li>{t("它只写草稿，每一条都要你点确认才会发出去，发出的帖子标着「agent 代发」。")}</li>
+            <li>{t("默认它只写草稿，每一条都要你点确认才会发出去。发出的帖子都标着「agent 代发」。")}</li>
             <li>{t("你的钱包签一份授权，写明它能在这里做什么、每天最多几条、什么时候到期。它有自己的密钥，只能签帖子，拿不到你的钱包，也动不了任何资产。")}</li>
             <li>{t("随时可以撤销。街区卖掉以后，授权自动失效。")}</li>
             {info.price_sats > 0 && <li>{t("开通后每 {days} 天付 {sats} 聪，覆盖模型的费用。", { days: info.days, sats: info.price_sats.toLocaleString("en-US") })}</li>}
@@ -253,6 +260,13 @@ function AgentSetup({ n, token, info, current, onDone, onCancel }: { n: number; 
           </select>
         </label>
       </div>
+      <label className="check small">
+        <input type="checkbox" checked={mayPublish} onChange={(e) => setMayPublish(e.target.checked)} />
+        <span>
+          <b>{t("允许它自己发帖")}</b>{" "}
+          <span className="muted">{t("授权里会写上这一条。欢迎新居民和周报写好就直接发，不超过每天的条数；回答问题默认仍然等你确认，可以在设置里改。")}</span>
+        </span>
+      </label>
       {error && <p className="error small">{error}</p>}
       <div className="row end">
         {onCancel && (
@@ -271,6 +285,7 @@ function AgentSetup({ n, token, info, current, onDone, onCancel }: { n: number; 
 function AgentSettings({ n, token, agent, onSaved }: { n: number; token: string; agent: Agent; onSaved: (v: AgentView) => void }) {
   const [persona, setPersona] = useState(agent.persona);
   const [tasks, setTasks] = useState<AgentTask[]>(agent.tasks);
+  const [auto, setAuto] = useState<AgentTask[]>(agent.auto_tasks);
   const [radius, setRadius] = useState(String(agent.watch.radius ?? ""));
   const [price, setPrice] = useState(String(agent.watch.max_price_sats ?? ""));
   const [memory, setMemory] = useState(agent.memory);
@@ -284,7 +299,7 @@ function AgentSettings({ n, token, agent, onSaved }: { n: number; token: string;
         await api<AgentView>(`/v1/districts/${n}/agent/settings`, {
           method: "PUT",
           token,
-          body: { persona, tasks, memory, watch: { radius: Math.min(100, Number(radius) || 0), max_price_sats: Number(price) || 0 } },
+          body: { persona, tasks, memory, ...(agent.may_publish ? { auto_tasks: auto } : {}), watch: { radius: Math.min(100, Number(radius) || 0), max_price_sats: Number(price) || 0 } },
         }),
       );
     } catch (e) {
@@ -306,6 +321,20 @@ function AgentSettings({ n, token, agent, onSaved }: { n: number; token: string;
           </label>
         ))}
       </fieldset>
+      {agent.may_publish && (
+        <fieldset>
+          <legend className="small">{t("哪些不用等你确认，写好就发")}</legend>
+          {(Object.keys(TASK_NAMES) as AgentTask[]).map((k) => (
+            <label key={k} className="check small">
+              <input type="checkbox" checked={auto.includes(k)} disabled={!tasks.includes(k)} onChange={(e) => setAuto(e.target.checked ? [...auto, k] : auto.filter((x) => x !== k))} />
+              <span>
+                <b>{t(TASK_NAMES[k])}</b>
+              </span>
+            </label>
+          ))}
+          <p className="muted small">{t("一天最多发授权里写的条数，超出的照样写成草稿等你。")}</p>
+        </fieldset>
+      )}
       <label className="small">
         {t("人设：告诉它怎么说话、这条街有什么讲究")}
         <textarea rows={3} maxLength={1000} value={persona} onChange={(e) => setPersona(e.target.value)} placeholder={t("比如：语气轻松一点，叫居民「邻居」，别用感叹号。")} />
