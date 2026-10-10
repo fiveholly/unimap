@@ -1568,6 +1568,39 @@ class SocialApi(unittest.TestCase):
             g3 = post(ALICE, f"/v1/districts/{DISTRICT}/agent/prepare", {}).json()
             v = post(ALICE, f"/v1/districts/{DISTRICT}/agent", {"id": g3["id"], "signature": ALICE.sign(g3["message"])}).json()["agent"]
             self.assertEqual((v["problem"], v["persona"]), (None, "叫我们的街「百号街」。"))
+            self.assertEqual((v["may_publish"], v["auto_tasks"]), (False, []))
+
+            # A grant that lets it post on its own: the picked tasks go out at once, within the day's limit; the rest wait.
+            g4 = post(ALICE, f"/v1/districts/{DISTRICT}/agent/prepare", {"posts_per_day": 1, "may_publish": True}).json()
+            self.assertIn("publish them on its own, up to the posts per day below", g4["message"])
+            v = post(ALICE, f"/v1/districts/{DISTRICT}/agent", {"id": g4["id"], "signature": ALICE.sign(g4["message"])}).json()["agent"]
+            self.assertEqual((v["may_publish"], v["auto_tasks"]), (True, ["welcome", "digest"]))
+            with self.conn.cursor() as cur:
+                cur.execute("insert into land_events (block_height, block_time, kind, inscription_id, bitmap_number, tx_index, to_address) "
+                            "values (1001, extract(epoch from now())::int8, 'parcel_claimed', 'p9i0', %s, 10, %s);", (DISTRICT, BOB.address))
+            agent.model = fake = FakeModel([[("draft_post", {"task": "welcome", "body": "欢迎 Bob！", "why": "new resident"}),
+                                             ("draft_post", {"task": "welcome", "body": "再欢迎一次", "why": "one over the limit"})]])
+            out = agent.run(g4["id"])
+            self.assertEqual((out["posted"], out["drafts"], out["error"]), (1, 1, None))
+            self.assertIn("go out as soon as you write them", fake.seen[0][0])
+            v = view().json()
+            self.assertEqual([d["body"] for d in v["drafts"]], ["再欢迎一次"])  # over the limit: the owner decides
+            auto = [d for d in v["recent"] if d["auto"]]
+            self.assertEqual([d["body"] for d in auto], ["欢迎 Bob！"])
+            posted = self.client.get(f"/v1/posts/{auto[0]['post_id']}").json()
+            self.assertEqual((posted["author"]["address"], posted["agent"]["grant_id"]), (ALICE.address, g4["id"]))
+            kinds = [x["kind"] for x in self.client.get("/v1/notifications", headers=self.h(ALICE)).json()["notifications"]]
+            self.assertIn("agent_posted", kinds)
+            # The owner can narrow what it posts by itself; a grant that doesn't allow it never posts.
+            r = self.client.put(f"/v1/districts/{DISTRICT}/agent/settings", json={"persona": v["agent"]["persona"], "auto_tasks": ["digest", "bogus"]},
+                                headers=self.h(ALICE))
+            self.assertEqual(r.status_code, 400)
+            r = self.client.put(f"/v1/districts/{DISTRICT}/agent/settings", json={"persona": v["agent"]["persona"], "auto_tasks": ["digest"]},
+                                headers=self.h(ALICE))
+            self.assertEqual(r.json()["agent"]["auto_tasks"], ["digest"])
+            with self.conn.cursor() as cur:
+                cur.execute("update social.agents set may_publish = false where id = %s;", (g4["id"],))
+            self.assertEqual(view().json()["agent"]["auto_tasks"], [])
             self.client.delete(f"/v1/districts/{DISTRICT}/agent", headers=self.h(ALICE))
             # Its posts stay, still checkable against the old grant.
             self.assertEqual(self.client.get(f"/v1/posts/{p['id']}").json()["agent"]["grant_id"], me["id"])

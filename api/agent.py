@@ -1,7 +1,9 @@
 """街区 agent: a helper a district's owner can switch on to look after the district. It welcomes
 new residents, writes a weekly digest and drafts answers to questions people ask there, and it
-can watch nearby listings for the owner. It only drafts: every post waits for the owner to
-approve it, and goes out marked as the agent's.
+can watch nearby listings for the owner. By default it only drafts: every post waits for the
+owner to approve it. If the grant the owner signed says it may publish on its own, it posts the
+drafts of the tasks the owner picked straight away, within the grant's posts per day, and the
+rest still wait. Either way a post goes out marked as the agent's.
 
 The owner grants it with a wallet signature over grant_message(...): which district, the
 agent's own key, what it may do, how many posts a day, and until when. unimap makes that key
@@ -38,6 +40,7 @@ router = APIRouter()
 log = logging.getLogger("unimap.agent")
 
 TASKS = ("welcome", "digest", "answers")
+AUTO_DEFAULT = ("welcome", "digest")  # answering people is left to the owner unless they say otherwise
 MAX_DAYS = 90  # a grant lasts at most this long; the owner signs again after
 MAX_PER_DAY = 10
 MAX_PERSONA = 1000
@@ -74,14 +77,16 @@ def config():
 # --- what is signed ---------------------------------------------------------------------------
 
 
-def grant_message(bitmap_number, agent_key, posts_per_day, expires_at, issued):
+def grant_message(bitmap_number, agent_key, posts_per_day, expires_at, issued, may_publish=False):
     """The exact text the owner's wallet signs to switch the agent on."""
     return "\n".join(
         [
             "unimap agent grant",
             f"district: {bitmap_number}.bitmap",
             f"agent key: {agent_key}",
-            "may: draft posts and replies here; publish the ones I approve",
+            "may: draft posts and replies here; publish them on its own, up to the posts per day below"
+            if may_publish
+            else "may: draft posts and replies here; publish the ones I approve",
             f"posts per day: {posts_per_day}",
             f"expires: {expires_at.strftime('%Y-%m-%dT%H:%M:%SZ')}",
             f"issued: {issued}",
@@ -103,7 +108,7 @@ def sign_post(secret_hex, message):
 
 COLUMNS = (
     "id, bitmap_number, owner, agent_key, agent_secret, posts_per_day, expires_at, persona, tasks, watch, memory, "
-    "state, paid_until, granted_at, last_run_at"
+    "state, paid_until, granted_at, last_run_at, may_publish, auto_tasks"
 )
 FIELDS = [c.strip() for c in COLUMNS.split(",")]
 
@@ -144,11 +149,11 @@ def _owned(cur, bitmap_number, address):
 
 def _drafts(cur, agent_id, pending):
     cur.execute(
-        "select id, reply_to, body, why, task, status, post_id, created_at, decided_at from social.agent_drafts "
+        "select id, reply_to, body, why, task, status, post_id, created_at, decided_at, auto from social.agent_drafts "
         "where agent_id = %s and " + ("status = 'pending' order by id" if pending else "status <> 'pending' order by id desc limit 10") + ";",
         (agent_id,),
     )
-    keys = ("id", "reply_to", "body", "why", "task", "status", "post_id", "created_at", "decided_at")
+    keys = ("id", "reply_to", "body", "why", "task", "status", "post_id", "created_at", "decided_at", "auto")
     out = []
     for r in cur.fetchall():
         d = dict(zip(keys, r.values() if isinstance(r, dict) else r))
@@ -197,6 +202,8 @@ def _view(cur, a):
         "paid_until": a["paid_until"] and a["paid_until"].isoformat(),
         "persona": a["persona"],
         "tasks": a["tasks"],
+        "may_publish": a["may_publish"],
+        "auto_tasks": a["auto_tasks"] if a["may_publish"] else [],
         "watch": a["watch"],
         "memory": a["memory"],
         "problem": problem(cur, a),
@@ -232,6 +239,7 @@ def district_agent(bitmap_number: int, address: str = Depends(current_address)):
 class GrantTerms(BaseModel):
     posts_per_day: int = Field(default=3, ge=1, le=MAX_PER_DAY)
     days: int = Field(default=30, ge=1, le=MAX_DAYS)
+    may_publish: bool = False  # let it post on its own, within posts_per_day
 
 
 @router.post("/v1/districts/{bitmap_number}/agent/prepare")
@@ -242,14 +250,14 @@ def prepare(bitmap_number: int, req: GrantTerms, address: str = Depends(current_
     key = PrivateKey()
     agent_key = key.public_key.format(compressed=True)[1:].hex()
     expires_at = (_now() + timedelta(days=req.days)).replace(microsecond=0)
-    message = grant_message(bitmap_number, agent_key, req.posts_per_day, expires_at, int(time.time()))
+    message = grant_message(bitmap_number, agent_key, req.posts_per_day, expires_at, int(time.time()), req.may_publish)
     with cursor() as cur:
         roles.require_owner(cur, bitmap_number, address)
         cur.execute("delete from social.agents where grant_signature is null and created_at < now() - %s;", (PENDING_GRANT,))
         cur.execute(
-            "insert into social.agents (bitmap_number, owner, agent_key, agent_secret, grant_message, posts_per_day, expires_at) "
-            "values (%s, %s, %s, %s, %s, %s, %s) returning id;",
-            (bitmap_number, address, agent_key, key.secret.hex(), message, req.posts_per_day, expires_at),
+            "insert into social.agents (bitmap_number, owner, agent_key, agent_secret, grant_message, posts_per_day, expires_at, may_publish) "
+            "values (%s, %s, %s, %s, %s, %s, %s, %s) returning id;",
+            (bitmap_number, address, agent_key, key.secret.hex(), message, req.posts_per_day, expires_at, req.may_publish),
         )
         return {"id": cur.fetchone()[0], "message": message}
 
@@ -289,12 +297,13 @@ def grant(bitmap_number: int, req: Grant, address: str = Depends(current_address
         )
         live = {r[0] for r in cur.fetchall()}
         cur.execute(
-            "select id, persona, tasks, watch, memory, state, paid_until from social.agents where bitmap_number = %s "
+            "select id, persona, tasks, watch, memory, state, paid_until, auto_tasks from social.agents where bitmap_number = %s "
             "and owner = %s and grant_signature is not null and id <> %s order by id desc limit 1;",
             (bitmap_number, address, req.id),
         )
         old = cur.fetchone()
-        persona, tasks_, watch, memory, state, paid_until = old[1:] if old else ("", list(TASKS), {}, [], {}, None)
+        persona, tasks_, watch, memory, state, paid_until, auto = old[1:] if old else ("", list(TASKS), {}, [], {}, None, list(AUTO_DEFAULT))
+        auto = auto or list(AUTO_DEFAULT)
         if old and old[0] in live:
             state = {k: v for k, v in state.items() if k != "last"}
         else:
@@ -304,8 +313,8 @@ def grant(bitmap_number: int, req: Grant, address: str = Depends(current_address
             state = {"event": event, "post": cur.fetchone()[0], **({"digest_at": state["digest_at"]} if "digest_at" in state else {})}
         cur.execute(
             "update social.agents set grant_signature = %s, granted_at = now(), persona = %s, tasks = %s, watch = %s, "
-            "memory = %s, state = %s, paid_until = %s where id = %s;",
-            (req.signature, persona, tasks_, Json(watch), Json(memory), Json(state), paid_until, req.id),
+            "memory = %s, state = %s, paid_until = %s, auto_tasks = %s where id = %s;",
+            (req.signature, persona, tasks_, Json(watch), Json(memory), Json(state), paid_until, auto, req.id),
         )
         cur.execute("update social.agent_drafts set status = 'expired', decided_at = now() where bitmap_number = %s "
                     "and status = 'pending' and agent_id <> %s;", (bitmap_number, req.id))
@@ -322,18 +331,20 @@ class Settings(BaseModel):
     tasks: list[str] = Field(default_factory=lambda: list(TASKS))
     watch: Watch = Field(default_factory=Watch)
     memory: list[str] | None = None  # the owner may prune the agent's notes
+    auto_tasks: list[str] | None = None  # tasks it posts on its own, under a grant that allows it
 
 
 @router.put("/v1/districts/{bitmap_number}/agent/settings")
 def settings(bitmap_number: int, req: Settings, address: str = Depends(current_address)):
-    if any(t not in TASKS for t in req.tasks):
+    if any(t not in TASKS for t in req.tasks + (req.auto_tasks or [])):
         raise HTTPException(400, f"tasks are {', '.join(TASKS)}")
     with cursor() as cur:
         a = _owned(cur, bitmap_number, address)
         memory = a["memory"] if req.memory is None else [m for m in a["memory"] if m in req.memory]
+        auto = a["auto_tasks"] if req.auto_tasks is None else [t for t in TASKS if t in req.auto_tasks]
         cur.execute(
-            "update social.agents set persona = %s, tasks = %s, watch = %s, memory = %s where id = %s;",
-            (req.persona.strip(), [t for t in TASKS if t in req.tasks], Json(req.watch.model_dump()), Json(memory), a["id"]),
+            "update social.agents set persona = %s, tasks = %s, watch = %s, memory = %s, auto_tasks = %s where id = %s;",
+            (req.persona.strip(), [t for t in TASKS if t in req.tasks], Json(req.watch.model_dump()), Json(memory), auto, a["id"]),
         )
     return district_agent(bitmap_number, address)
 
@@ -419,35 +430,42 @@ def publish(draft_id: int, req: Publish, address: str = Depends(current_address)
             raise HTTPException(400, "the post is empty")
         if "\r" in body:
             raise HTTPException(400, "use \\n line breaks")
-        parent = None
-        if reply_to is not None:
-            cur.execute("select bitmap_number, reply_to, removed_at, author_address from social.posts where id = %s;", (reply_to,))
-            parent = cur.fetchone()
-            if parent is None or parent[2] is not None or parent[0] != n or parent[1] is not None:
-                raise HTTPException(409, "the post it answers is gone")
-        cur.execute("select count(*) from social.posts where agent_id = %s and created_at > now() - interval '1 day';", (a["id"],))
-        if cur.fetchone()[0] >= a["posts_per_day"]:
-            raise HTTPException(429, f"the grant allows {a['posts_per_day']} agent posts a day")
-        signed_at = int(time.time())
-        message = agent_post_message(a["id"], a["agent_key"], social.post_message(n, reply_to, None, signed_at, [], body))
-        cur.execute(
-            "insert into social.posts (bitmap_number, author_address, author_role, reply_to, body, media, signed_message, "
-            "signature, agent_id) values (%s, %s, %s, %s, %s, '[]', %s, %s, %s) returning id;",
-            (n, address, roles.OWNER, reply_to, body, message, sign_post(a["agent_secret"], message), a["id"]),
-        )
-        post_id = cur.fetchone()[0]
-        cur.execute("update social.agent_drafts set status = 'posted', post_id = %s, body = %s, decided_at = now() where id = %s;",
-                    (post_id, body, draft_id))
-        if parent is not None:
-            # The thread's author, and whoever spoke in it since the owner last did: the agent is answering them.
-            cur.execute(
-                "select distinct author_address from social.posts where reply_to = %s and id < %s and removed_at is null "
-                "and id > coalesce((select max(id) from social.posts where reply_to = %s and author_address = %s and id < %s), 0);",
-                (reply_to, post_id, reply_to, address, post_id),
-            )
-            for who in {parent[3], *(r[0] for r in cur.fetchall())}:
-                notify.notify(cur, who, "reply", address, n, post_id)
+        post_id = _post(cur, a, draft_id, reply_to, body)
         return social._fetch_posts(dcur, "p.id = %(id)s", {"id": post_id}, address, 1)[0]
+
+
+def _post(cur, a, draft_id, reply_to, body, auto=False):
+    """Publish a draft as the agent's post, signed with its key, within the grant's posts per day. The new post's id."""
+    n, owner = a["bitmap_number"], a["owner"]
+    parent = None
+    if reply_to is not None:
+        cur.execute("select bitmap_number, reply_to, removed_at, author_address from social.posts where id = %s;", (reply_to,))
+        parent = cur.fetchone()
+        if parent is None or parent[2] is not None or parent[0] != n or parent[1] is not None:
+            raise HTTPException(409, "the post it answers is gone")
+    cur.execute("select count(*) from social.posts where agent_id = %s and created_at > now() - interval '1 day';", (a["id"],))
+    if cur.fetchone()[0] >= a["posts_per_day"]:
+        raise HTTPException(429, f"the grant allows {a['posts_per_day']} agent posts a day")
+    signed_at = int(time.time())
+    message = agent_post_message(a["id"], a["agent_key"], social.post_message(n, reply_to, None, signed_at, [], body))
+    cur.execute(
+        "insert into social.posts (bitmap_number, author_address, author_role, reply_to, body, media, signed_message, "
+        "signature, agent_id) values (%s, %s, %s, %s, %s, '[]', %s, %s, %s) returning id;",
+        (n, owner, roles.OWNER, reply_to, body, message, sign_post(a["agent_secret"], message), a["id"]),
+    )
+    post_id = cur.fetchone()[0]
+    cur.execute("update social.agent_drafts set status = 'posted', post_id = %s, body = %s, decided_at = now(), auto = %s where id = %s;",
+                (post_id, body, auto, draft_id))
+    if parent is not None:
+        # The thread's author, and whoever spoke in it since the owner last did: the agent is answering them.
+        cur.execute(
+            "select distinct author_address from social.posts where reply_to = %s and id < %s and removed_at is null "
+            "and id > coalesce((select max(id) from social.posts where reply_to = %s and author_address = %s and id < %s), 0);",
+            (reply_to, post_id, reply_to, owner, post_id),
+        )
+        for who in {parent[3], *(r[0] for r in cur.fetchall())}:
+            notify.notify(cur, who, "reply", owner, n, post_id)
+    return post_id
 
 
 @router.delete("/v1/agent/drafts/{draft_id}")
@@ -683,14 +701,22 @@ class Toolbox:
         return {"ok": True}
 
 
+def _how_it_goes_out(a):
+    auto = [t for t in a["auto_tasks"] if t in a["tasks"]] if a["may_publish"] else []
+    if not auto:
+        return "You only write drafts. The owner reads each one and decides whether to post it."
+    return (f"Drafts for {', '.join(auto)} go out as soon as you write them, without the owner looking first; "
+            "any others wait for the owner to decide.")
+
+
 def system_prompt(a):
     notes = "\n".join(f"- {m}" for m in a["memory"]) or "(none yet)"
     return f"""You are the agent of {a['bitmap_number']}.bitmap, a district in unimap: a city on Bitcoin where every block is a \
 district held as a Bitmap inscription, the people holding its parcels are its residents, and anyone can visit, follow, \
 check in and reply. You work for the district's owner ({_short(a['owner'])}).
 
-You only write drafts. The owner reads each one and decides whether to post it; if they do, it appears under the owner's \
-name marked "posted by the agent". So write what the owner would be glad to sign:
+{_how_it_goes_out(a)} It appears under the owner's name marked "posted by the agent". So write what the owner would be \
+glad to sign:
 - Short, warm and concrete, like a good neighbour. Facts come from the tools, never from guesses.
 - No hype, no price predictions, nothing that reads as financial advice.
 - Never promise anything on the owner's behalf (sats, prizes, parcels, decisions), and never ask anyone for keys, seed \
@@ -781,7 +807,7 @@ def run(agent_id, gap=RUN_EVERY):
     a = _claim(agent_id, gap)
     if a is None:
         return None
-    result = {"at": None, "drafts": 0, "error": None}
+    result = {"at": None, "drafts": 0, "posted": 0, "error": None}
     with cursor() as cur:
         why = problem(cur, a)
         _expire_drafts(cur, a["id"])
@@ -802,15 +828,28 @@ def run(agent_id, gap=RUN_EVERY):
             result["error"] = "model"
             cursors = {}  # look again next time
         if result["error"] is None:
+            posted, waiting = [], 0
             with cursor() as cur:
                 for d in box.drafts:
                     cur.execute("insert into social.agent_drafts (agent_id, bitmap_number, reply_to, body, why, task) "
-                                "values (%s, %s, %s, %s, %s, %s);", (a["id"], a["bitmap_number"], d["reply_to"], d["body"], d["why"], d["task"]))
-                if box.drafts:
+                                "values (%s, %s, %s, %s, %s, %s) returning id;", (a["id"], a["bitmap_number"], d["reply_to"], d["body"], d["why"], d["task"]))
+                    draft_id = cur.fetchone()[0]
+                    if a["may_publish"] and d["task"] in a["auto_tasks"]:
+                        try:
+                            cur.execute("savepoint auto_post;")
+                            posted.append(_post(cur, a, draft_id, d["reply_to"], d["body"], auto=True))
+                            continue
+                        except HTTPException:  # over the day's limit, or the post it answers is gone: the owner decides
+                            cur.execute("rollback to savepoint auto_post;")
+                    waiting += 1
+                if waiting:
                     notify.notify(cur, a["owner"], "agent_draft", a["agent_key"], a["bitmap_number"], block_height=game.top(cur))
+                if posted:
+                    notify.notify(cur, a["owner"], "agent_posted", a["agent_key"], a["bitmap_number"], post_id=posted[0])
                 if box.notes:
                     cur.execute("update social.agents set memory = %s where id = %s;", (Json((a["memory"] + box.notes)[-MAX_NOTES:]), a["id"]))
-            result["drafts"] = len(box.drafts)
+            result["drafts"] = waiting
+            result["posted"] = len(posted)
             if "digest" in due:
                 state["digest_at"] = _now().isoformat()
     state.update(cursors)

@@ -495,6 +495,10 @@ CREATE TABLE IF NOT EXISTS social.agent_drafts (
 	CONSTRAINT agent_drafts_pk PRIMARY KEY (id)
 );
 CREATE INDEX IF NOT EXISTS agent_drafts_agent_idx ON social.agent_drafts USING btree (agent_id, id);
+-- Posting on its own: only under a grant that says so, and only for the tasks the owner picked.
+ALTER TABLE social.agents ADD COLUMN IF NOT EXISTS may_publish bool NOT NULL DEFAULT false; -- the signed grant lets it post without asking
+ALTER TABLE social.agents ADD COLUMN IF NOT EXISTS auto_tasks text[] NOT NULL DEFAULT '{}'; -- tasks whose drafts it posts itself
+ALTER TABLE social.agent_drafts ADD COLUMN IF NOT EXISTS auto bool NOT NULL DEFAULT false; -- posted by the agent without the owner looking first
 CREATE TABLE IF NOT EXISTS social.agent_payments (
 	id bigserial NOT NULL,
 	agent_id int8 NOT NULL,

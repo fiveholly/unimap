@@ -870,8 +870,23 @@ type Opts = { method?: string; body?: unknown; token?: string | null };
 
 // 街区 agent: one already working on the visitor's 840000, with a digest it posted and two drafts waiting.
 const AGENT_KEY = "7c3f9a1e5b2d8c4f6a0e9d3b1c7f5a2e8d4b6c0a9f3e1d7b5c2a8f4e6d0b9c3a";
-const agentGrant = (n: number, key: string, perDay: number, expires: string) =>
-  `unimap agent grant\ndistrict: ${n}.bitmap\nagent key: ${key}\nmay: draft posts and replies here; publish the ones I approve\nposts per day: ${perDay}\nexpires: ${expires.slice(0, 19)}Z\nissued: ${Math.floor(Date.now() / 1000)}`;
+const agentGrant = (n: number, key: string, perDay: number, expires: string, mayPublish = false) =>
+  `unimap agent grant\ndistrict: ${n}.bitmap\nagent key: ${key}\nmay: draft posts and replies here; ${mayPublish ? "publish them on its own, up to the posts per day below" : "publish the ones I approve"}\nposts per day: ${perDay}\nexpires: ${expires.slice(0, 19)}Z\nissued: ${Math.floor(Date.now() / 1000)}`;
+/** The agent's post of draft d, as the demo's agent key would sign it. */
+function agentPost(s: State, live: DemoAgent, d: AgentDraft, text: string, owner: string, auto = false): Post {
+  const now = new Date().toISOString();
+  const signed = `unimap agent post\ngrant: ${live.id}\nagent key: ${live.key}\n\nunimap post\ndistrict: ${live.n}.bitmap\nreply-to: ${d.reply_to ?? "none"}\nas: none\n\n${text}`;
+  const post: Post = { id: s.nextId++, bitmap_number: live.n, reply_to: d.reply_to, body: text, media: [], author: { address: owner, role: "owner", parcel: null, as_bitmap: null },
+    signed_message: signed, signature: sha256(signed) + sha256(text), created_at: now, removed: false, like_count: 0, reply_count: 0, liked_by_me: false,
+    agent: { grant_id: live.id, key: live.key } };
+  s.posts.push(post);
+  if (d.reply_to != null) {
+    const parent = s.posts.find((x) => x.id === d.reply_to);
+    if (parent) parent.reply_count++;
+  }
+  Object.assign(d, { status: "posted", post_id: post.id, body: text, decided_at: now, auto });
+  return post;
+}
 function seedAgent(s: State) {
   const n = 840000, expires = iso(-24);
   const find = (start: string) => s.posts.find((p) => p.bitmap_number === n && p.reply_to == null && p.body?.startsWith(start));
@@ -883,7 +898,7 @@ function seedAgent(s: State) {
   const mondrian = find("今天把 #3");
   s.agents = [{
     id: 1, n, key: AGENT_KEY, message: agentGrant(n, AGENT_KEY, 3, expires), posts_per_day: 3, expires_at: expires, granted_at: iso(6), paid_until: iso(-24),
-    persona: "语气轻松一点，叫居民「邻居」。", tasks: ["welcome", "digest", "answers"], watch: { radius: 20, max_price_sats: 10_000_000 },
+    persona: "语气轻松一点，叫居民「邻居」。", tasks: ["welcome", "digest", "answers"], may_publish: false, auto_tasks: [], watch: { radius: 20, max_price_sats: 10_000_000 },
     memory: ["主人喜欢简短的帖子", "#3 号地块的邻居经常换头像"], last_run_at: iso(0.03), last: { at: iso(0.03), drafts: 2, error: null },
     drafts: [
       { id: 1, reply_to: null, body: "欢迎新邻居 bc1q7m…x2k4 搬进地块 #42！有什么想问的，在这里发帖就好。", why: "地块 #42 刚被认领", task: "welcome", status: "pending", post_id: null, created_at: iso(0.03), decided_at: null },
@@ -898,7 +913,7 @@ function agentView(a: DemoAgent, s: State): AgentView {
   const problem = Date.parse(a.expires_at) < Date.now() ? "expired" : a.paid_until && Date.parse(a.paid_until) < Date.now() ? "unpaid" : null;
   const { n: _n, message: _m, revoked: _r, drafts, ...rest } = a;
   const briefing: AgentView["briefing"] = (s.applications?.[a.n]?.length ?? 0) > 0 ? [{ kind: "applications", count: s.applications![a.n].length }] : [];
-  return { agent: { ...rest, posted_today: today, running: false, problem }, drafts: drafts.filter((d) => d.status === "pending"),
+  return { agent: { ...rest, may_publish: rest.may_publish ?? false, auto_tasks: rest.may_publish ? rest.auto_tasks ?? [] : [], posted_today: today, running: false, problem }, drafts: drafts.filter((d) => d.status === "pending"),
     recent: drafts.filter((d) => d.status !== "pending").sort((x, y) => y.id - x.id), briefing };
 }
 
@@ -1225,7 +1240,9 @@ function route(path: string, opts: Opts): unknown {
       const days = Number(body.days ?? 30), perDay = Number(body.posts_per_day ?? 3);
       const id = Math.max(0, ...s.agents!.map((x) => x.id)) + 1;
       const expires = new Date(Date.now() + days * DAY * 1000).toISOString();
-      s.agents!.push({ id, n, key, message: agentGrant(n, key, perDay, expires), posts_per_day: perDay, expires_at: expires, granted_at: "", paid_until: null, persona: "", tasks: ["welcome", "digest", "answers"],
+      const mayPublish = !!body.may_publish;
+      s.agents!.push({ id, n, key, message: agentGrant(n, key, perDay, expires, mayPublish), posts_per_day: perDay, expires_at: expires, granted_at: "", paid_until: null, persona: "", tasks: ["welcome", "digest", "answers"],
+        may_publish: mayPublish, auto_tasks: ["welcome", "digest"],
         watch: {}, memory: [], last_run_at: null, last: null, drafts: [], revoked: true });
       save();
       return { id, message: s.agents!.find((x) => x.id === id)!.message };
@@ -1233,7 +1250,7 @@ function route(path: string, opts: Opts): unknown {
     if (sub === "" && method === "POST") {
       const g = s.agents!.find((x) => x.id === Number(body.id) && x.n === n && !x.granted_at) ?? fail(404, "no such grant waiting to be signed; start again");
       const last = live ?? s.agents!.filter((x) => x.n === n && x.granted_at && x.id !== g.id).sort((x, y) => y.id - x.id)[0];
-      if (last) Object.assign(g, { persona: last.persona, tasks: last.tasks, watch: last.watch, memory: last.memory, paid_until: last.paid_until });
+      if (last) Object.assign(g, { persona: last.persona, tasks: last.tasks, watch: last.watch, memory: last.memory, paid_until: last.paid_until, auto_tasks: last.auto_tasks?.length ? last.auto_tasks : g.auto_tasks });
       if (live) {
         live.revoked = true;
         live.drafts.forEach((d) => d.status === "pending" && (d.status = "expired"));
@@ -1257,16 +1274,24 @@ function route(path: string, opts: Opts): unknown {
     const ag = live ?? fail(404, "this district has no agent");
     if (sub === "/settings") {
       Object.assign(ag, { persona: String(body.persona ?? "").trim(), tasks: body.tasks as AgentTask[], watch: body.watch as Agent["watch"],
-        memory: body.memory ? ag.memory.filter((x) => (body.memory as string[]).includes(x)) : ag.memory });
+        memory: body.memory ? ag.memory.filter((x) => (body.memory as string[]).includes(x)) : ag.memory,
+        auto_tasks: body.auto_tasks ? (["welcome", "digest", "answers"] as AgentTask[]).filter((k) => (body.auto_tasks as string[]).includes(k)) : ag.auto_tasks });
       save();
       return agentView(ag, s);
     }
     if (sub === "/run") {
       if (ag.last_run_at && Date.now() - Date.parse(ag.last_run_at) < 10 * 60_000) fail(429, "it looked a few minutes ago; try again later");
       const id = Math.max(0, ...ag.drafts.map((d) => d.id)) + 1, now = new Date().toISOString();
-      ag.drafts.push({ id, reply_to: null, body: `这周 ${n} 街区很热闹：有新邻居搬进来，邻居们换了头像，也在聊区块里最大的那笔交易。欢迎大家周末来签到。`, why: "该写本周周报了",
-        task: "digest", status: "pending", post_id: null, created_at: now, decided_at: null });
-      Object.assign(ag, { last_run_at: now, last: { at: now, drafts: 1, error: null } });
+      const d: AgentDraft = { id, reply_to: null, body: `这周 ${n} 街区很热闹：有新邻居搬进来，邻居们换了头像，也在聊区块里最大的那笔交易。欢迎大家周末来签到。`, why: "该写本周周报了",
+        task: "digest", status: "pending", post_id: null, created_at: now, decided_at: null };
+      ag.drafts.push(d);
+      const auto = ag.may_publish && ag.auto_tasks?.includes("digest") && agentView(ag, s).agent!.posted_today < ag.posts_per_day;
+      if (auto) {
+        const post = agentPost(s, ag, d, d.body, a, true);
+        if (a === DEMO_ADDRESS) s.notifications = [{ id: Math.max(0, ...(s.notifications ?? []).map((x) => x.id)) + 1, kind: "agent_posted", actor: a, bitmap_number: n,
+          post_id: post.id, created_at: now, read: false, snippet: (post.body ?? "").slice(0, 80) }, ...(s.notifications ?? [])];
+      }
+      Object.assign(ag, { last_run_at: now, last: { at: now, drafts: auto ? 0 : 1, posted: auto ? 1 : 0, error: null } });
       save();
       return { running: true };
     }
@@ -1299,17 +1324,7 @@ function route(path: string, opts: Opts): unknown {
     }
     const view0 = agentView(live, s);
     if (view0.agent!.posted_today >= live.posts_per_day) fail(429, `the grant allows ${live.posts_per_day} agent posts a day`);
-    const text = String(body.body ?? d.body).trim();
-    const signed = `unimap agent post\ngrant: ${live.id}\nagent key: ${live.key}\n\nunimap post\ndistrict: ${live.n}.bitmap\nreply-to: ${d.reply_to ?? "none"}\nas: none\n\n${text}`;
-    const post: Post = { id: s.nextId++, bitmap_number: live.n, reply_to: d.reply_to, body: text, media: [], author: { address: a, role: "owner", parcel: null, as_bitmap: null },
-      signed_message: signed, signature: sha256(signed) + sha256(text), created_at: now, removed: false, like_count: 0, reply_count: 0, liked_by_me: false,
-      agent: { grant_id: live.id, key: live.key } };
-    s.posts.push(post);
-    if (d.reply_to != null) {
-      const parent = s.posts.find((x) => x.id === d.reply_to);
-      if (parent) parent.reply_count++;
-    }
-    Object.assign(d, { status: "posted", post_id: post.id, body: text, decided_at: now });
+    const post = agentPost(s, live, d, String(body.body ?? d.body).trim(), a);
     save();
     return view(post, a);
   }
