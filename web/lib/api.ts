@@ -95,7 +95,7 @@ export type Role = "owner" | "resident" | "visitor";
 export type Post = {
   id: number;
   bitmap_number: number;
-  author: { address: string; role: Role; parcel: number | null; as_bitmap: number | null; x?: string | null };
+  author: { address: string; role: Role; parcel: number | null; as_bitmap: number | null; x?: string | null; tippable?: boolean };
   reply_to: number | null;
   body: string | null;
   media: string[];
@@ -106,6 +106,7 @@ export type Post = {
   like_count: number;
   reply_count: number;
   liked_by_me: boolean;
+  tips_sats?: number; // confirmed Lightning tips, in sats
 };
 
 export type District = {
@@ -125,6 +126,17 @@ export type District = {
   park?: Park | null;
   recruit?: Recruit | null;
   pets?: Pet[];
+  tips?: { sats30: number; tippers30: number };
+  owner_tippable?: boolean; // the owner has a Lightning address for tips
+};
+
+/** POST /v1/tips and GET /v1/tips/{id}: an invoice from the recipient's wallet and whether it was paid. */
+export type Tip = { id: number; invoice?: string; amount_sats?: number; verifiable: boolean; status: "pending" | "settled" | "expired" };
+/** GET /v1/tips/top: 打赏榜. */
+export type TipTop = {
+  days: number;
+  posts: { post: Post; sats: number; tippers: number }[];
+  districts: { bitmap_number: number; name: string; zone: string | null; sats: number; tippers: number }[];
 };
 
 export type Park = { id: number; name: string; owner: string; members: number[]; score: number; level: number };
@@ -207,7 +219,7 @@ export type FeedItem = { type: "post"; time: number; post: Post } | { type: "eve
 /** The owner's view of what their wallet holds and what the district shows. */
 export type Showcase = { chosen: PetKey[]; held: Pet[]; wallets?: number; checked_at: string | null; error: string | null; shown: Pet[] };
 
-export type NotificationKind = "reply" | "like" | "post" | "follow" | "apply";
+export type NotificationKind = "reply" | "like" | "post" | "follow" | "apply" | "tip";
 export type Notification = {
   id: number;
   kind: NotificationKind;
@@ -217,4 +229,6 @@ export type Notification = {
   created_at: string;
   read: boolean;
   snippet: string | null;
+  amount_sats?: number; // tips
+  comment?: string;
 };

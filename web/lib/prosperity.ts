@@ -12,6 +12,7 @@ export type ProsperityParts = {
   followers: number;
   checkins30: number; // visitor check-ins, last 30 days
   neighbors30: number; // posts in the 5 districts on each side, last 30 days
+  tippers30: number; // people who tipped sats here, last 30 days
 };
 
 export type Prosperity = { score: number; level: Level; parts: ProsperityParts; next: number | null };
@@ -24,6 +25,7 @@ export const WEIGHTS: Record<keyof ProsperityParts, number> = {
   followers: 0.5,
   checkins30: 1,
   neighbors30: 0.3,
+  tippers30: 2,
 };
 export const PART_NAMES: Record<keyof ProsperityParts, string> = {
   residents: "居民",
@@ -32,6 +34,7 @@ export const PART_NAMES: Record<keyof ProsperityParts, string> = {
   followers: "关注",
   checkins30: "近 30 天签到",
   neighbors30: "邻居的热闹",
+  tippers30: "近 30 天打赏的人",
 };
 
 /** Score needed for each level; level 1 is where every district starts. */

@@ -17,6 +17,7 @@ import { RecruitCard } from "@/components/Recruit";
 import { ShareMenu } from "@/components/ShareMenu";
 import { short, useSession } from "@/components/Session";
 import { TileThumb } from "@/components/TileThumb";
+import { TipButton } from "@/components/Tip";
 import { XHandle } from "@/components/X";
 import { api, ApiError, type District, type Land, type LandEvent, type Me, type Post, type Sale, type Tile } from "@/lib/api";
 import { btc, epochName, MARKETS, timeAgo } from "@/lib/format";
@@ -49,6 +50,7 @@ function DistrictView() {
   const [nearby, setNearby] = useState<Post[]>([]);
   const [around, setAround] = useState<Tile[]>([]);
   const [me, setMe] = useState<Me | null>(null);
+  const [tipNote, setTipNote] = useState<string | null>(null);
   const [selected, setSelected] = useState<number | null>(search.get("parcel") ? Number(search.get("parcel")) : null);
   const [tab, setTab] = useState<Tab>("posts");
   const [editing, setEditing] = useState(false);
@@ -201,6 +203,11 @@ function DistrictView() {
                     {district.owner ? <Link href={`/address/${district.owner}`}>{short(district.owner)}</Link> : short(district.owner)}
                     {land.district && ` · ${t("铭文 #{n}", { n: land.district.inscription_number })}`}
                   </div>
+                  {(district.tips?.sats30 ?? 0) > 0 && (
+                    <div className="muted small tip-line">
+                      {t("近 30 天收到 {sats} 聪打赏，来自 {n} 人", { sats: district.tips!.sats30.toLocaleString("en-US"), n: district.tips!.tippers30 })}
+                    </div>
+                  )}
                 </>
               ) : (
                 <>
@@ -209,9 +216,13 @@ function DistrictView() {
                 </>
               )}
             </div>
+            {district.owner_tippable && district.owner && viewer?.address !== district.owner && (
+              <TipButton target={{ bitmap_number: n }} to={`${n}.bitmap`} sats={0} token={token} className="sm" label={t("打赏主人")} onError={setTipNote} />
+            )}
             {viewer && <RoleBadge role={viewer.role} parcel={viewer.parcel} />}
             {viewer?.muted && <span className="badge muted-badge">{t("你在这里被禁言了")}</span>}
           </div>
+          {tipNote && <p className="muted small">{tipNote}</p>}
           {land.district?.sale && <SaleBanner sale={land.district.sale} mine={!!viewer && viewer.address === district.owner} />}
           {district.park && (
             <div className="park-banner">

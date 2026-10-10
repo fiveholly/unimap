@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
 import { useSession } from "@/components/Session";
+import { Bolt } from "@/components/Tip";
 import { XIcon } from "@/components/X";
 import { api, ApiError, type LinkedWallet, type Me, type XAccount } from "@/lib/api";
 import { LINK_WALLETS, type Wallet } from "@/lib/wallets";
@@ -46,6 +47,7 @@ export default function MePage() {
       </section>
       {me.banned && <p className="notice small">{t("这个地址已被站点管理员禁止发帖。")}</p>}
       <XSection token={token} />
+      <LightningSection token={token} />
       {me.wallets && <WalletsSection token={token} initial={me.wallets} />}
       <Group title={t("街区")} count={me.districts.length} empty={t("这个地址没有持有街区。")}>
         {me.districts.map((n) => (
@@ -79,6 +81,75 @@ function Group({ title, count, empty, children }: { title: string; count: number
         {title} <span className="mono">{count}</span>
       </h2>
       {count === 0 ? <p className="muted">{empty}</p> : <div className="chips">{children}</div>}
+    </section>
+  );
+}
+
+/** 闪电收款: the Lightning address tips to this wallet group go to. */
+function LightningSection({ token }: { token: string }) {
+  const [saved, setSaved] = useState<string | null | undefined>(undefined);
+  const [value, setValue] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    api<{ lightning_address: string | null }>("/v1/me/lightning", { token })
+      .then((r) => setSaved(r.lightning_address))
+      .catch((e) => (e instanceof ApiError && e.status === 404 ? setSaved(undefined) : setError(e.message)));
+  }, [token]);
+  if (saved === undefined) return error ? <p className="error small">{error}</p> : null;
+  const run = async (fn: () => Promise<{ lightning_address: string | null }>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      setSaved((await fn()).lightning_address);
+      setEditing(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const save = () => run(() => api("/v1/me/lightning", { method: "PUT", token, body: { lightning_address: value } }));
+  const clear = () => confirm(t("关掉以后，别人就不能给你打赏了。")) && run(() => api("/v1/me/lightning", { method: "DELETE", token }));
+  return (
+    <section className="me-group lightning">
+      <h2 className="section-title">{t("闪电收款")}</h2>
+      {saved && !editing ? (
+        <div className="x-card">
+          <span className="x-avatar lightning-icon">
+            <Bolt size={18} />
+          </span>
+          <div className="grow">
+            <div className="mono break">{saved}</div>
+            <span className="muted small">{t("你的帖子和街区可以收到打赏了，聪直接进这个钱包。")}</span>
+          </div>
+          <button type="button" className="ghost sm" onClick={() => (setValue(saved), setEditing(true))} disabled={busy}>
+            {t("修改")}
+          </button>
+          <button type="button" className="ghost sm" onClick={clear} disabled={busy}>
+            {t("关闭#off")}
+          </button>
+        </div>
+      ) : (
+        <>
+          <p className="muted small">
+            {t("填一个闪电地址（形如 name@wallet.com），别人就能给你的帖子和街区打赏。Wallet of Satoshi、Phoenix、Alby 等钱包都会给你一个。")}
+          </p>
+          <div className="row">
+            <input id="lightning-address" className="grow" value={value} onChange={(e) => setValue(e.target.value)} placeholder="name@wallet.com" autoComplete="off" spellCheck={false} />
+            <button type="button" className="primary" onClick={save} disabled={busy || !value.trim()}>
+              {busy ? t("检查中…") : t("保存")}
+            </button>
+            {editing && (
+              <button type="button" className="ghost" onClick={() => setEditing(false)} disabled={busy}>
+                {t("取消")}
+              </button>
+            )}
+          </div>
+        </>
+      )}
+      {error && <p className="error small">{error}</p>}
     </section>
   );
 }

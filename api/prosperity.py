@@ -17,6 +17,7 @@ WEIGHTS = {
     "followers": 0.5,
     "checkins30": 1,
     "neighbors30": 0.3,
+    "tippers30": 2,
 }
 THRESHOLDS = (0, 25, 80, 200, 450)
 TOP = len(THRESHOLDS)
@@ -73,6 +74,14 @@ def parts_for(cur, lo, hi):
         (lo, hi, WINDOW_DAYS),
     )
     add(cur.fetchall(), "checkins30")
+    # People who tipped sats here (confirmed), each counted once, so a district can't buy its level
+    # with many small tips from one wallet.
+    cur.execute(
+        "select bitmap_number, count(distinct tipper) from social.tips where status = 'settled' "
+        "and settled_at > now() - make_interval(days => %s) and bitmap_number between %s and %s group by 1;",
+        (WINDOW_DAYS, lo, hi),
+    )
+    add(cur.fetchall(), "tippers30")
     cur.execute(
         "select bitmap_number, count(*) filter (where reply_to is null), count(*) filter (where reply_to is not null) "
         "from social.posts where removed_at is null and created_at > now() - make_interval(days => %s) "

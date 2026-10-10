@@ -8,6 +8,7 @@ import { Composer } from "./Composer";
 import { ReportDialog } from "./Report";
 import { short, useSession } from "./Session";
 import { ShareMenu } from "./ShareMenu";
+import { TipButton } from "./Tip";
 import { TweetEmbed, XHandle } from "./X";
 import { tweetsIn } from "@/lib/tweets";
 import { api, type Post } from "@/lib/api";
@@ -184,6 +185,9 @@ export function PostCard({
             {post.like_count}
             <span className="sr-only">{t("个赞")}</span>
           </button>
+          {!mine && (post.author.tippable || (post.tips_sats ?? 0) > 0) && (
+            <TipButton target={{ post_id: post.id }} to={name} sats={post.tips_sats ?? 0} token={token} canTip={!!post.author.tippable} onError={setError} />
+          )}
           {!post.removed && <ShareMenu path={`/post/${post.id}`} text={postText(post)} label="" className="act" align="left" />}
         </div>
         {showSig && (

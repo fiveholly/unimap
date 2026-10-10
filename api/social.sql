@@ -186,7 +186,7 @@ CREATE TABLE IF NOT EXISTS social.holdings_checked (
 CREATE TABLE IF NOT EXISTS social.notifications (
 	id bigserial NOT NULL,
 	address text NOT NULL,
-	kind text NOT NULL, -- reply | like | post | follow | apply
+	kind text NOT NULL, -- reply | like | post | follow | apply | tip
 	actor text NOT NULL,
 	bitmap_number int4 NOT NULL,
 	post_id int8 NULL, -- the reply, the liked post or the new post
@@ -268,3 +268,42 @@ CREATE TABLE IF NOT EXISTS social.listings_checked (
 	ok_at timestamptz NULL, -- last time the marketplace answered
 	CONSTRAINT listings_checked_pk PRIMARY KEY (market)
 );
+
+-- Lightning tips (api/tips.py). A wallet group's Lightning address, kept under its main address.
+CREATE TABLE IF NOT EXISTS social.lightning_addresses (
+	address text NOT NULL,
+	lightning_address text NOT NULL, -- name@domain (LUD-16)
+	updated_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT lightning_addresses_pk PRIMARY KEY (address)
+);
+-- One tip: an invoice from the recipient's wallet, paid straight to them. We only keep the record.
+CREATE TABLE IF NOT EXISTS social.tips (
+	id bigserial NOT NULL,
+	tipper text NOT NULL,
+	recipient text NOT NULL, -- the post's author or the district's owner when the tip was made
+	bitmap_number int4 NOT NULL,
+	post_id int8 NULL, -- null: a tip to the district's owner
+	amount_sats int8 NOT NULL,
+	comment text NOT NULL DEFAULT '',
+	invoice text NOT NULL,
+	verify_url text NULL, -- LUD-21; without one a payment can't be confirmed and isn't counted
+	status text NOT NULL DEFAULT 'pending', -- pending | settled | expired
+	checked_at timestamptz NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	settled_at timestamptz NULL,
+	CONSTRAINT tips_pk PRIMARY KEY (id)
+);
+CREATE INDEX IF NOT EXISTS tips_post_idx ON social.tips USING btree (post_id) WHERE status = 'settled';
+CREATE INDEX IF NOT EXISTS tips_district_idx ON social.tips USING btree (bitmap_number, settled_at) WHERE status = 'settled';
+CREATE INDEX IF NOT EXISTS tips_tipper_idx ON social.tips USING btree (tipper, created_at);
+-- Tip notifications carry the tip, so each tip is told even from the same person on the same post.
+DO $$
+BEGIN
+	IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'social' AND table_name = 'notifications' AND column_name = 'tip_id') THEN
+		ALTER TABLE social.notifications ADD COLUMN tip_id int8 NULL;
+		ALTER TABLE social.notifications DROP CONSTRAINT IF EXISTS notifications_once;
+		ALTER TABLE social.notifications ADD CONSTRAINT notifications_once
+			UNIQUE NULLS NOT DISTINCT (address, kind, actor, bitmap_number, post_id, tip_id);
+	END IF;
+END $$;

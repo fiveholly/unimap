@@ -87,6 +87,12 @@ function sentence(item: Item): [React.ReactNode, string] {
       return [tn("{who} 关注了你的街区 {place}", { who, place }), `/district/${n.bitmap_number}`];
     case "apply":
       return [tn("{who} 申请入住你的街区 {place}，去「管理街区 → 招募」看看", { who, place }), `/district/${n.bitmap_number}`];
+    case "tip": {
+      const sats = <b className="mono tip-amount">{(n.amount_sats ?? 0).toLocaleString("en-US")}</b>;
+      return n.post_id != null
+        ? [tn("{who} 打赏了你在 {place} 的帖子 {sats} 聪", { who, place, sats }), post]
+        : [tn("{who} 打赏了你的街区 {place} {sats} 聪", { who, place, sats }), `/district/${n.bitmap_number}`];
+    }
   }
 }
 
@@ -119,7 +125,7 @@ export function NotificationList() {
   if (!token) return <p className="muted">{t("连接钱包后可以看到你的通知。")}</p>;
   if (error) return <p className="error">{error}</p>;
   if (!list) return <p className="muted">{t("加载中…")}</p>;
-  if (!list.length) return <p className="muted">{t("还没有通知。有人回复、点赞你的帖子，关注你的街区或者申请入住时，会在这里告诉你。")}</p>;
+  if (!list.length) return <p className="muted">{t("还没有通知。有人回复、点赞、打赏你的帖子，关注你的街区或者申请入住时，会在这里告诉你。")}</p>;
   return (
     <>
       <ul className="notifications">
@@ -131,7 +137,11 @@ export function NotificationList() {
                 <Avatar seed={item.first.actor} size={32} />
                 <span className="grow">
                   <span>{text}</span>
-                  {item.first.snippet && <span className="snippet muted small">{item.first.snippet}</span>}
+                  {item.first.kind === "tip" && item.first.comment ? (
+                    <span className="snippet small">“{item.first.comment}”</span>
+                  ) : (
+                    item.first.snippet && <span className="snippet muted small">{item.first.snippet}</span>
+                  )}
                 </span>
                 <span className="dim small">{timeAgo(new Date(item.first.created_at).getTime() / 1000)}</span>
               </Link>
