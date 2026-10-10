@@ -14,6 +14,7 @@ type Stored = { address: string; token: string; wallet: WalletId };
 type SessionValue = {
   address: string | null;
   token: string | null;
+  wallet: WalletId | null;
   ready: boolean;
   login: (wallet: WalletId) => Promise<void>;
   logout: () => Promise<void>;
@@ -97,7 +98,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <SessionContext.Provider
-      value={{ address: stored?.address ?? null, token: stored?.token ?? null, ready, login, logout, sign }}
+      value={{ address: stored?.address ?? null, token: stored?.token ?? null, wallet: stored?.wallet ?? null, ready, login, logout, sign }}
     >
       {children}
       {pending && <ManualDialog pending={pending} close={() => setPending(null)} />}

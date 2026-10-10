@@ -80,7 +80,34 @@ export type Tile = {
 };
 
 /** A district's listing on a marketplace (在售): its price and where to buy. */
-export type Sale = { price_sats: number; market: string; url: string | null; listed_at: string | null };
+export type Sale = { price_sats: number; market: string; url: string | null; listed_at: string | null; listing_id?: number };
+/** 站内交易 (api/market.py). */
+export type MarketInfo = { open: boolean; network: string | null; fee_bps: number; dummy_sats: number };
+export type MarketListing = {
+  id: number;
+  inscription_id: string;
+  bitmap_number: number;
+  tx_index: number | null;
+  seller: string;
+  price_sats: number;
+  postage_sats: number;
+  status: "active" | "sold" | "cancelled" | "replaced" | "gone";
+  created_at: string;
+  txid: string | null;
+  buyer: string | null;
+};
+export type Quote = {
+  quote_id: number;
+  psbt: string;
+  sign_inputs: number[];
+  price_sats: number;
+  fee_sats: number;
+  network_fee_sats: number;
+  fee_rate: number;
+  postage_sats: number;
+  total_sats: number;
+  expires_in: number;
+};
 
 export type LandEvent = {
   id: number;
@@ -225,7 +252,7 @@ export type FeedItem = { type: "post"; time: number; post: Post } | { type: "eve
 /** The owner's view of what their wallet holds and what the district shows. */
 export type Showcase = { chosen: PetKey[]; held: Pet[]; wallets?: number; checked_at: string | null; error: string | null; shown: Pet[] };
 
-export type NotificationKind = "reply" | "like" | "post" | "follow" | "apply" | "tip" | "treasure" | "lucky" | "crown" | "event_win";
+export type NotificationKind = "reply" | "like" | "post" | "follow" | "apply" | "tip" | "treasure" | "lucky" | "crown" | "event_win" | "sold";
 export type Notification = {
   id: number;
   kind: NotificationKind;

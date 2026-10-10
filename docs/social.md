@@ -95,6 +95,14 @@ media: none
 | DELETE | `/v1/events/{id}` | 主人取消还没开始的活动；已经开始的是 409 |
 | GET | `/v1/events` | 全城进行中和下赛季要开始的活动，奖金多的在前 |
 | GET | `/v1/listings?limit=` | 在售的街区，便宜的在前（默认 50 条，最多 200）；`/v1/land` 的地图格子带 `sale`（价格，聪），`/v1/land/{n}` 的 `district.sale` 带价格、市场和挂单链接 |
+| GET | `/v1/market` | 站内交易是否开放、在哪个网络、unimap 的手续费（基点） |
+| POST | `/v1/market/listings/prepare` | 持有者挂单第一步 `{"bitmap_number", "tx_index"(地块), "price_sats", "pay_to", "public_key"}`，返回给钱包签名的 PSBT（输入 0，SIGHASH_SINGLE\|ANYONECANPAY） |
+| POST | `/v1/market/listings` | 提交钱包签好的挂单 `{"psbt", "bitmap_number", "tx_index"}`；签名不对、不是 0x83、价格被改过都是 400 |
+| GET | `/v1/market/listings?bitmap_number=` | 在售的站内挂单，便宜的在前；铭文已经转走的不算 |
+| GET / DELETE | `/v1/market/listings/{id}` | 一条挂单；卖家下架 |
+| POST | `/v1/market/listings/{id}/quote` | 买家要报价 `{"payment_address", "payment_public_key", "receive_address", "fee_rate"}`，返回拼好的 PSBT 和要签的输入；付款地址还没有两笔小额 UTXO 时是 409 `need_dummies` |
+| POST | `/v1/market/quotes/{id}/submit` | 买家提交签好的 PSBT；交易必须和报价完全一样、签名都是 SIGHASH_ALL，bitcoind 测试通过后广播，返回 `txid` |
+| POST | `/v1/market/dummies`、`/v1/market/dummies/broadcast` | 给买家做两笔 600 聪小额 UTXO 的交易，签好后广播；只能转给自己 |
 
 ## 繁荣度
 
@@ -236,6 +244,20 @@ expires: …
 挂单数据来自 Magic Eden 的 Ordinals 接口（`api/listings.py`，`bitmap` 系列），存在 `social.listings` 里。地图读取时如果数据已经超过 10 分钟，就在后台刷新一次；多个 API 进程同时读取时只有一个会去请求。只有卖家仍然持有这个街区（以我们自己的索引为准）的挂单才会显示，转手以后留下的旧挂单不算。如果市场接口连续 6 小时没有成功返回，就不再显示价格，免得显示过时的报价。
 
 Magic Eden 的接口需要 API key 才能稳定使用，在 `/etc/unimap/unimap.env` 里填 `LISTINGS_API_KEY`。系列名不对时改 `LISTINGS_COLLECTION`。
+
+## 站内交易（PSBT）
+
+在 unimap 里直接买卖街区和地块（`api/market.py`、`api/btc.py`，表 `social.market_listings`、`social.market_quotes`）。unimap 从头到尾不碰铭文和钱，只负责把两边钱包签的东西拼起来。
+
+- 挂单：持有者的钱包签一个半成品交易：输入是铭文所在的输出，输出是付给卖家的 P 聪，签名用 SIGHASH_SINGLE|ANYONECANPAY（0x83）。这个签名只对“在同一个位置付给这个地址 P 聪”的交易有效，unimap 改不了价格和收款地址。服务器收到后会验签，并确认铭文所在的输出里没有别的铭文或符文。
+- 购买：服务器用买家自己的币补全这笔交易。输入是 [小额 A, 小额 B, 卖家的铭文, 买家的币…]，输出是 [A+B 还给买家, 铭文所在的 V 聪给买家的 taproot 地址, 付给卖家的 P, unimap 手续费（设置了才有）, 两笔新的 600 聪小额, 找零]。比特币里的聪按顺序流动，所以输出 0 正好装下两笔小额，输出 1 正好装下铭文所在的整个输出，卖家的输出也正好在他签名的位置 2。买家的币和小额都必须是 ord 认为不含铭文和符文的输出。
+- 买家钱包对除了输入 2 以外的所有输入用 SIGHASH_ALL 签名。服务器检查交易和报价一模一样，再请 bitcoind 用 testmempoolaccept 测试，通过后广播，并通知卖家（通知 `sold`）。报价 10 分钟内有效。
+- 第一次买之前，付款地址需要两笔不超过 1,000 聪的小额 UTXO。页面会先帮买家发一笔转给自己的交易，做出两笔 600 聪的输出，确认后再买。
+- 在 unimap 下架只是不再展示；签过的挂单在铭文转走之前仍然有效，页面会提醒卖家，想彻底作废就把铭文转到自己的另一个地址。铭文用别的方式转走后，挂单自动失效。
+- 站内挂单和 Magic Eden 的挂单一起显示在地图价签、侧栏和街区页上（`market` 为 `unimap`，带 `listing_id`），哪个便宜显示哪个。
+- 钱包：UniSat 和 OKX 用同一个地址付款和收铭文；Xverse 用付款地址（P2SH-P2WPKH）付款、ordinals 地址收铭文，签名按 PSBT 里写的 sighash。支持 P2TR、P2WPKH 和 P2SH-P2WPKH 输入。
+- 开关：设置 `MARKET_NETWORK`（testnet4、signet 或 regtest）才开放，这时 bitcoind 和 ord 都要在那个网络上，ord 要加 `--index-addresses`。主网要等外部安全审计通过、设置了 `MARKET_MAINNET_AUDITED=1` 才开放。手续费由 `MARKET_FEE_BPS`（基点，100 是 1%）和 `MARKET_FEE_ADDRESS` 决定，默认不收。
+- 测试：taproot 的签名哈希用 BIP-341 官方的测试向量核对（`tests/data/bip341_wallet_vectors.json`）。`test_market` 用真实密钥签名，走完挂单、做小额、报价、篡改报价、签名购买、地块用 taproot 钱包购买的全流程，并确认铭文落在买家的输出里、别的输出里没有铭文。
 
 ## 闪电打赏
 

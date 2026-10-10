@@ -5,6 +5,7 @@ import { game } from "./game.ts";
 import { map } from "./map.ts";
 import { moderation } from "./moderation.ts";
 import { social } from "./social.ts";
+import { market } from "./market.ts";
 import { tips } from "./tips.ts";
 
-export const EN: Record<string, string> = { ...district, ...map, ...social, ...moderation, ...tips, ...game, ...common };
+export const EN: Record<string, string> = { ...district, ...map, ...social, ...moderation, ...tips, ...game, ...market, ...common };

@@ -19,7 +19,7 @@ export function btcShort(sats: number): string {
 }
 
 /** Marketplaces that list districts, by the API's market key. */
-export const MARKETS: Record<string, string> = { magiceden: "Magic Eden" };
+export const MARKETS: Record<string, string> = { magiceden: "Magic Eden", unimap: "unimap" };
 
 const EPOCHS = ["老城区", "第一纪元", "第二纪元", "第三纪元", "第四纪元", "第五纪元", "第六纪元"];
 
