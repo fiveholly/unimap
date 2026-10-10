@@ -56,7 +56,7 @@ export type Land = {
   zone: string | null;
   tx_count: number | null;
   claimed: boolean;
-  district: { inscription_id: string; inscription_number: number; inscribed_height: number; owner: Owner } | null;
+  district: { inscription_id: string; inscription_number: number; inscribed_height: number; owner: Owner; sale?: Sale | null } | null;
   parcels: Parcel[];
 };
 
@@ -72,7 +72,11 @@ export type Tile = {
   style?: DistrictStyle | null;
   park?: number | null;
   pets?: string[]; // "dog:2": what the owner shows of their wallet, see lib/pets.ts
+  sale?: number | null; // asking price in sats while listed on a marketplace (api/listings.py)
 };
+
+/** A district's listing on a marketplace (在售): its price and where to buy. */
+export type Sale = { price_sats: number; market: string; url: string | null; listed_at: string | null };
 
 export type LandEvent = {
   id: number;

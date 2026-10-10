@@ -76,9 +76,17 @@ class SocialApi(unittest.TestCase):
             )
         from fastapi.testclient import TestClient
 
-        from api import social
+        from api import listings, social
         from api.app import app
 
+        class NoListings:
+            market = "magiceden"
+            item_url = staticmethod(listings.MagicEden.item_url)
+
+            def listed(self):
+                return iter(())
+
+        listings.provider = NoListings()  # map reads refresh listings in the background; keep them offline
         cls.social = social
         social.POSTS_PER_MINUTE = 1000  # test_rate_limit lowers it
         cls.client = TestClient(app)
@@ -671,6 +679,78 @@ class SocialApi(unittest.TestCase):
                 cur.execute("update inscription_owners set address = %s where inscription_id = 'd105i0';", (CAROL.address,))
         self.assertEqual(self.client.get(f"/v1/posts/{old}").json()["author"]["role"], "owner")
 
+    def test_listings(self):
+        from api import listings
+
+        class Fake:
+            market = "magiceden"
+            item_url = staticmethod(listings.MagicEden.item_url)
+            fail = False
+
+            def listed(self):
+                if Fake.fail:
+                    raise RuntimeError("market down")
+                return iter(
+                    [
+                        ("d100i0", 5_000_000, ALICE.address, None),  # listed by its holder
+                        ("d105i0", 1_000, "bc1qsoldalready", None),  # left behind after the district moved
+                        ("d999i0", 2_000_000, "bcrt1qsomeoneelse", None),
+                        ("notabitmapi0", 10, "bc1qx", None),
+                    ]
+                )
+
+        old = listings.provider
+        listings.provider = Fake()
+        try:
+            self.assertTrue(listings.refresh(force=True))
+            self.assertFalse(listings.refresh())  # tried just now
+            tiles = {t["bitmap_number"]: t for t in self.client.get("/v1/land?start=100&end=105").json()["tiles"]}
+            self.assertEqual((tiles[100]["sale"], tiles[105]["sale"], tiles[101]["sale"]), (5_000_000, None, None))
+            sale = self.client.get("/v1/land/100").json()["district"]["sale"]
+            self.assertEqual(sale["price_sats"], 5_000_000)
+            self.assertEqual(sale["url"], "https://magiceden.io/ordinals/item-details/d100i0")
+            self.assertIsNone(self.client.get("/v1/land/105").json()["district"]["sale"])
+            self.assertEqual([x["bitmap_number"] for x in self.client.get("/v1/listings").json()["listings"]], [999, 100])
+            # A failed refresh keeps the old copy, until it is STALE_HOURS old.
+            Fake.fail = True
+            self.assertFalse(listings.refresh(force=True))
+            self.assertEqual(len(self.client.get("/v1/listings").json()["listings"]), 2)
+            with self.conn.cursor() as cur:
+                cur.execute("update social.listings_checked set ok_at = now() - interval '7 hours';")
+            self.assertEqual(self.client.get("/v1/listings").json()["listings"], [])
+            self.assertIsNone(self.client.get("/v1/land?start=100&end=100").json()["tiles"][0]["sale"])
+        finally:
+            listings.provider = old
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.listings; delete from social.listings_checked;")
+
+
+    def test_magiceden_listings_parse(self):
+        from unittest import mock
+
+        from api import listings
+
+        pages = [
+            {"tokens": [{"id": f"i{k}i0", "listed": True, "listedPrice": 1000 + k, "owner": "bc1qa", "listedAt": "2026-10-01T12:00:00.000Z"} for k in range(100)]},
+            {"tokens": [{"id": "x1i0", "listed": True, "listedPrice": 5, "owner": "bc1qb"}, {"id": "x2i0", "listed": False, "owner": "bc1qc"}]},
+        ]
+        calls = []
+
+        def get(url, params, headers, timeout):
+            calls.append((url, params, headers))
+            r = mock.Mock()
+            r.json.return_value = pages[len(calls) - 1]
+            return r
+
+        with mock.patch.object(listings.requests, "get", get):
+            got = list(listings.MagicEden(url="https://me.test", key="k", collection="bitmap").listed())
+        self.assertEqual(len(got), 101)
+        self.assertEqual(got[0][:3], ("i0i0", 1000, "bc1qa"))
+        self.assertEqual(got[0][3].year, 2026)
+        self.assertEqual(got[-1], ("x1i0", 5, "bc1qb", None))
+        self.assertEqual(calls[0][0], "https://me.test/v2/ord/btc/tokens")
+        self.assertEqual((calls[0][1]["collectionSymbol"], calls[1][1]["offset"]), ("bitmap", 100))
+        self.assertEqual(calls[0][2]["Authorization"], "Bearer k")
 
 if __name__ == "__main__":
     unittest.main()

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { short } from "./Session";
 import { api, type Land, type Tile } from "@/lib/api";
+import { btc, btcShort } from "@/lib/format";
 import { CX, CY, GROUND, PAVED, rng, TILE_H, TILE_W, tileSprite } from "@/lib/iso";
 import { layout } from "@/lib/mondrian";
 import { side } from "@/lib/parks";
@@ -33,6 +34,8 @@ const AREA_SCALE = 0.3;
 const SLOTS = 3;
 const COMPACT_SCALE = 0.11; // below this an area tile is a single building
 const PARCEL_FADE = [1.9, 2.5] as const;
+const SALE = "#6FCF97"; // the 在售 tag
+const SALE_TEXT_SCALE = 0.7; // below this a listed district gets a dot, not its price
 const PARCEL_FETCH_LIMIT = 80; // never fetch parcels for more tiles than this at once
 const PLAN = 384; // px of a cached parcel plan
 
@@ -328,7 +331,7 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
       ctx.fill();
     }
     const want = new Set<number>();
-    const labels: [number, number, string, "landmark" | "park"][] = [];
+    const labels: [number, number, string, "landmark" | "park" | "sale"][] = [];
     const parkCells = new Map<number, [number, number][]>(); // park id -> screen centres of its members
     // A park's outline goes over everything at the end, like a territory line in a game:
     // drawn at ground level it would hide behind the tall buildings in front.
@@ -530,6 +533,16 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
           ctx.drawImage(sprite(), sx, sy, TILE_W * s, TILE_H * s);
         }
         if (t?.park != null) parkBorder(n, t.park, c.x, c.y);
+        // 在售: a price tag over districts listed on a marketplace; just a dot when zoomed out.
+        if (t?.sale) {
+          if (s >= SALE_TEXT_SCALE) labels.push([c.x, c.y - 112 * s, btcShort(t.sale), "sale"]);
+          else {
+            ctx.fillStyle = SALE;
+            ctx.beginPath();
+            ctx.arc(c.x, c.y - 60 * s, Math.max(3, 9 * s), 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
         if (n === selectedRef.current || n === hover.current) {
           ctx.strokeStyle = n === selectedRef.current ? "#EDEAE3" : "rgba(237,234,227,0.45)";
           ctx.lineWidth = 2;
@@ -573,7 +586,7 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
     ctx.textBaseline = "middle";
     for (const [x, y, text, kind] of labels) {
       const tw = ctx.measureText(text).width + 18;
-      ctx.fillStyle = kind === "park" ? "rgba(22,21,18,0.88)" : "#E8B04A";
+      ctx.fillStyle = kind === "park" ? "rgba(22,21,18,0.88)" : kind === "sale" ? SALE : "#E8B04A";
       ctx.beginPath();
       ctx.roundRect(x - tw / 2, y - 10, tw, 20, 10);
       ctx.fill();
@@ -896,6 +909,12 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
         <dl className="facts">
           <dt>{t("拥有者")}</dt>
           <dd className="mono">{tile ? (tile.claimed ? short(tile.owner) : t("未认领")) : "—"}</dd>
+          {tile?.sale && (
+            <>
+              <dt>{t("在售")}</dt>
+              <dd className="mono sale-price">{btc(tile.sale)}</dd>
+            </>
+          )}
           {zone && (
             <>
               <dt>{t("划分依据")}</dt>
@@ -915,6 +934,10 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
             {t(ZONES[z].name)}
           </span>
         ))}
+        <span>
+          <i className="sale-dot" />
+          {t("在售")}
+        </span>
         <span className="grow" />
         <span className="muted">
           {level === "area" ? t("每一片约 64 个区块，楼的种类按其中各地段的多少来摆。每次减半隔出一片大陆，海峡上有桥。点击放大") : level === "parcel" ? t("每一块地是区块里的一笔交易；立起来的是已认领的地块") : t("拖动平移，滚轮或双指缩放，点击街区查看；放大到最近可看到地块")}

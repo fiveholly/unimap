@@ -2043,3 +2043,36 @@ button.danger:hover:not(:disabled) {
   border-radius: 10px;
   color: var(--danger);
 }
+
+/* ---------- for sale (在售) ---------- */
+.sale-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, #6fcf97 45%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, #6fcf97 8%, transparent);
+}
+.sale-tag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #6fcf97;
+  color: #0f1a12;
+  font-size: 12px;
+  font-weight: 600;
+}
+.sale-price {
+  color: #6fcf97;
+}
+.city-legend .sale-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #6fcf97;
+  vertical-align: -1px;
+}
