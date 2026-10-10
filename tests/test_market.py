@@ -54,6 +54,70 @@ class TaprootKey:
         psbt.set(i, btc.IN_TAP_KEY_SIG, sig)
 
 
+class FakeChain:
+    """bitcoind and ord in one: outputs, where inscriptions sit, and a mempool that checks every signature."""
+
+    def __init__(self):
+        self.utxos = {}  # outpoint: [value, scriptPubKey, inscriptions]
+        self.sent = []
+
+    def add(self, outpoint, value, spk, inscriptions=()):
+        self.utxos[outpoint] = [value, spk, list(inscriptions)]
+
+    def txout(self, op):
+        u = self.utxos.get(op)
+        return (u[0], u[1]) if u else None
+
+    def satpoint(self, iid):
+        return next((f"{op}:0" for op, u in self.utxos.items() if iid in u[2]), None)
+
+    def output(self, op):
+        u = self.utxos.get(op)
+        return {"value": u[0], "inscriptions": u[2], "runes": {}, "spent": False} if u else {"spent": True}
+
+    def cardinal_outputs(self, address):
+        spk = btc.address_script(address, "regtest")
+        return [{"outpoint": op, "value": u[0], "inscriptions": [], "runes": {}, "spent": False} for op, u in self.utxos.items() if u[1] == spk and not u[2]]
+
+    def fee_rate(self):
+        return 3.0
+
+    def test_accept(self, raw):
+        tx = btc.Tx.parse(bytes.fromhex(raw))
+        if any(t.outpoint not in self.utxos for t in tx.inputs):
+            return False, "missing-inputs"
+        spent = [btc.TxOut(*self.utxos[t.outpoint][:2]) for t in tx.inputs]
+        for i, t in enumerate(tx.inputs):
+            w = t.witness
+            try:
+                btc.check_signature(tx, i, spent, w[0], *(w[1:2] or [None]), t.script_sig[1:] or None)
+            except btc.BadTx as e:
+                return False, str(e)
+        if sum(o.value for o in tx.outputs) > sum(o.value for o in spent):
+            return False, "bad-txns-in-belowout"
+        return True, None
+
+    def send(self, raw):
+        """Spend the inputs; inscriptions follow their first sat (each sits at offset 0 of its input)."""
+        tx = btc.Tx.parse(bytes.fromhex(raw))
+        at, moves = 0, []
+        for t in tx.inputs:
+            value, _, ins = self.utxos.pop(t.outpoint)
+            moves += [(at, i) for i in ins]
+            at += value
+        edges, at = [], 0
+        for n, o in enumerate(tx.outputs):
+            edges.append((at, at + o.value, n))
+            at += o.value
+        for n, o in enumerate(tx.outputs):
+            self.add(f"{tx.txid}:{n}", o.value, o.script_pubkey)
+        for offset, iid in moves:
+            n = next(n for lo, hi, n in edges if lo <= offset < hi)
+            self.utxos[f"{tx.txid}:{n}"][2].append(iid)
+        self.sent.append(tx)
+        return tx.txid
+
+
 def txid(n):
     return f"{n:064x}"
 

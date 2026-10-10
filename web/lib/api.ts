@@ -108,6 +108,21 @@ export type Quote = {
   total_sats: number;
   expires_in: number;
 };
+/** 出价: a buyer's signed offer on something nobody listed, waiting for its holder. */
+export type MarketOffer = {
+  id: number;
+  inscription_id: string;
+  bitmap_number: number;
+  tx_index: number | null;
+  buyer: string;
+  seller: string;
+  price_sats: number;
+  status: "active" | "accepted" | "cancelled" | "declined" | "expired" | "gone";
+  created_at: string;
+  expires_at: string;
+  txid: string | null;
+};
+export type OfferQuote = Omit<Quote, "quote_id" | "expires_in"> & { offer_id: number };
 
 export type LandEvent = {
   id: number;
@@ -253,7 +268,7 @@ export type FeedItem = { type: "post"; time: number; post: Post } | { type: "eve
 /** The owner's view of what their wallet holds and what the district shows. */
 export type Showcase = { chosen: PetKey[]; held: Pet[]; wallets?: number; checked_at: string | null; error: string | null; shown: Pet[] };
 
-export type NotificationKind = "reply" | "like" | "post" | "follow" | "apply" | "tip" | "treasure" | "lucky" | "crown" | "event_win" | "sold" | "agent_draft" | "agent_alert";
+export type NotificationKind = "reply" | "like" | "post" | "follow" | "apply" | "tip" | "treasure" | "lucky" | "crown" | "event_win" | "sold" | "offer" | "offer_accepted" | "agent_draft" | "agent_alert";
 export type Notification = {
   id: number;
   kind: NotificationKind;

@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { useSession } from "./Session";
-import { api, type MarketInfo, type MarketListing, type Quote } from "@/lib/api";
-import { btc } from "@/lib/format";
+import { api, type MarketInfo, type MarketListing, type MarketOffer, type OfferQuote, type Quote } from "@/lib/api";
+import { btc, short } from "@/lib/format";
 import { t } from "@/lib/i18n";
 import { walletById, type PsbtSigner } from "@/lib/wallets";
 
@@ -154,7 +154,8 @@ export function SellCard({ n, token }: { n: number; token: string }) {
   );
 }
 
-type Step = { kind: "quote"; quote: Quote } | { kind: "dummies" } | { kind: "dummies-sent"; txid: string } | { kind: "done"; txid: string };
+type Sums = Omit<Quote, "quote_id" | "expires_in">;
+type Step = { kind: "quote"; sums: Sums; sign: () => Promise<void> } | { kind: "dummies" } | { kind: "dummies-sent"; txid: string } | { kind: "done"; txid: string | null };
 
 /** The buyer's side: quote, sign in the wallet, broadcast. */
 export function BuyButton({ listingId, price, label }: { listingId: number; price: number; label?: string }) {
@@ -166,12 +167,44 @@ export function BuyButton({ listingId, price, label }: { listingId: number; pric
       <button type="button" className="primary sm" onClick={() => setOpen(true)}>
         {label ?? t("在 unimap 购买")}
       </button>
-      {open && <BuyDialog listingId={listingId} price={price} token={token} close={() => setOpen(false)} />}
+      {open && (
+        <PurchaseDialog
+          title={t("在 unimap 购买")}
+          token={token}
+          close={() => setOpen(false)}
+          intro={
+            <>
+              <p>
+                <b className="mono">{btc(price)}</b>
+              </p>
+              <p className="muted small">{t("unimap 用你钱包里的聪拼好这笔交易：铭文到你的地址，钱到卖家的地址。你的钱包会显示每一笔进出，确认无误再签名。unimap 不经手钱和铭文。")}</p>
+            </>
+          }
+          ask={async (acc, signer) => {
+            const q = await api<Quote>(`/v1/market/listings/${listingId}/quote`, { method: "POST", token, body: acc });
+            return {
+              sums: q,
+              sign: async () => {
+                const signed = await signer.sign(q.psbt, q.sign_inputs.map((index) => ({ index, address: acc.payment_address })));
+                return (await api<{ txid: string }>(`/v1/market/quotes/${q.quote_id}/submit`, { method: "POST", token, body: { psbt: signed } })).txid;
+              },
+            };
+          }}
+          signLabel={t("签名购买")}
+          doneText={t("交易已发出。打包确认后，这块地就是你的了。")}
+        />
+      )}
     </>
   );
 }
 
-function BuyDialog({ listingId, price, token, close }: { listingId: number; price: number; token: string; close: () => void }) {
+type Accounts = Awaited<ReturnType<PsbtSigner["accounts"]>>;
+type Ask = (acc: Accounts, signer: PsbtSigner) => Promise<{ sums: Sums; sign: () => Promise<string | null> }>;
+
+/** Buying a listing or making an offer: the wallet's coins put together by unimap, two dummies first if needed, signed in the wallet. */
+function PurchaseDialog({ title, token, close, intro, ask, signLabel, doneText, ready = true }: {
+  title: string; token: string; close: () => void; intro: React.ReactNode; ask: Ask; signLabel: string; doneText: string; ready?: boolean;
+}) {
   const market = useMarket();
   const [signer, signerError] = useSigner();
   const [step, setStep] = useState<Step | null>(null);
@@ -189,11 +222,12 @@ function BuyDialog({ listingId, price, token, close }: { listingId: number; pric
       setBusy(false);
     }
   };
-  const ask = () =>
+  const next = () =>
     run(async () => {
       const acc = await signer!.accounts();
       try {
-        setStep({ kind: "quote", quote: await api<Quote>(`/v1/market/listings/${listingId}/quote`, { method: "POST", token, body: acc }) });
+        const q = await ask(acc, signer!);
+        setStep({ kind: "quote", sums: q.sums, sign: async () => setStep({ kind: "done", txid: await q.sign() }) });
       } catch (e) {
         if (e instanceof Error && e.message.includes("need_dummies")) return setStep({ kind: "dummies" });
         throw e;
@@ -207,29 +241,15 @@ function BuyDialog({ listingId, price, token, close }: { listingId: number; pric
       const r = await api<{ txid: string }>("/v1/market/dummies/broadcast", { method: "POST", token, body: { psbt: signed } });
       setStep({ kind: "dummies-sent", txid: r.txid });
     });
-  const buy = (q: Quote) =>
-    run(async () => {
-      const acc = await signer!.accounts();
-      const signed = await signer!.sign(q.psbt, q.sign_inputs.map((index) => ({ index, address: acc.payment_address })));
-      const r = await api<{ txid: string }>(`/v1/market/quotes/${q.quote_id}/submit`, { method: "POST", token, body: { psbt: signed } });
-      setStep({ kind: "done", txid: r.txid });
-    });
 
   return createPortal(
     <div className="dialog-backdrop" role="dialog" aria-modal="true" aria-labelledby="buy-title" onClick={(e) => e.target === e.currentTarget && !busy && close()}>
       <div className="dialog buy-dialog">
         <div className="row between">
-          <h2 id="buy-title">{t("在 unimap 购买")}</h2>
+          <h2 id="buy-title">{title}</h2>
           <NetworkTag network={market?.network ?? null} />
         </div>
-        {!step && (
-          <>
-            <p>
-              <b className="mono">{btc(price)}</b>
-            </p>
-            <p className="muted small">{t("unimap 用你钱包里的聪拼好这笔交易：铭文到你的地址，钱到卖家的地址。你的钱包会显示每一笔进出，确认无误再签名。unimap 不经手钱和铭文。")}</p>
-          </>
-        )}
+        {!step && intro}
         {step?.kind === "dummies" && (
           <p className="small">
             {t("第一次在 unimap 买之前，你的付款地址需要两笔各 {n} 聪的小额 UTXO，用来把铭文准确地放进你的地址。先发一笔转给自己的小交易，确认以后（大约 10 分钟）再回来买。", { n: market?.dummy_sats ?? 600 })}
@@ -244,29 +264,29 @@ function BuyDialog({ listingId, price, token, close }: { listingId: number; pric
         {step?.kind === "quote" && (
           <dl className="buy-sum">
             <dt>{t("价格")}</dt>
-            <dd className="mono">{sats(step.quote.price_sats)}</dd>
-            {step.quote.fee_sats > 0 && (
+            <dd className="mono">{sats(step.sums.price_sats)}</dd>
+            {step.sums.fee_sats > 0 && (
               <>
                 <dt>{t("unimap 手续费")}</dt>
-                <dd className="mono">{sats(step.quote.fee_sats)}</dd>
+                <dd className="mono">{sats(step.sums.fee_sats)}</dd>
               </>
             )}
-            <dt>{t("矿工费（{rate} 聪/vB）", { rate: Math.round(step.quote.fee_rate * 10) / 10 })}</dt>
-            <dd className="mono">{sats(step.quote.network_fee_sats)}</dd>
+            <dt>{t("矿工费（{rate} 聪/vB）", { rate: Math.round(step.sums.fee_rate * 10) / 10 })}</dt>
+            <dd className="mono">{sats(step.sums.network_fee_sats)}</dd>
             <dt>
               <b>{t("一共")}</b>
             </dt>
             <dd className="mono">
-              <b>{sats(step.quote.total_sats)}</b> {t("聪")}
+              <b>{sats(step.sums.total_sats)}</b> {t("聪")}
             </dd>
           </dl>
         )}
         {step?.kind === "done" && (
           <>
             <p>
-              <b>{t("交易已发出。打包确认后，这块地就是你的了。")}</b>
+              <b>{doneText}</b>
             </p>
-            <TxLink txid={step.txid} network={market?.network ?? null} />
+            {step.txid && <TxLink txid={step.txid} network={market?.network ?? null} />}
           </>
         )}
         {error && <p className="error small">{error}</p>}
@@ -275,7 +295,7 @@ function BuyDialog({ listingId, price, token, close }: { listingId: number; pric
             {step?.kind === "done" || step?.kind === "dummies-sent" ? t("好的") : t("取消")}
           </button>
           {signer && !step && (
-            <button type="button" className="primary" onClick={ask} disabled={busy}>
+            <button type="button" className="primary" onClick={next} disabled={busy || !ready}>
               {busy ? t("正在拼交易…") : t("下一步")}
             </button>
           )}
@@ -285,13 +305,172 @@ function BuyDialog({ listingId, price, token, close }: { listingId: number; pric
             </button>
           )}
           {signer && step?.kind === "quote" && (
-            <button type="button" className="primary" onClick={() => buy(step.quote)} disabled={busy}>
-              {busy ? t("等待钱包签名…") : t("签名购买")}
+            <button type="button" className="primary" onClick={() => run(step.sign)} disabled={busy}>
+              {busy ? t("等待钱包签名…") : signLabel}
             </button>
           )}
         </div>
       </div>
     </div>,
     document.body,
+  );
+}
+
+const OFFER_DAYS = [1, 3, 7, 30];
+
+/** 出价 for someone else's district or parcel, listed here or not. */
+export function OfferButton({ n, txIndex = null, label }: { n: number; txIndex?: number | null; label?: string }) {
+  const { token } = useSession();
+  const market = useMarket();
+  const [open, setOpen] = useState(false);
+  const [price, setPrice] = useState("");
+  const [days, setDays] = useState(7);
+  if (!token || !market?.open) return null;
+  const p = Math.floor(Number(price));
+  const valid = Number.isFinite(p) && p >= 1000;
+  const what = txIndex == null ? `${n}.bitmap` : t("{n}.bitmap 的地块 #{i}", { n, i: txIndex });
+  return (
+    <>
+      <button type="button" className="ghost sm" onClick={() => setOpen(true)}>
+        {label ?? t("出价")}
+      </button>
+      {open && (
+        <PurchaseDialog
+          title={t("给 {what} 出价", { what })}
+          token={token}
+          ready={valid}
+          close={() => setOpen(false)}
+          intro={
+            <>
+              <label className="small">
+                {t("你出的价（聪）")}
+                <input inputMode="numeric" value={price} onChange={(e) => setPrice(e.target.value.replace(/\D/g, "").slice(0, 16))} placeholder="1000000" autoFocus />
+              </label>
+              {price && <p className="muted small mono">≈ {btc(p)}</p>}
+              <label className="small">
+                {t("有效期")}
+                <select value={days} onChange={(e) => setDays(Number(e.target.value))}>
+                  {OFFER_DAYS.map((d) => (
+                    <option key={d} value={d}>
+                      {t("{n} 天", { n: d })}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="muted small">
+                {t("你的钱包会签好整笔买卖，只差持有人那一个签名：钱付到持有人现在的地址，铭文到你的地址。持有人点接受就成交，钱在那之前一直在你的钱包里。")}
+              </p>
+              <p className="muted small">
+                {t("在 unimap 撤回后，unimap 不再把它交给持有人。想万无一失，就把这笔出价用到的币花掉，比如转给自己。")}
+              </p>
+            </>
+          }
+          ask={async (acc, signer) => {
+            const q = await api<OfferQuote>("/v1/market/offers/prepare", { method: "POST", token, body: { ...acc, bitmap_number: n, tx_index: txIndex, price_sats: p } });
+            return {
+              sums: q,
+              sign: async () => {
+                const signed = await signer.sign(q.psbt, q.sign_inputs.map((index) => ({ index, address: acc.payment_address })));
+                await api(`/v1/market/offers/${q.offer_id}/sign`, { method: "POST", token, body: { psbt: signed, days } });
+                return null;
+              },
+            };
+          }}
+          signLabel={t("签名出价")}
+          doneText={t("出价已发给持有人。对方接受后交易会直接发出，你会收到通知。")}
+        />
+      )}
+    </>
+  );
+}
+
+/** Offers on a district and its parcels: the holder accepts or turns them down, a buyer withdraws their own. */
+export function OffersCard({ n, me, token, owner }: { n: number; me: string | null; token: string | null; owner: string | null }) {
+  const market = useMarket();
+  const [signer, signerError] = useSigner();
+  const [list, setList] = useState<MarketOffer[] | null>(null);
+  const [busy, setBusy] = useState<number | null>(null);
+  const [done, setDone] = useState<{ id: number; txid: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const load = useCallback(
+    () => api<{ offers: MarketOffer[] }>(`/v1/market/offers?bitmap_number=${n}`).then((r) => setList(r.offers)).catch(() => setList([])),
+    [n],
+  );
+  useEffect(() => {
+    if (market?.open) load();
+  }, [market?.open, load]);
+  if (!market?.open || !list || (list.length === 0 && !done)) return null;
+  const act = async (o: MarketOffer, f: () => Promise<void>) => {
+    setError(null);
+    setBusy(o.id);
+    try {
+      await f();
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+  const accept = (o: MarketOffer) =>
+    act(o, async () => {
+      if (!signer) throw new Error(signerError ?? "");
+      if (!confirm(t("接受 {price} 的出价？签名后交易会立刻发出，铭文会转给买家。", { price: btc(o.price_sats) }))) return;
+      const acc = await signer.accounts();
+      const prep = await api<{ psbt: string; sign_inputs: number[] }>(`/v1/market/offers/${o.id}/accept/prepare`, {
+        method: "POST",
+        token,
+        body: { public_key: acc.receive_public_key },
+      });
+      const signed = await signer.sign(prep.psbt, prep.sign_inputs.map((index) => ({ index, address: o.seller })));
+      const r = await api<{ txid: string }>(`/v1/market/offers/${o.id}/accept`, { method: "POST", token, body: { psbt: signed } });
+      setDone({ id: o.id, txid: r.txid });
+    });
+  const drop = (o: MarketOffer) => act(o, async () => void (await api(`/v1/market/offers/${o.id}`, { method: "DELETE", token })));
+  return (
+    <section className="sell-card offers-card" aria-label={t("出价")}>
+      <div className="row between">
+        <b>{list.some((o) => o.seller === me) ? t("收到的出价") : t("出价")}</b>
+        <NetworkTag network={market.network} />
+      </div>
+      {done && (
+        <p className="small">
+          {t("成交了，交易已发出。")} <TxLink txid={done.txid} network={market.network} />
+        </p>
+      )}
+      <ul className="offers">
+        {list.map((o) => {
+          const holder = !!me && me === o.seller && me === owner;
+          const mine = !!me && me === o.buyer;
+          return (
+            <li key={o.id}>
+              <b className="mono">{btc(o.price_sats)}</b>
+              <span className="small muted grow">
+                {o.tx_index != null && `${t("地块 #{n}", { n: String(o.tx_index) })} · `}
+                {mine
+                  ? t("你的出价，{date} 前有效", { date: new Date(o.expires_at).toLocaleDateString() })
+                  : t("{who} 出价，{date} 前有效", { who: short(o.buyer), date: new Date(o.expires_at).toLocaleDateString() })}
+              </span>
+              {holder && (
+                <>
+                  <button type="button" className="ghost sm" disabled={busy != null} onClick={() => drop(o)}>
+                    {t("拒绝")}
+                  </button>
+                  <button type="button" className="primary sm" disabled={busy != null} onClick={() => accept(o)}>
+                    {busy === o.id ? t("等待钱包签名…") : t("接受")}
+                  </button>
+                </>
+              )}
+              {mine && (
+                <button type="button" className="ghost sm" disabled={busy != null} onClick={() => drop(o)}>
+                  {t("撤回")}
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {error && <p className="error small">{error}</p>}
+    </section>
   );
 }

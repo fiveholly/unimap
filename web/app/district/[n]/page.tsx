@@ -13,7 +13,7 @@ import { PetsCard } from "@/components/Pets";
 import { Polls } from "@/components/Polls";
 import { Contests } from "@/components/Contests";
 import { AgentPanel } from "@/components/Agent";
-import { BuyButton, SellCard } from "@/components/Market";
+import { BuyButton, OfferButton, OffersCard, SellCard } from "@/components/Market";
 import { PostCard, RoleBadge, type PostActions } from "@/components/PostCard";
 import { ProsperityCard } from "@/components/ProsperityCard";
 import { RecruitCard } from "@/components/Recruit";
@@ -235,6 +235,7 @@ function DistrictView() {
             {district.owner_tippable && district.owner && viewer?.address !== district.owner && (
               <TipButton target={{ bitmap_number: n }} to={`${n}.bitmap`} sats={0} token={token} className="sm" label={t("打赏主人")} onError={setTipNote} />
             )}
+            {land.claimed && district.owner && viewer && viewer.address !== district.owner && <OfferButton n={n} label={t("出价买下")} />}
             {viewer && <RoleBadge role={viewer.role} parcel={viewer.parcel} />}
             {viewer?.muted && <span className="badge muted-badge">{t("你在这里被禁言了")}</span>}
           </div>
@@ -244,6 +245,7 @@ function DistrictView() {
           {won && <p className="win-note small">{won}</p>}
           {land.district?.sale && <SaleBanner sale={land.district.sale} mine={!!viewer && viewer.address === district.owner} />}
           {isOwner && token && <SellCard n={n} token={token} />}
+          <OffersCard n={n} me={viewer?.address ?? null} token={token} owner={district.owner} />
           {district.park && (
             <div className="park-banner">
               <span>{tn("属于园区 {name}", { name: <b>{district.park.name}</b> })}</span>
@@ -493,6 +495,7 @@ function ParcelList({ land, txValues, own, onPick }: { land: Land; txValues: num
             <th>{t("居民")}</th>
             <th className="num">{t("交易金额")}</th>
             <th className="num">{t("铭文")}</th>
+            <th />
           </tr>
         </thead>
         <tbody>
@@ -507,6 +510,7 @@ function ParcelList({ land, txValues, own, onPick }: { land: Land; txValues: num
               <td className="mono">{short(p.owner?.address)}</td>
               <td className="num mono">{txValues ? btc(txValues[p.tx_index]) : "—"}</td>
               <td className="num mono">#{p.inscription_number}</td>
+              <td className="num">{!own.has(p.tx_index) && p.owner?.address && <OfferButton n={land.bitmap_number} txIndex={p.tx_index} />}</td>
             </tr>
           ))}
         </tbody>

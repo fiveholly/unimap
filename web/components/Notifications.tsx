@@ -121,6 +121,10 @@ function sentence(item: Item): [React.ReactNode, string] {
         tn("你在 {place} 第 {n} 赛季的街区活动里获奖了，主人 {who} 会用闪电把奖金发给你", { place, n: Math.floor((n.block_height ?? 0) / SEASON), who }),
         `/district/${n.bitmap_number}?tab=contests`,
       ];
+    case "offer":
+      return [tn("{who} 给你的 {place} 出了价，去看看", { who, place }), `/district/${n.bitmap_number}`];
+    case "offer_accepted":
+      return [tn("{who} 接受了你对 {place} 的出价，交易已经发出", { who, place }), `/district/${n.bitmap_number}`];
     case "agent_draft":
       return [tn("你的街区 {place} 的 agent 写好了草稿，等你确认", { place }), `/district/${n.bitmap_number}?tab=agent`];
     case "agent_alert":

@@ -1,7 +1,7 @@
 """In-app notifications (通知): someone replied to your post, liked it, posted in or followed
 your district, applied to live there, or tipped you sats (api/tips.py); or a block put a
 treasure on your parcel or made your district the lucky one (api/game.py), or your district
-won a crown at the end of a season (api/seasons.py), you won a prize in a district event (api/events.py), or someone bought what you listed (api/market.py); or your district's agent has drafts for you to look at, or saw a listing you asked it to watch for (api/agent.py). Each is written in
+won a crown at the end of a season (api/seasons.py), you won a prize in a district event (api/events.py), or someone bought what you listed, made you an offer, or took yours (api/market.py); or your district's agent has drafts for you to look at, or saw a listing you asked it to watch for (api/agent.py). Each is written in
 the same transaction as the action, for the address it concerns, and never for your own actions.
 """
 
@@ -13,7 +13,7 @@ from api.db import cursor
 
 router = APIRouter()
 
-KINDS = ("reply", "like", "post", "follow", "apply", "tip", "treasure", "lucky", "crown", "event_win", "sold", "agent_draft", "agent_alert")
+KINDS = ("reply", "like", "post", "follow", "apply", "tip", "treasure", "lucky", "crown", "event_win", "sold", "offer", "offer_accepted", "agent_draft", "agent_alert")
 PAGE = 30
 
 
