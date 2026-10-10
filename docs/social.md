@@ -73,6 +73,7 @@ media: none
 | POST / PUT / DELETE | `/v1/parks[/{id}]` | 建立、修改、解散园区 `{"name", "members"}` |
 | GET / DELETE | `/v1/x/link` | 查看 / 解除绑定的 X 账号 |
 | POST | `/v1/x/link/start` / `/v1/x/link/finish` | 开始绑定 X / 交回 X 的授权码 `{"code", "state"}` |
+| GET | `/v1/search?q=` | 搜索：区块号、园区名、地址开头（至少 6 位）或 X 账号，每类最多 5 条 |
 | GET | `/v1/me/wallets` | 关联在一起的钱包，主地址在前 |
 | POST | `/v1/me/wallets/nonce` / `/v1/me/wallets` | 给另一个地址发签名消息 `{"address"}` / 交回签名完成关联 `{"address", "nonce", "signature"}` |
 | DELETE | `/v1/me/wallets/{address}` | 解除一个关联的钱包（主地址不能解除） |

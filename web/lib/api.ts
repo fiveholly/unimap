@@ -164,6 +164,13 @@ export type Me = {
 /** One of the wallets linked together (关联钱包); main is the group's first address, me the one signed in. */
 export type LinkedWallet = { address: string; main: boolean; me: boolean };
 
+/** GET /v1/search: a district number, parks by name, people by address or X handle. */
+export type SearchResults = {
+  districts: number[];
+  parks: { id: number; name: string; members: number; first: number }[];
+  people: { address: string; x: XAccount | null; districts: number[]; count: number }[];
+};
+
 /** An X (Twitter) account linked to an address through X's sign-in. */
 export type XAccount = { username: string; name: string; avatar_url: string | null; url: string };
 

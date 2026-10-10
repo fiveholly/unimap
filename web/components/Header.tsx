@@ -1,32 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { Avatar } from "./Avatar";
 import { Bell } from "./Notifications";
+import { Search } from "./Search";
 import { short, useSession } from "./Session";
 import { WALLETS, type WalletId } from "@/lib/wallets";
 
 export function Header() {
-  const router = useRouter();
   const path = usePathname();
-  const [q, setQ] = useState("");
-  const search = useRef<HTMLInputElement>(null);
-
-  // "/" jumps to the search box from anywhere except a text field.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const el = e.target as HTMLElement;
-      if (e.key !== "/" || el.closest("input, textarea, select, [contenteditable]")) return;
-      e.preventDefault();
-      search.current?.focus();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
 
   return (
     <header className="header">
@@ -55,34 +41,7 @@ export function Header() {
           </Link>
         </nav>
         <span className="grow" />
-        <form
-          className="search"
-          role="search"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const n = parseInt(q.replace(/\.bitmap$/i, ""), 10);
-            if (Number.isFinite(n) && n >= 0) {
-              router.push(`/district/${n}`);
-              setQ("");
-              search.current?.blur();
-            }
-          }}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
-            <circle cx="11" cy="11" r="7" />
-            <path d="m20 20-3.5-3.5" />
-          </svg>
-          <input
-            ref={search}
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="搜索街区号"
-            aria-label="搜索街区号"
-            name="q"
-            inputMode="numeric"
-          />
-          <kbd>/</kbd>
-        </form>
+        <Search />
         <WalletButton />
       </div>
     </header>
