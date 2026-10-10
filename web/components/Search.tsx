@@ -16,8 +16,7 @@ function items(r: SearchResults): Item[] {
     ...r.parks.map((p) => ({ key: `p${p.id}`, href: `/?b=${p.first}`, title: t("园区「{name}」", { name: p.name }), detail: t("{n} 个街区 · 在地图上看", { n: p.members }) })),
     ...r.people.map((p) => ({
       key: `a${p.address}`,
-      href: p.count ? `/district/${p.districts[0]}` : p.x!.url,
-      external: !p.count,
+      href: `/address/${p.address}`,
       title: (
         <>
           {p.x && (

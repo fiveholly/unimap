@@ -119,6 +119,52 @@ def me(address: str = Depends(current_address)):
     return {"address": address, "districts": districts, "parcels": parcels, "follows": follows, "x": x, "wallets": linked}
 
 
+@router.get("/v1/people/{address}")
+def person(address: str, before_id: int | None = None, limit: int = 20, viewer: str | None = Depends(optional_address)):
+    """Someone's page: the land they hold, their X account and what they posted, newest first."""
+    address = normalize_address(address)
+    with cursor(dict_rows=True) as cur:
+        posts = _fetch_posts(
+            cur,
+            "p.author_address = %(a)s and p.removed_at is null and (%(before)s::int8 is null or p.id < %(before)s)",
+            {"a": address, "before": before_id},
+            viewer,
+            _limit(limit),
+        )
+    with cursor() as cur:
+        districts, parcels = roles.holdings(cur, address)
+        x = xlink.of(cur, address)
+        cur.execute(
+            "select count(*) filter (where reply_to is null), count(*) filter (where reply_to is not null), "
+            "min(created_at) from social.posts where author_address = %s and removed_at is null;",
+            (address,),
+        )
+        post_count, reply_count, first_post = cur.fetchone()
+        cur.execute("select count(*) from social.follows where address = %s;", (address,))
+        follows = cur.fetchone()[0]
+        # Score held districts a run at a time, so two far-apart districts don't score everything between.
+        levels, park_of, run = {}, {}, []
+        for n in districts + [None]:
+            if run and (n is None or n - run[0] > 1000):
+                lv, po = parks.scored(cur, run[0], run[-1])
+                levels.update(lv)
+                park_of.update(po)
+                run = []
+            if n is not None:
+                run.append(n)
+    return {
+        "address": address,
+        "x": x,
+        "districts": [{"bitmap_number": n, "level": levels.get(n, 0), "park": (park_of.get(n) or {}).get("name")} for n in districts],
+        "parcels": parcels,
+        "post_count": post_count,
+        "reply_count": reply_count,
+        "follows": follows,
+        "first_post_at": first_post.isoformat() if first_post else None,
+        "posts": posts,
+    }
+
+
 @router.get("/v1/districts/{bitmap_number}")
 def district(bitmap_number: int, tasks: BackgroundTasks, viewer: str | None = Depends(optional_address)):
     """District page header: profile, owner, the viewer's role, counts."""

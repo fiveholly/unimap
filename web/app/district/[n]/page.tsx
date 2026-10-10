@@ -198,7 +198,7 @@ function DistrictView() {
                     {district.owner_x && <XHandle username={district.owner_x.username} />}
                   </div>
                   <div className="mono muted small" title={district.owner || ""}>
-                    {short(district.owner)}
+                    {district.owner ? <Link href={`/address/${district.owner}`}>{short(district.owner)}</Link> : short(district.owner)}
                     {land.district && ` · ${t("铭文 #{n}", { n: land.district.inscription_number })}`}
                   </div>
                 </>
