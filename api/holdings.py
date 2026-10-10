@@ -3,7 +3,8 @@ holds as pets living on the district: a dog for DOG•GO•TO•THE•MOON, a ca
 a puppet for a Bitcoin Puppet, a monkey for a NodeMonke, a frog for a Bitcoin Frog and a
 standing stone for a Runestone. Up to MAX_SHOWN at once.
 
-ASSETS lists what can be shown and the amounts each tier starts at. Nothing shows until the
+ASSETS lists what can be shown and the amounts each tier starts at. Amounts count every wallet
+linked to the owner's address (api/wallets.py). Nothing shows until the
 owner picks it (social.showcase), and a pick only counts while the address that made it still
 holds the district, so a new owner's wallet is never shown without their say.
 
@@ -25,7 +26,7 @@ import requests
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import roles
+from api import roles, wallets
 from api.auth import current_address
 from api.db import cursor
 
@@ -177,12 +178,33 @@ def stale(cur, address):
     return row is None or row[0]
 
 
-def _amounts(cur, addresses):
-    cur.execute("select address, asset, amount from social.holdings where address = any(%s);", (list(addresses),))
+def _amounts(cur, owners):
+    """{owner: {asset: amount}}, summed over each owner's linked wallets."""
+    members = wallets.groups(cur, owners)
+    by_address = {}
+    for owner, addresses in members.items():
+        for a in addresses:
+            by_address.setdefault(a, []).append(owner)
+    cur.execute("select address, asset, amount from social.holdings where address = any(%s);", (list(by_address),))
     out = {}
     for address, asset, amount in cur.fetchall():
-        out.setdefault(address, {})[asset] = amount
+        for owner in by_address[address]:
+            held = out.setdefault(owner, {})
+            held[asset] = held.get(asset, 0) + amount
     return out
+
+
+def refresh_group(owner, min_age_minutes=0, only_stale=False):
+    """refresh() each wallet linked to owner; True if any was asked anew."""
+    with cursor() as cur:
+        addresses = wallets.group(cur, owner)
+        if only_stale:
+            addresses = [a for a in addresses if stale(cur, a)]
+    return any([refresh(a, min_age_minutes) for a in addresses])
+
+
+def stale_group(cur, owner):
+    return any(stale(cur, a) for a in wallets.group(cur, owner))
 
 
 def _choices(cur, lo, hi, owners):
@@ -226,13 +248,19 @@ def shown(cur, n, owner):
 
 def _owner_view(cur, n, owner):
     held = _amounts(cur, [owner]).get(owner, {})
-    cur.execute("select checked_at, error from social.holdings_checked where address = %s;", (owner,))
-    checked = cur.fetchone()
+    addresses = wallets.group(cur, owner)
+    # The oldest check among the wallets, and any failure, since the sum is only as fresh as that.
+    cur.execute(
+        "select min(checked_at), string_agg(error, '; ') from social.holdings_checked where address = any(%s);",
+        (addresses,),
+    )
+    checked_at, error = cur.fetchone()
     return {
         "chosen": _choices(cur, n, n, {n: owner}).get(n, []),
         "held": [_view(a, held.get(a, 0)) for a in ASSETS],
-        "checked_at": checked[0].isoformat() if checked else None,
-        "error": checked[1] if checked else None,
+        "wallets": len(addresses),
+        "checked_at": checked_at.isoformat() if checked_at else None,
+        "error": error,
         "shown": shown(cur, n, owner),
     }
 
@@ -242,13 +270,15 @@ def showcase(bitmap_number: int, tasks: BackgroundTasks, address: str = Depends(
     """The owner's view: what their wallet holds and what they chose to show."""
     with cursor() as cur:
         roles.require_owner(cur, bitmap_number, address)
-        cur.execute("select 1 from social.holdings_checked where address = %s;", (address,))
-        first = cur.fetchone() is None
-        old = not first and stale(cur, address)
-    if first:
-        refresh(address)  # the first look waits, so the owner sees their holdings at once
-    elif old:
-        tasks.add_task(refresh, address)
+        addresses = wallets.group(cur, address)
+        cur.execute("select address from social.holdings_checked where address = any(%s);", (addresses,))
+        checked = {r[0] for r in cur.fetchall()}
+        old = stale_group(cur, address)
+    for a in addresses:
+        if a not in checked:
+            refresh(a)  # the first look waits, so the owner sees their holdings at once
+    if old:
+        tasks.add_task(refresh_group, address, 0, True)
     with cursor() as cur:
         return _owner_view(cur, bitmap_number, address)
 
@@ -278,6 +308,6 @@ def set_showcase(bitmap_number: int, req: ShowcaseBody, address: str = Depends(c
 def refresh_showcase(bitmap_number: int, address: str = Depends(current_address)):
     with cursor() as cur:
         roles.require_owner(cur, bitmap_number, address)
-    refresh(address, MIN_REFRESH_MINUTES)
+    refresh_group(address, MIN_REFRESH_MINUTES)
     with cursor() as cur:
         return _owner_view(cur, bitmap_number, address)

@@ -73,7 +73,8 @@ def login(req: LoginRequest):
     with cursor() as cur:
         cur.execute(
             "update social.login_nonces set used_at = now() "
-            "where nonce = %s and address = %s and used_at is null and expires_at > now() returning message;",
+            "where nonce = %s and address = %s and used_at is null and expires_at > now() "
+            "and message like 'Sign in to unimap%%' returning message;",
             (req.nonce, address),
         )
         row = cur.fetchone()

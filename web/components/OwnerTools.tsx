@@ -375,7 +375,8 @@ function PetsForm({ n, token, save }: { n: number; token: string | null; save: (
       </ul>
       <p className="dim small">
         {view.checked_at ? `数量查于 ${new Date(view.checked_at).toLocaleString("zh-CN")}。` : ""}
-        {view.error ? "上次没能查到最新数量，先用之前的结果。" : ""}只看登录的这个钱包地址。
+        {view.error ? "上次没能查到最新数量，先用之前的结果。" : ""}
+        {(view.wallets ?? 1) > 1 ? `数量合计了你关联的 ${view.wallets} 个钱包。` : "只看登录的这个钱包地址；在我的土地里可以关联别的钱包。"}
       </p>
       {error && <p className="error small">{error}</p>}
       <div className="row end">

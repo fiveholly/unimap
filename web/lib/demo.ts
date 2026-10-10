@@ -3,7 +3,7 @@
 // here from deterministic fake data; what the visitor does (posts, likes, follows, profile
 // edits) is kept in localStorage, and "重置演示数据" clears it.
 
-import type { Application, District, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, Role, Showcase, Tile, XAccount } from "./api";
+import type { Application, District, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, Role, LinkedWallet, Showcase, Tile, XAccount } from "./api";
 import { connected } from "./parks";
 import { MAX_SHOWN, PET_KEYS, PETS, type Pet, type PetKey } from "./pets";
 import { prosperity, THRESHOLDS, type ProsperityParts } from "./prosperity";
@@ -16,6 +16,8 @@ export const DEMO_TIP = 918_500;
  * (840008, 840009), 838407 across the street from it and 812345, and lives on parcel 7 of
  * 840001. */
 export const DEMO_ADDRESS = "bc1pdemo7visitor0wa11et0unimap0city0xyz0000000000000000q8d2k";
+// The visitor's second wallet, for trying 关联钱包: it holds the NodeMonkes the first lacks.
+export const DEMO_SECOND_ADDRESS = "bc1pdemo7second0wa11et0unimap0city0xyz00000000000000000r4mz";
 const OWNED = [838407, 840000, 840008, 840009, 812345];
 const OWN_PARCEL = { bitmap_number: 840001, tx_index: 7 };
 
@@ -128,6 +130,7 @@ type State = {
   showcase?: Record<number, PetKey[]>; // what the visitor chose to show on their districts
   notifications?: Notification[]; // the visitor's, newest first
   x?: XAccount | null; // the visitor's linked X account
+  linked?: string[]; // wallets the visitor linked to their own
 };
 type DemoPoll = { id: number; n: number; question: string; options: string[]; by: string; created_at: string; closes_at: string; closed_at: string | null; votes: Record<string, number> };
 
@@ -269,9 +272,15 @@ const SHOWCASE_STREET: Record<number, Partial<Record<PetKey, number>>> = {
   840003: { monkey: 10, runestone: 11 },
   840004: { runestone: 4, frog: 6, cat: 2 },
 };
+const SECOND_HOLDINGS: Partial<Record<PetKey, number>> = { dog: 600_000, monkey: 4 };
 function holdingsOf(address: string | null, n: number): Partial<Record<PetKey, number>> {
   if (!address) return {};
-  if (address === DEMO_ADDRESS) return DEMO_HOLDINGS;
+  if (address === DEMO_ADDRESS) {
+    if (!load().linked?.includes(DEMO_SECOND_ADDRESS)) return DEMO_HOLDINGS;
+    const sum: Partial<Record<PetKey, number>> = { ...DEMO_HOLDINGS };
+    for (const [k, v] of Object.entries(SECOND_HOLDINGS) as [PetKey, number][]) sum[k] = (sum[k] ?? 0) + v;
+    return sum;
+  }
   if (SHOWCASE_STREET[n]) return SHOWCASE_STREET[n];
   if (hash(n + 61) > 0.14) return {};
   // Most show a dog, some a cat, a few one of the collections, never more than three.
@@ -294,6 +303,7 @@ function showcaseView(n: number): Showcase {
   return {
     chosen: load().showcase?.[n] ?? [],
     held: PET_KEYS.map((k) => ({ asset: k, tier: petTier(k, held[k] ?? 0), amount: String(held[k] ?? 0) })),
+    wallets: 1 + (load().linked?.length ?? 0),
     checked_at: iso(0.1),
     error: null,
     shown: petsAt(n),
@@ -447,6 +457,11 @@ function district(n: number, me: string | null): District {
   };
 }
 
+const walletsView = (): LinkedWallet[] => [
+  { address: DEMO_ADDRESS, main: true, me: true },
+  ...(load().linked ?? []).map((address) => ({ address, main: false, me: false })),
+];
+
 type Opts = { method?: string; body?: unknown; token?: string | null };
 
 function route(path: string, opts: Opts): unknown {
@@ -473,7 +488,27 @@ function route(path: string, opts: Opts): unknown {
   if ((m = p.match(/^\/v1\/land\/(\d+)\/events$/))) return { events: events(+m[1]) };
   if (p === "/v1/me") {
     const a = needMe();
-    return { address: a, districts: OWNED, parcels: [OWN_PARCEL], follows: [...s.follows].sort((x, y) => x - y), x: s.x ?? null } satisfies Me;
+    return { address: a, districts: OWNED, parcels: [OWN_PARCEL], follows: [...s.follows].sort((x, y) => x - y), x: s.x ?? null, wallets: walletsView() } satisfies Me;
+  }
+  if (p === "/v1/me/wallets") {
+    needMe();
+    if (method === "POST") {
+      if ((s.linked ??= []).includes(String(body.address))) fail(409, "already in your wallets");
+      s.linked.push(String(body.address));
+      save();
+    }
+    return { wallets: walletsView() };
+  }
+  if (p === "/v1/me/wallets/nonce") {
+    needMe();
+    if (body.address === DEMO_ADDRESS || s.linked?.includes(String(body.address))) fail(409, "already in your wallets");
+    return { nonce: "demo", message: `Link this wallet on unimap\naddress: ${body.address}\nto: ${DEMO_ADDRESS}` };
+  }
+  if ((m = p.match(/^\/v1\/me\/wallets\/(\w+)$/)) && method === "DELETE") {
+    needMe();
+    s.linked = (s.linked ?? []).filter((a) => a !== m![1]);
+    save();
+    return { wallets: walletsView() };
   }
   // X sign-in skips x.com in the demo: start goes straight to the callback page.
   if (p === "/v1/x/link") {

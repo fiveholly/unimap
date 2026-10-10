@@ -14,7 +14,7 @@ import psycopg2.extras
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import bip322, holdings, notify, parks, prosperity, recruit, roles, style, xlink
+from api import bip322, holdings, notify, parks, prosperity, recruit, roles, style, wallets, xlink
 from api.auth import current_address, normalize_address, optional_address
 from api.db import cursor
 from api.land import EVENT_SELECT, _event
@@ -115,7 +115,8 @@ def me(address: str = Depends(current_address)):
         cur.execute("select bitmap_number from social.follows where address = %s order by bitmap_number;", (address,))
         follows = [r[0] for r in cur.fetchall()]
         x = xlink.of(cur, address)
-    return {"address": address, "districts": districts, "parcels": parcels, "follows": follows, "x": x}
+        linked = wallets.view(cur, address)
+    return {"address": address, "districts": districts, "parcels": parcels, "follows": follows, "x": x, "wallets": linked}
 
 
 @router.get("/v1/districts/{bitmap_number}")
@@ -149,8 +150,8 @@ def district(bitmap_number: int, tasks: BackgroundTasks, viewer: str | None = De
         pets = holdings.shown(cur, bitmap_number, owner)
         owner_x = xlink.of(cur, owner)
         # Pets on show keep their owner's balances fresh; the page doesn't wait for it.
-        if holdings.chosen(cur, bitmap_number, owner) and holdings.stale(cur, owner):
-            tasks.add_task(holdings.refresh, owner)
+        if holdings.chosen(cur, bitmap_number, owner) and holdings.stale_group(cur, owner):
+            tasks.add_task(holdings.refresh_group, owner, 0, True)
     profile["style"] = style.visible(profile["style"], levels[bitmap_number])
     return {
         "bitmap_number": bitmap_number,

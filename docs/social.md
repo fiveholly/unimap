@@ -45,7 +45,7 @@ media: none
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/v1/me` | 当前地址持有的街区、地块和关注列表 |
+| GET | `/v1/me` | 当前地址持有的街区、地块、关注列表和关联钱包 |
 | GET | `/v1/districts/{n}` | 主页信息、置顶帖、关注数、访问者身份 |
 | PUT | `/v1/districts/{n}/profile` | 社区主修改简介、封面、访客回复开关 |
 | GET | `/v1/districts/{n}/posts` | 顶层帖子，新的在前，`before_id` 翻页 |
@@ -73,6 +73,9 @@ media: none
 | POST / PUT / DELETE | `/v1/parks[/{id}]` | 建立、修改、解散园区 `{"name", "members"}` |
 | GET / DELETE | `/v1/x/link` | 查看 / 解除绑定的 X 账号 |
 | POST | `/v1/x/link/start` / `/v1/x/link/finish` | 开始绑定 X / 交回 X 的授权码 `{"code", "state"}` |
+| GET | `/v1/me/wallets` | 关联在一起的钱包，主地址在前 |
+| POST | `/v1/me/wallets/nonce` / `/v1/me/wallets` | 给另一个地址发签名消息 `{"address"}` / 交回签名完成关联 `{"address", "nonce", "signature"}` |
+| DELETE | `/v1/me/wallets/{address}` | 解除一个关联的钱包（主地址不能解除） |
 
 ## 繁荣度
 
@@ -150,7 +153,25 @@ media: none
 - **数据来源。** 持有量从 Hiro 的公开 Ordinals 和 Runes 接口查（`HOLDINGS_API_URL`、`HOLDINGS_API_KEY` 可改），结果缓存在 `social.holdings`，6 小时内不重复查；地图只读缓存。主人点「重新查询」最多 10 分钟一次。查询失败时继续用上次的结果。自己的 ord 节点目前没开地址和 Runes 索引，以后开了可以换成自己的数据。
 - **铭文系列。** 一个铭文属不属于某个系列，看 `api/collections/<slug>.json` 里的铭文 ID 清单。`scripts/fetch_collections.py` 从社区维护的 ordinals-collections 仓库下载（`quantum-cats`、`bitcoin-puppets`、`nodemonkes`、`bitcoin-frogs`、`runestone`），部署脚本会自动跑；清单缺失时这个宠物不显示。这几个 slug 还没有对着那个仓库核对过，部署后看脚本的输出，哪个下载失败就改成仓库里的实际名字。
 - **接口。** `/v1/land` 的格子带 `pets`（例如 `["dog:2", "cat:1"]`），街区主页带 `pets`（资产、档位、数量）。主人用 `GET /v1/districts/{n}/showcase` 看自己持有什么，`PUT` 同一路径保存选择，`POST …/showcase/refresh` 重新查询。
-- **只看登录的地址。** 一个人的资产分在几个钱包地址时，暂时只算登录的那个；以后可以加签名绑定多个地址。
+- **合计关联的钱包。** 数量按街区主人的地址加上它关联的所有钱包合计（见下面的关联钱包）；没关联时只算这一个地址。
+
+## 关联钱包
+
+一个人的土地和藏品常常放在不同地址。登录一个地址后，在“我的土地”里选一个钱包、在钱包里切换到另一个账户，签一条消息：
+
+```
+Link this wallet on unimap
+address: <要关联的地址>
+to: <主地址>
+nonce: …
+expires: …
+```
+
+签名用 BIP-322，和登录一样，十分钟有效、只能用一次；消息开头不同，不能拿来登录那个地址。验证通过后两个地址成为一组（`social.wallet_links`），第一个登录的是主地址。
+
+- 一个地址只能在一组里；已经关联在别处、或者自己带着关联钱包的地址要先在那边解除。一组最多再关联 10 个。
+- 组里任何地址登录都能看到同一组，可以解除除主地址以外的成员。
+- 关联只影响藏品数量的合计，发帖、角色和管理街区仍然按各自的地址。
 
 ## 通知
 

@@ -508,6 +508,66 @@ class SocialApi(unittest.TestCase):
                 with self.conn.cursor() as cur:
                     cur.execute("delete from social.showcase; delete from social.holdings; delete from social.holdings_checked;")
 
+    def test_linked_wallets(self):
+        from decimal import Decimal
+
+        from api import holdings
+
+        dave = Wallet(4)
+
+        class Fake:
+            def rune_balances(self, address):
+                return {"DOGGOTOTHEMOON": Decimal(600000)} if address in (ALICE.address, dave.address) else {}
+
+            def inscription_ids(self, address):
+                return iter([])
+
+        def link(me, other, sign_with=None):
+            r = self.client.post("/v1/me/wallets/nonce", json={"address": other.address}, headers=self.h(me))
+            if r.status_code != 200:
+                return r
+            n = r.json()
+            self.assertIn(f"to: {me.address}", n["message"])
+            body = {"address": other.address, "nonce": n["nonce"], "signature": (sign_with or other).sign(n["message"])}
+            return self.client.post("/v1/me/wallets", json=body, headers=self.h(me))
+
+        holdings.provider = Fake()
+        try:
+            self.assertEqual(self.client.get("/v1/me", headers=self.h(ALICE)).json()["wallets"], [{"address": ALICE.address, "main": True, "me": True}])
+            # The other wallet has to sign, and the message can't be used to sign in as it.
+            self.assertEqual(link(ALICE, dave, sign_with=CAROL).status_code, 401)
+            r = self.client.post("/v1/me/wallets/nonce", json={"address": dave.address}, headers=self.h(ALICE)).json()
+            login = self.client.post("/v1/auth/login", json={"address": dave.address, "nonce": r["nonce"], "signature": dave.sign(r["message"])})
+            self.assertEqual(login.status_code, 401)
+            r = link(ALICE, dave)
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertEqual([w["address"] for w in r.json()["wallets"]], [ALICE.address, dave.address])
+            self.assertEqual(link(ALICE, dave).status_code, 409)
+            self.assertEqual(link(CAROL, dave).status_code, 409)  # one group at most
+            self.assertEqual(link(CAROL, ALICE).status_code, 409)
+            # Pets count both wallets: 600k + 600k dogs reach the second tier.
+            view = self.client.get(f"/v1/districts/{DISTRICT}/showcase", headers=self.h(ALICE)).json()
+            self.assertEqual(view["wallets"], 2)
+            self.assertEqual({h["asset"]: h["tier"] for h in view["held"]}["dog"], 2)
+            self.client.put(f"/v1/districts/{DISTRICT}/showcase", json={"assets": ["dog"]}, headers=self.h(ALICE))
+            self.assertEqual(self.client.get(f"/v1/land?start={DISTRICT}&end={DISTRICT}").json()["tiles"][0]["pets"], ["dog:2"])
+            # Bob's wallet joins the group through Alice; Bob sees the same group from his side.
+            self.assertEqual(link(ALICE, BOB).status_code, 200)
+            bob = self.client.get("/v1/me/wallets", headers=self.h(BOB)).json()["wallets"]
+            self.assertEqual([(w["address"], w["main"], w["me"]) for w in bob][0], (ALICE.address, True, False))
+            self.assertEqual(self.client.delete(f"/v1/me/wallets/{ALICE.address}", headers=self.h(BOB)).status_code, 404)
+            self.assertEqual(self.client.delete(f"/v1/me/wallets/{BOB.address}", headers=self.h(BOB)).status_code, 200)
+            r = self.client.delete(f"/v1/me/wallets/{dave.address}", headers=self.h(ALICE))
+            self.assertEqual(r.json()["wallets"], [{"address": ALICE.address, "main": True, "me": True}])
+            self.assertEqual(self.client.get(f"/v1/land?start={DISTRICT}&end={DISTRICT}").json()["tiles"][0]["pets"], ["dog:1"])
+        finally:
+            holdings.provider = None
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "delete from social.wallet_links; delete from social.showcase; delete from social.holdings; "
+                    "delete from social.holdings_checked;"
+                )
+
     # --- land changes hands ---
 
     def test_owner_change_moves_admin_rights(self):

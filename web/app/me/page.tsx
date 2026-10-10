@@ -6,7 +6,8 @@ import { useEffect, useState } from "react";
 import { Avatar } from "@/components/Avatar";
 import { useSession } from "@/components/Session";
 import { XIcon } from "@/components/X";
-import { api, ApiError, type Me, type XAccount } from "@/lib/api";
+import { api, ApiError, type LinkedWallet, type Me, type XAccount } from "@/lib/api";
+import { LINK_WALLETS, type Wallet } from "@/lib/wallets";
 
 export default function MePage() {
   const { token, ready, address } = useSession();
@@ -32,6 +33,7 @@ export default function MePage() {
         </div>
       </section>
       <XSection token={token} />
+      {me.wallets && <WalletsSection token={token} initial={me.wallets} />}
       <Group title="街区" count={me.districts.length} empty="这个地址没有持有街区。">
         {me.districts.map((n) => (
           <Link key={n} className="chip mono" href={`/district/${n}`}>
@@ -135,6 +137,93 @@ function XSection({ token }: { token: string }) {
         </div>
       ) : (
         <p className="muted small">这个站点还没有开启 X 绑定。</p>
+      )}
+      {error && <p className="error small">{error}</p>}
+    </section>
+  );
+}
+
+const short = (a: string) => (a.length > 20 ? `${a.slice(0, 10)}…${a.slice(-6)}` : a);
+
+/** 关联钱包: prove another address is yours by signing with it, so pets count what all of them hold. */
+function WalletsSection({ token, initial }: { token: string; initial: LinkedWallet[] }) {
+  const [wallets, setWallets] = useState(initial);
+  const [picking, setPicking] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const link = async (w: Wallet) => {
+    setBusy(w.id);
+    setError(null);
+    try {
+      const address = await w.connect();
+      if (wallets.some((x) => x.address === address)) {
+        throw new Error(`${w.name} 现在选中的是已经关联的地址，请在钱包里切换到另一个账户再试。`);
+      }
+      const n = await api<{ nonce: string; message: string }>("/v1/me/wallets/nonce", { method: "POST", token, body: { address } });
+      const signature = await w.sign(address, n.message);
+      const res = await api<{ wallets: LinkedWallet[] }>("/v1/me/wallets", { method: "POST", token, body: { address, nonce: n.nonce, signature } });
+      setWallets(res.wallets);
+      setPicking(false);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg === "cancelled" ? null : msg);
+    } finally {
+      setBusy(null);
+    }
+  };
+  const unlink = async (address: string) => {
+    if (!confirm("解除关联后，这个钱包里的藏品不再算进你的街区。")) return;
+    setBusy(address);
+    setError(null);
+    try {
+      setWallets((await api<{ wallets: LinkedWallet[] }>(`/v1/me/wallets/${address}`, { method: "DELETE", token })).wallets);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <section className="me-group linked-wallets">
+      <h2 className="section-title">
+        关联钱包 <span className="mono">{wallets.length}</span>
+      </h2>
+      <p className="muted small">土地和藏品放在不同地址？用另一个钱包签个名证明它也是你的，街区上的宠物会合计所有关联钱包的数量。发帖和管理街区仍按各自地址。</p>
+      <ul className="wallet-list">
+        {wallets.map((w) => (
+          <li key={w.address}>
+            <span className="mono small" title={w.address}>
+              {short(w.address)}
+            </span>
+            {w.main && <span className="tag">主地址</span>}
+            {w.me && <span className="tag">当前登录</span>}
+            <span className="grow" />
+            {!w.main && (
+              <button type="button" className="ghost sm" onClick={() => unlink(w.address)} disabled={!!busy}>
+                解除
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+      {picking ? (
+        <div className="link-picker">
+          <p className="muted small">选一个钱包，在钱包里切换到要关联的账户，再签名。签名不花钱，也不会发起交易。</p>
+          <div className="chips">
+            {LINK_WALLETS.map((w) => (
+              <button key={w.id} type="button" className="chip" onClick={() => link(w)} disabled={!!busy || !w.available()}>
+                {busy === w.id ? "等待签名…" : w.id === "manual" ? "手动粘贴签名" : w.name}
+              </button>
+            ))}
+            <button type="button" className="link-btn small" onClick={() => setPicking(false)} disabled={!!busy}>
+              取消
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button type="button" className="ghost" onClick={() => setPicking(true)}>
+          关联另一个钱包
+        </button>
       )}
       {error && <p className="error small">{error}</p>}
     </section>

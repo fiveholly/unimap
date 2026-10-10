@@ -158,7 +158,11 @@ export type Me = {
   parcels: { bitmap_number: number; tx_index: number }[];
   follows: number[];
   x?: XAccount | null;
+  wallets?: LinkedWallet[];
 };
+
+/** One of the wallets linked together (关联钱包); main is the group's first address, me the one signed in. */
+export type LinkedWallet = { address: string; main: boolean; me: boolean };
 
 /** An X (Twitter) account linked to an address through X's sign-in. */
 export type XAccount = { username: string; name: string; avatar_url: string | null; url: string };
@@ -166,7 +170,7 @@ export type XAccount = { username: string; name: string; avatar_url: string | nu
 export type FeedItem = { type: "post"; time: number; post: Post } | { type: "event"; time: number; event: LandEvent };
 
 /** The owner's view of what their wallet holds and what the district shows. */
-export type Showcase = { chosen: PetKey[]; held: Pet[]; checked_at: string | null; error: string | null; shown: Pet[] };
+export type Showcase = { chosen: PetKey[]; held: Pet[]; wallets?: number; checked_at: string | null; error: string | null; shown: Pet[] };
 
 export type NotificationKind = "reply" | "like" | "post" | "follow" | "apply";
 export type Notification = {

@@ -3,9 +3,9 @@
 // Each wallet gives the address that holds the user's inscriptions (the
 // ordinals / taproot address) and signs with BIP-322 where it can.
 
-import { DEMO, DEMO_ADDRESS } from "./demo";
+import { DEMO, DEMO_ADDRESS, DEMO_SECOND_ADDRESS } from "./demo";
 
-export type WalletId = "unisat" | "xverse" | "okx" | "manual" | "demo";
+export type WalletId = "unisat" | "xverse" | "okx" | "manual" | "demo" | "demo2";
 
 export type Wallet = {
   id: WalletId;
@@ -93,7 +93,18 @@ const demo: Wallet = {
   sign: async () => "demo-" + Math.random().toString(36).slice(2),
 };
 
+// Demo mode only: a second pretend wallet to link to the first (关联钱包).
+const demo2: Wallet = {
+  id: "demo2",
+  name: "演示钱包 2",
+  available: () => DEMO,
+  connect: async () => DEMO_SECOND_ADDRESS,
+  sign: async () => "demo-" + Math.random().toString(36).slice(2),
+};
+
 export const WALLETS: Wallet[] = DEMO ? [demo, unisat, xverse, okx, manual] : [unisat, xverse, okx, manual];
+/** Wallets that can sign to link another address while signed in (关联钱包). */
+export const LINK_WALLETS: Wallet[] = DEMO ? [demo2, unisat, xverse, okx, manual] : WALLETS;
 
 export function walletById(id: WalletId | null | undefined): Wallet | undefined {
   return WALLETS.find((x) => x.id === id);
