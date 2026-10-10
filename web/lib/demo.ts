@@ -3,7 +3,7 @@
 // here from deterministic fake data; what the visitor does (posts, likes, follows, profile
 // edits) is kept in localStorage, and "重置演示数据" clears it.
 
-import type { Application, District, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
+import type { Application, District, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
 import { connected } from "./parks";
 import { MAX_SHOWN, PET_KEYS, PETS, type Pet, type PetKey } from "./pets";
 import { prosperity, THRESHOLDS, type ProsperityParts } from "./prosperity";
@@ -142,7 +142,10 @@ type State = {
   linked?: string[]; // wallets the visitor linked to their own
   reports?: { post_id: number; reporter: string; reason: string; note: string; created_at: string; resolved?: boolean }[];
   bans?: Ban[];
+  lightning?: string | null; // the visitor's Lightning address for tips
+  tips?: DemoTip[];
 };
+type DemoTip = { id: number; tipper: string; recipient: string; n: number; post_id: number | null; sats: number; comment: string; status: Tip["status"]; at: number };
 type DemoPoll = { id: number; n: number; question: string; options: string[]; by: string; created_at: string; closes_at: string; closed_at: string | null; votes: Record<string, number> };
 
 const iso = (daysAgo: number) => new Date((NOW - daysAgo * DAY) * 1000).toISOString();
@@ -166,9 +169,66 @@ function seedExtras(s: State) {
     const post = s.posts.find((p) => p.body?.startsWith(start));
     return post ? [{ post_id: post.id, reporter: fakeAddress(who), reason, note, created_at: iso(0.2 - i * 0.03) }] : [];
   });
+  s.lightning === undefined && (s.lightning = "bitmapper@walletofsatoshi.com");
+  s.tips ??= seedTips(s);
   s.bans ??= [{ address: fakeAddress(705), reason: "scam", banned_by: DEMO_ADDRESS, created_at: iso(2), expires_at: iso(-28) }];
   return s;
 }
+
+// Tips other wallets sent on the seeded posts, and two on the visitor's own, for the 打赏榜.
+function seedTips(s: State): DemoTip[] {
+  const out: DemoTip[] = [];
+  const amounts = [100, 210, 500, 1000, 2100, 5000];
+  for (const p of s.posts.filter((x) => x.reply_to == null && !x.removed)) {
+    const mine = p.author.address === DEMO_ADDRESS;
+    const k = mine ? 2 : hash(p.id * 13) < 0.6 && strHash(p.author.address) % 10 < 7 ? 1 + Math.floor(hash(p.id * 17) * 4) : 0;
+    for (let i = 0; i < k; i++)
+      out.push({ id: out.length + 1, tipper: fakeAddress(800 + p.id * 5 + i), recipient: p.author.address, n: p.bitmap_number, post_id: p.id,
+        sats: amounts[Math.floor(hash(p.id * 19 + i) * amounts.length)], comment: i === 0 && mine ? "写得好，请你喝杯咖啡" : "", status: "settled",
+        at: (NOW - (0.3 + hash(p.id + i) * 5) * DAY) * 1000 });
+  }
+  return out;
+}
+const strHash = (a: string) => [...a].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
+/** Who has a Lightning address in the demo: the visitor if they set one, and most other wallets. */
+const tippable = (a: string | null) => !!a && (a === DEMO_ADDRESS ? !!load().lightning : strHash(a) % 10 < 7);
+const settledTips = () => (load().tips ?? []).filter((x) => x.status === "settled");
+const postTips = (id: number) => settledTips().filter((x) => x.post_id === id).reduce((a, x) => a + x.sats, 0);
+function tipsSince(days: number) {
+  const since = Date.now() - days * DAY * 1000;
+  return settledTips().filter((x) => x.at > since);
+}
+function districtTips(n: number) {
+  const recent = tipsSince(30).filter((x) => x.n === n);
+  return { sats30: recent.reduce((a, x) => a + x.sats, 0), tippers30: new Set(recent.map((x) => x.tipper)).size };
+}
+function tipTop(me: string | null): TipTop {
+  const recent = tipsSince(7);
+  const by = <K,>(key: (x: DemoTip) => K | null) => {
+    const m = new Map<K, { sats: number; tippers: Set<string> }>();
+    for (const x of recent) {
+      const k = key(x);
+      if (k == null) continue;
+      const e = m.get(k) ?? { sats: 0, tippers: new Set<string>() };
+      e.sats += x.sats;
+      e.tippers.add(x.tipper);
+      m.set(k, e);
+    }
+    return [...m.entries()].sort((a, b) => b[1].sats - a[1].sats).slice(0, 10);
+  };
+  const s = load();
+  return {
+    days: 7,
+    posts: by((x) => x.post_id).flatMap(([id, e]) => {
+      const p = s.posts.find((x) => x.id === id && !x.removed);
+      return p ? [{ post: view(p, me), sats: e.sats, tippers: e.tippers.size }] : [];
+    }),
+    districts: by((x) => x.n).map(([n, e]) => ({ bitmap_number: n, name: `${n}.bitmap`, zone: zoneOf(n), sats: e.sats, tippers: e.tippers.size })),
+  };
+}
+const BECH32 = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+const fakeInvoice = (sats: number, seed: number) =>
+  `lnbc${sats * 10}n1p` + Array.from({ length: 180 }, (_, i) => BECH32[Math.floor(hash(seed * 31 + i) * 32)]).join("");
 
 // What the visitor's wallet hears about: replies on their posts, likes, new followers of
 // 840000 and someone asking to live there.
@@ -186,6 +246,7 @@ function seedNotifications(s: State): Notification[] {
   add({ kind: "follow", actor: fakeAddress(611), bitmap_number: 840000, post_id: null, created_at: at(0.4) });
   add({ kind: "follow", actor: fakeAddress(612), bitmap_number: 840000, post_id: null, created_at: at(5) });
   add({ kind: "apply", actor: fakeAddress(613), bitmap_number: 840000, post_id: null, created_at: at(0.2) });
+  if (mine[0]) add({ kind: "tip", actor: fakeAddress(800 + mine[0].id * 5), bitmap_number: mine[0].bitmap_number, post_id: mine[0].id, created_at: at(0.6), amount_sats: 2100, comment: "写得好，请你喝杯咖啡" });
   add({ kind: "follow", actor: fakeAddress(614), bitmap_number: 812345, post_id: null, created_at: at(80) }, true);
   return out
     .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
@@ -276,6 +337,7 @@ function parts(n: number): ProsperityParts {
     followers: seededFollowers(n) + (s.follows.includes(n) ? 1 : 0),
     checkins30: fake(3, 120) + mine,
     neighbors30: Math.floor(hash(n * 7 + 4) * 150 * h * h) + near,
+    tippers30: fake(5, 8) + new Set((s.tips ?? []).filter((x) => x.status === "settled" && x.n === n && x.at / 1000 > since).map((x) => x.tipper)).size,
   };
 }
 // The visitor's wallet holds 2.5 million DOG, a Quantum Cat, three Bitcoin Puppets, seven
@@ -465,7 +527,7 @@ function xOf(address: string | null): XAccount | null {
   if (address === SEED_PARK.owner) return xAccount("miner_village", "矿工新村");
   return null;
 }
-const view = (p: Post, me: string | null): Post => ({ ...p, author: { ...p.author, x: xOf(p.author.address)?.username ?? null }, liked_by_me: !!me && !!load().likes[p.id], like_count: p.like_count + (me && load().likes[p.id] ? 1 : 0) });
+const view = (p: Post, me: string | null): Post => ({ ...p, author: { ...p.author, x: xOf(p.author.address)?.username ?? null, tippable: tippable(p.author.address) }, tips_sats: postTips(p.id), liked_by_me: !!me && !!load().likes[p.id], like_count: p.like_count + (me && load().likes[p.id] ? 1 : 0) });
 const topPosts = (pred: (p: Post) => boolean, me: string | null) =>
   load().posts.filter((p) => !p.removed && p.reply_to == null && pred(p)).sort((a, b) => b.id - a.id).map((p) => view(p, me));
 function district(n: number, me: string | null): District {
@@ -485,6 +547,8 @@ function district(n: number, me: string | null): District {
     park: parkOf(n),
     recruit: recruitAt(n, me),
     pets: petsAt(n),
+    tips: districtTips(n),
+    owner_tippable: tippable(ownerOf(n)),
   };
 }
 
@@ -810,6 +874,50 @@ function route(path: string, opts: Opts): unknown {
   }
   if ((m = p.match(/^\/v1\/posts\/(\d+)\/replies$/)))
     return { replies: s.posts.filter((x) => x.reply_to === +m![1] && !x.removed).sort((a, b) => a.id - b.id).map((x) => view(x, me)) };
+  if (p === "/v1/me/lightning") {
+    needMe();
+    if (method === "PUT") {
+      const a = String(body.lightning_address ?? "").trim().toLowerCase();
+      if (!/^[a-z0-9._+-]{1,64}@[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63})+$/.test(a)) fail(400, "a Lightning address looks like name@wallet.com");
+      s.lightning = a;
+      save();
+    } else if (method === "DELETE") {
+      s.lightning = null;
+      save();
+    }
+    return { lightning_address: s.lightning ?? null };
+  }
+  if (p === "/v1/tips/top") return tipTop(me);
+  if (p === "/v1/tips" && method === "POST") {
+    const a = needMe();
+    const sats = Number(body.amount_sats);
+    if (!Number.isInteger(sats) || sats < 1 || sats > 1_000_000) fail(422, "amount_sats is 1 to 1,000,000");
+    let recipient: string | null, n: number, postId: number | null = null;
+    if (body.post_id != null) {
+      const post = s.posts.find((x) => x.id === Number(body.post_id) && !x.removed) ?? fail(404, "no such post");
+      [recipient, n, postId] = [post.author.address, post.bitmap_number, post.id];
+    } else {
+      n = Number(body.bitmap_number);
+      recipient = ownerOf(n) ?? fail(404, "nobody holds this district");
+    }
+    if (recipient === a) fail(400, "you can't tip yourself");
+    if (!tippable(recipient)) fail(409, "this person hasn't set up a Lightning address yet");
+    const tip: DemoTip = { id: (s.tips ??= []).length + 1, tipper: a, recipient: recipient!, n, post_id: postId, sats, comment: String(body.comment ?? "").trim(), status: "pending", at: Date.now() };
+    s.tips.push(tip);
+    save();
+    return { id: tip.id, invoice: fakeInvoice(sats, tip.id), amount_sats: sats, verifiable: true, status: "pending" } satisfies Tip;
+  }
+  if ((m = p.match(/^\/v1\/tips\/(\d+)$/))) {
+    needMe();
+    const tip = (s.tips ?? []).find((x) => x.id === +m![1]) ?? fail(404, "no such tip");
+    // The demo wallet "pays" a few seconds after the invoice is shown.
+    if (tip.status === "pending" && Date.now() - tip.at > 4000) {
+      tip.status = "settled";
+      tip.at = Date.now();
+      save();
+    }
+    return { id: tip.id, status: tip.status, verifiable: true } satisfies Tip;
+  }
   if ((m = p.match(/^\/v1\/posts\/(\d+)\/report$/)) && method === "POST") {
     const a = needMe(), id = +m[1];
     const post = s.posts.find((x) => x.id === id && !x.removed) ?? fail(404, "no such post");

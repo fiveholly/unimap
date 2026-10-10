@@ -14,7 +14,7 @@ import psycopg2.extras
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import bip322, holdings, moderation, notify, parks, prosperity, recruit, roles, style, wallets, xlink
+from api import bip322, holdings, moderation, notify, parks, prosperity, recruit, roles, style, tips, wallets, xlink
 from api.auth import current_address, normalize_address, optional_address
 from api.db import cursor
 from api.land import EVENT_SELECT, _event
@@ -49,7 +49,12 @@ POST_COLUMNS = (
     "(select count(*) from social.likes l where l.post_id = p.id) as like_count, "
     "(select count(*) from social.posts r where r.reply_to = p.id and r.removed_at is null) as reply_count, "
     "exists(select 1 from social.likes l where l.post_id = p.id and l.address = %(me)s) as liked_by_me, "
-    "(select x.username from social.x_accounts x where x.address = p.author_address) as author_x "
+    "(select x.username from social.x_accounts x where x.address = p.author_address) as author_x, "
+    "(select coalesce(sum(t.amount_sats), 0) from social.tips t where t.post_id = p.id and t.status = 'settled') "
+    "as tips_sats, "
+    "exists(select 1 from social.lightning_addresses a where a.address = coalesce("
+    "(select w.main_address from social.wallet_links w where w.address = p.author_address), p.author_address)) "
+    "as author_tippable "
 )
 
 
@@ -64,6 +69,7 @@ def _post(row):
             "parcel": row["author_parcel"],
             "as_bitmap": row["author_bitmap"],
             "x": row["author_x"],  # linked X @username, if any
+            "tippable": row["author_tippable"],  # has a Lightning address for tips
         },
         "reply_to": row["reply_to"],
         "body": None if removed else row["body"],
@@ -75,6 +81,7 @@ def _post(row):
         "like_count": row["like_count"],
         "reply_count": row["reply_count"],
         "liked_by_me": row["liked_by_me"],
+        "tips_sats": int(row["tips_sats"]),  # confirmed Lightning tips
     }
 
 
@@ -205,6 +212,8 @@ def district(bitmap_number: int, tasks: BackgroundTasks, viewer: str | None = De
         notice = recruit.get(cur, bitmap_number, viewer)
         pets = holdings.shown(cur, bitmap_number, owner)
         owner_x = xlink.of(cur, owner)
+        tipped = tips.district_tips(cur, bitmap_number)
+        owner_tippable = tips.lightning_of(cur, owner) is not None
         # Pets on show keep their owner's balances fresh; the page doesn't wait for it.
         if holdings.chosen(cur, bitmap_number, owner) and holdings.stale_group(cur, owner):
             tasks.add_task(holdings.refresh_group, owner, 0, True)
@@ -224,6 +233,8 @@ def district(bitmap_number: int, tasks: BackgroundTasks, viewer: str | None = De
         "park": park_of.get(bitmap_number),
         "recruit": notice,
         "pets": pets,
+        "tips": tipped,  # confirmed Lightning tips on the district and its posts, last 30 days
+        "owner_tippable": owner_tippable,
         "viewer": None
         if viewer is None
         else {

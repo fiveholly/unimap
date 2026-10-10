@@ -2076,3 +2076,90 @@ button.danger:hover:not(:disabled) {
   background: #6fcf97;
   vertical-align: -1px;
 }
+
+/* ---------- Lightning tips (打赏) ---------- */
+.act.tip-btn.tipped,
+.tip-amount {
+  color: #f7b733;
+}
+.act.tip-btn:hover:not(:disabled) {
+  color: #f7b733;
+}
+.owner-row .tip-btn {
+  gap: 6px;
+}
+.tip-dialog h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tip-amounts {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin: 16px 0 12px;
+}
+.tip-amounts button {
+  height: 44px;
+}
+.tip-amounts button.on {
+  border-color: #f7b733;
+  color: #f7b733;
+  background: color-mix(in srgb, #f7b733 10%, transparent);
+}
+.tip-amounts input {
+  min-width: 0;
+  height: 44px;
+  text-align: center;
+}
+.dialog #tip-comment {
+  width: 100%;
+  margin-bottom: 12px;
+}
+.tip-qr {
+  width: min(240px, 100%);
+  margin: 12px auto;
+  padding: 8px;
+  border-radius: 10px;
+  background: #fff;
+}
+.tip-qr svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.tip-invoice {
+  display: block;
+  max-height: 3.6em;
+  overflow: hidden;
+  margin-bottom: 12px;
+  color: var(--fg-3);
+}
+.tip-wait {
+  margin: 12px 0 0;
+}
+.tip-done {
+  padding: 8px 0;
+}
+.tip-line {
+  margin-top: 2px;
+}
+.lightning-icon {
+  color: #f7b733;
+}
+.rank-lead {
+  margin-top: 16px;
+}
+.tip-posts {
+  margin-top: 8px;
+}
+@media (max-width: 480px) {
+  .tip-amounts {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+span.act.tip-btn {
+  display: inline-flex;
+  align-items: center;
+  cursor: default;
+}

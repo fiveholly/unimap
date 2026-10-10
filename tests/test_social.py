@@ -752,5 +752,94 @@ class SocialApi(unittest.TestCase):
         self.assertEqual((calls[0][1]["collectionSymbol"], calls[1][1]["offset"]), ("bitmap", 100))
         self.assertEqual(calls[0][2]["Authorization"], "Bearer k")
 
+    def test_tips(self):
+        from api import tips
+
+        class Fake:
+            paid = set()
+            asked = []
+
+            @staticmethod
+            def pay_request(a):
+                if a.startswith("broken"):
+                    raise tips.LnurlError("this isn't a Lightning address that can receive payments")
+                return {"tag": "payRequest", "callback": "https://wallet.test/cb"}
+
+            @staticmethod
+            def ask_invoice(a, sats, comment):
+                Fake.asked.append((a, sats, comment))
+                return f"lnbc{sats * 10}n1fake{len(Fake.asked)}", None if a.startswith("noverify") else f"https://wallet.test/v/{len(Fake.asked)}"
+
+            @staticmethod
+            def settled(url):
+                return url in Fake.paid
+
+        old = tips.lnurl
+        tips.lnurl = Fake
+        try:
+            post = self.post(BOB, "a post worth tipping").json()
+            tip = lambda w, **body: self.client.post("/v1/tips", json=body, headers=self.h(w))
+            # Nobody gets tipped before they set a Lightning address.
+            self.assertFalse(post["author"]["tippable"])
+            self.assertEqual(tip(ALICE, post_id=post["id"], amount_sats=500).status_code, 409)
+            self.assertEqual(self.client.put("/v1/me/lightning", json={"lightning_address": "not an address"}, headers=self.h(BOB)).status_code, 400)
+            self.assertEqual(self.client.put("/v1/me/lightning", json={"lightning_address": "broken@wallet.test"}, headers=self.h(BOB)).status_code, 400)
+            r = self.client.put("/v1/me/lightning", json={"lightning_address": " Bob@Wallet.test "}, headers=self.h(BOB))
+            self.assertEqual(r.json()["lightning_address"], "bob@wallet.test")
+            self.assertTrue(self.client.get(f"/v1/posts/{post['id']}").json()["author"]["tippable"])
+            # No tipping yourself; amounts are bounded.
+            self.assertEqual(tip(BOB, post_id=post["id"], amount_sats=500).status_code, 400)
+            self.assertEqual(tip(ALICE, post_id=post["id"], amount_sats=0).status_code, 422)
+            t = tip(ALICE, post_id=post["id"], amount_sats=500, comment=" nice ").json()
+            self.assertEqual((t["invoice"], t["verifiable"], Fake.asked[-1]), ("lnbc5000n1fake1", True, ("bob@wallet.test", 500, "nice")))
+            status = lambda w, i: self.client.get(f"/v1/tips/{i}", headers=self.h(w))
+            self.assertEqual(status(ALICE, t["id"]).json()["status"], "pending")
+            self.assertEqual(status(CAROL, t["id"]).status_code, 404)  # only the tipper checks
+            self.assertEqual(self.client.get(f"/v1/posts/{post['id']}").json()["tips_sats"], 0)
+            Fake.paid.add("https://wallet.test/v/1")
+            with self.conn.cursor() as cur:
+                cur.execute("update social.tips set checked_at = null;")
+            self.assertEqual(status(ALICE, t["id"]).json()["status"], "settled")
+            self.assertEqual(self.client.get(f"/v1/posts/{post['id']}").json()["tips_sats"], 500)
+            n = self.client.get("/v1/notifications", headers=self.h(BOB)).json()["notifications"][0]
+            self.assertEqual((n["kind"], n["actor"], n["amount_sats"], n["comment"]), ("tip", ALICE.address, 500, "nice"))
+            # A second tip from the same person is told too, and the district counts tippers once.
+            t2 = tip(ALICE, post_id=post["id"], amount_sats=100).json()
+            Fake.paid.add("https://wallet.test/v/2")
+            with self.conn.cursor() as cur:
+                cur.execute("update social.tips set checked_at = null;")
+            self.assertEqual(status(ALICE, t2["id"]).json()["status"], "settled")
+            kinds = [x["kind"] for x in self.client.get("/v1/notifications", headers=self.h(BOB)).json()["notifications"]]
+            self.assertEqual(kinds[:2], ["tip", "tip"])
+            d = self.client.get(f"/v1/districts/{DISTRICT}").json()
+            self.assertEqual((d["tips"], d["prosperity"]["parts"]["tippers30"]), ({"sats30": 600, "tippers30": 1}, 1))
+            top = self.client.get("/v1/tips/top").json()
+            self.assertEqual((top["posts"][0]["post"]["id"], top["posts"][0]["sats"], top["districts"][0]["bitmap_number"]), (post["id"], 600, DISTRICT))
+            # Tipping a district goes to its owner; their wallet has no verify URL, so it can't settle.
+            self.client.put("/v1/me/lightning", json={"lightning_address": "noverify@wallet.test"}, headers=self.h(ALICE))
+            self.assertTrue(self.client.get(f"/v1/districts/{DISTRICT}").json()["owner_tippable"])
+            t3 = tip(CAROL, bitmap_number=DISTRICT, amount_sats=2100).json()
+            self.assertFalse(t3["verifiable"])
+            self.assertEqual(status(CAROL, t3["id"]).json()["status"], "pending")
+            self.assertEqual(self.client.delete("/v1/me/lightning", headers=self.h(ALICE)).json(), {"lightning_address": None})
+            self.assertEqual(tip(CAROL, bitmap_number=DISTRICT, amount_sats=2100).status_code, 409)
+        finally:
+            tips.lnurl = old
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.tips; delete from social.lightning_addresses; delete from social.notifications where kind = 'tip';")
+
+    def test_lnurl_checks(self):
+        from api import tips
+
+        self.assertEqual(tips.invoice_msat("lnbc5000n1pjqxyz"), 500_000)
+        self.assertEqual(tips.invoice_msat("lnbc25u1pjqxyz"), 2_500_000)
+        self.assertEqual(tips.invoice_msat("lnbc1m1pjq"), 100_000_000)
+        self.assertEqual(tips.invoice_msat("lnbc10p1pjq"), 1)
+        self.assertIsNone(tips.invoice_msat("lnbc1pjqxyz"))  # no amount
+        self.assertIsNone(tips.invoice_msat("not an invoice"))
+        for url in ("http://wallet.test/x", "https://127.0.0.1/x", "https://localhost/x", "https://10.0.0.5/x", "https://[::1]/x"):
+            with self.assertRaises(tips.LnurlError, msg=url):
+                tips._get(url)
+
 if __name__ == "__main__":
     unittest.main()

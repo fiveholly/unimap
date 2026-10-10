@@ -83,6 +83,10 @@ media: none
 | POST | `/v1/admin/reports/{post_id}` | 站点管理员处理举报 `{"action": "remove"\|"dismiss"}` |
 | GET / POST | `/v1/admin/bans` | 站点管理员：封禁列表 / 封禁地址 `{"address", "reason", "days"}`（`days` 为空是永久） |
 | DELETE | `/v1/admin/bans/{address}` | 站点管理员解除封禁 |
+| GET / PUT / DELETE | `/v1/me/lightning` | 查看 / 设置 / 关闭闪电收款地址 `{"lightning_address"}`，设置时会先向对方钱包确认地址可用 |
+| POST | `/v1/tips` | 发起打赏 `{"post_id"或"bitmap_number", "amount_sats", "comment"}`，返回收款方钱包开出的发票；不能打赏自己，对方没开通是 409，10 分钟超过 20 次是 429 |
+| GET | `/v1/tips/{id}` | 打赏人查询付款状态 `pending`/`settled`/`expired` |
+| GET | `/v1/tips/top?days=7` | 打赏榜：近几天收到打赏最多的帖子和街区 |
 | GET | `/v1/listings?limit=` | 在售的街区，便宜的在前（默认 50 条，最多 200）；`/v1/land` 的地图格子带 `sale`（价格，聪），`/v1/land/{n}` 的 `district.sale` 带价格、市场和挂单链接 |
 
 ## 繁荣度
@@ -99,6 +103,7 @@ media: none
 | 关注数 | 0.5 |
 | 近 30 天的签到 | 1 |
 | 前后各 5 个街区近 30 天的帖子和回复（邻居的热闹） | 0.3 |
+| 近 30 天给这个街区或它的帖子打赏的人（按人数，不按金额） | 2 |
 
 达到 25、80、200、450 分分别升到 2、3、4、5 级。地标区块固定是 5 级。除了居民和关注，其他都只算近 30 天，所以街区没人来就会慢慢降回去。
 
@@ -183,7 +188,7 @@ expires: …
 
 ## 通知
 
-有人回复你的帖子、赞你的帖子、在你的街区发新帖、关注你的街区，或者申请入住你的街区时，会给你记一条通知（`api/notify.py`，表 `social.notifications`）。自己做的事不通知自己；同一个人对同一条帖子取消再点赞、取消再关注，只通知一次。
+有人回复你的帖子、赞你的帖子、在你的街区发新帖、关注你的街区，申请入住你的街区，或者打赏你时，会给你记一条通知（`api/notify.py`，表 `social.notifications`）。自己做的事不通知自己；同一个人对同一条帖子取消再点赞、取消再关注，只通知一次。
 
 - 顶栏的铃铛显示未读数，每分钟和每次换页时检查一次。通知页 `/notifications` 打开后把列表里的都标成已读，同一条帖子的点赞、同一个街区的关注合成一行。
 - 接口：`GET /v1/notifications?before=`（每页 30 条，带帖子摘要和未读数）、`GET /v1/notifications/unread`、`POST /v1/notifications/read`（`up_to` 不填就是全部）。
@@ -223,6 +228,17 @@ expires: …
 挂单数据来自 Magic Eden 的 Ordinals 接口（`api/listings.py`，`bitmap` 系列），存在 `social.listings` 里。地图读取时如果数据已经超过 10 分钟，就在后台刷新一次；多个 API 进程同时读取时只有一个会去请求。只有卖家仍然持有这个街区（以我们自己的索引为准）的挂单才会显示，转手以后留下的旧挂单不算。如果市场接口连续 6 小时没有成功返回，就不再显示价格，免得显示过时的报价。
 
 Magic Eden 的接口需要 API key 才能稳定使用，在 `/etc/unimap/unimap.env` 里填 `LISTINGS_API_KEY`。系列名不对时改 `LISTINGS_COLLECTION`。
+
+## 闪电打赏
+
+帖子下面和街区主人旁边有一个 ⚡ 按钮，可以用闪电网络给作者或街区主人打赏几聪（`api/tips.py`，表 `social.lightning_addresses`、`social.tips`）。
+
+- 不托管：收款人在“我的土地”填一个闪电地址（`name@wallet.com`，LUD-16）。打赏时服务器按 LNURL-pay 向对方钱包要一张发票，检查发票金额和请求的一致，再交给打赏人用任意钱包扫码或 WebLN 付款。钱直接从打赏人到收款人，unimap 不经手，也不存任何私钥。
+- 闪电地址存在钱包组的主地址下，所以关联钱包里任何一个地址的帖子和街区都打赏到同一个钱包。
+- 确认：钱包支持 LUD-21 时会给一个 verify 地址，打赏人的页面每 2.5 秒问一次服务器，服务器最多 2 秒查一次 verify。确认到账后才计入帖子的 `tips_sats`、街区的 `tips`、打赏榜和繁荣度，并通知收款人（通知类型 `tip`，带金额和留言）。不支持 verify 的钱包照样能收钱，但不计数，避免伪造。发票 60 分钟没付就标成过期。
+- 繁荣度只算近 30 天打赏过的人数，权重 2，所以刷大额也不能买到等级。
+- 安全：服务器访问对方钱包时只用 https、不跟随跳转、只连公网 IP、响应最多 64KB。DNS 在检查和连接之间可能被换（DNS rebinding），生产环境最好再让出站请求经过只放行公网的代理。
+- 接口返回：帖子带 `tips_sats` 和 `author.tippable`，`GET /v1/districts/{n}` 带 `tips`（近 30 天的聪数和人数）和 `owner_tippable`。
 
 ## 多语言（中文 / English）
 

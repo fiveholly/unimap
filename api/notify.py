@@ -1,5 +1,5 @@
 """In-app notifications (通知): someone replied to your post, liked it, posted in or followed
-your district, or applied to live there. Each is written in the same transaction as the
+your district, applied to live there, or tipped you sats (api/tips.py). Each is written in the same transaction as the
 action, for the address it concerns, and never for your own actions.
 """
 
@@ -11,19 +11,19 @@ from api.db import cursor
 
 router = APIRouter()
 
-KINDS = ("reply", "like", "post", "follow", "apply")
+KINDS = ("reply", "like", "post", "follow", "apply", "tip")
 PAGE = 30
 
 
-def notify(cur, address, kind, actor, bitmap_number, post_id=None):
+def notify(cur, address, kind, actor, bitmap_number, post_id=None, tip_id=None):
     """Tell address that actor did kind. A like or follow repeated after an undo isn't told twice."""
     assert kind in KINDS
     if not address or address == actor:
         return
     cur.execute(
-        "insert into social.notifications (address, kind, actor, bitmap_number, post_id) values (%s, %s, %s, %s, %s) "
-        "on conflict do nothing;",
-        (address, kind, actor, bitmap_number, post_id),
+        "insert into social.notifications (address, kind, actor, bitmap_number, post_id, tip_id) "
+        "values (%s, %s, %s, %s, %s, %s) on conflict do nothing;",
+        (address, kind, actor, bitmap_number, post_id, tip_id),
     )
 
 
@@ -38,8 +38,9 @@ def notifications(before: int | None = None, address: str = Depends(current_addr
     with cursor() as cur:
         cur.execute(
             "select n.id, n.kind, n.actor, n.bitmap_number, n.post_id, n.created_at, n.read_at is not null, "
-            "case when p.removed_at is null then left(p.body, 140) end "
+            "case when p.removed_at is null then left(p.body, 140) end, t.amount_sats, t.comment "
             "from social.notifications n left join social.posts p on p.id = n.post_id "
+            "left join social.tips t on t.id = n.tip_id "
             "where n.address = %s and (%s::int8 is null or n.id < %s) order by n.id desc limit %s;",
             (address, before, before, PAGE),
         )
@@ -53,8 +54,9 @@ def notifications(before: int | None = None, address: str = Depends(current_addr
                 "created_at": at.isoformat(),
                 "read": read,
                 "snippet": snippet,
+                **({"amount_sats": sats, "comment": comment} if kind == "tip" else {}),
             }
-            for i, kind, actor, n, post_id, at, read, snippet in cur.fetchall()
+            for i, kind, actor, n, post_id, at, read, snippet, sats, comment in cur.fetchall()
         ]
         return {"notifications": rows, "unread": _unread(cur, address)}
 
