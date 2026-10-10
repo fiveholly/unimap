@@ -1178,6 +1178,73 @@ kbd {
   margin-bottom: 32px;
 }
 
+/* ---------- X accounts and tweets ---------- */
+.x-handle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--fg-2);
+  white-space: nowrap;
+}
+.x-handle:hover {
+  color: var(--fg);
+}
+.owner-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.x-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.x-card p {
+  margin: 0;
+}
+.x-card button.primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.x-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: var(--surface-2);
+  object-fit: cover;
+}
+.tweet {
+  margin: 8px 0 4px;
+  max-width: 550px;
+}
+.tweet-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 14px;
+}
+.tweet-link span:nth-child(2) {
+  flex: 1;
+}
+.tweet-link:hover {
+  border-color: var(--fg-3);
+}
+
 /* ---------- small screens ---------- */
 @media (max-width: 900px) {
   .city {
@@ -1190,6 +1257,9 @@ kbd {
 @media (max-width: 640px) {
   .page {
     padding: 20px 16px 64px;
+  }
+  .x-card {
+    flex-wrap: wrap;
   }
   .header-inner {
     padding: 0 16px;

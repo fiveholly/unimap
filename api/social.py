@@ -14,7 +14,7 @@ import psycopg2.extras
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import bip322, holdings, notify, parks, prosperity, recruit, roles, style
+from api import bip322, holdings, notify, parks, prosperity, recruit, roles, style, xlink
 from api.auth import current_address, normalize_address, optional_address
 from api.db import cursor
 from api.land import EVENT_SELECT, _event
@@ -48,7 +48,8 @@ POST_COLUMNS = (
     "p.body, p.media, p.signed_message, p.signature, p.created_at, p.removed_at, "
     "(select count(*) from social.likes l where l.post_id = p.id) as like_count, "
     "(select count(*) from social.posts r where r.reply_to = p.id and r.removed_at is null) as reply_count, "
-    "exists(select 1 from social.likes l where l.post_id = p.id and l.address = %(me)s) as liked_by_me "
+    "exists(select 1 from social.likes l where l.post_id = p.id and l.address = %(me)s) as liked_by_me, "
+    "(select x.username from social.x_accounts x where x.address = p.author_address) as author_x "
 )
 
 
@@ -62,6 +63,7 @@ def _post(row):
             "role": row["author_role"],
             "parcel": row["author_parcel"],
             "as_bitmap": row["author_bitmap"],
+            "x": row["author_x"],  # linked X @username, if any
         },
         "reply_to": row["reply_to"],
         "body": None if removed else row["body"],
@@ -112,7 +114,8 @@ def me(address: str = Depends(current_address)):
         districts, parcels = roles.holdings(cur, address)
         cur.execute("select bitmap_number from social.follows where address = %s order by bitmap_number;", (address,))
         follows = [r[0] for r in cur.fetchall()]
-    return {"address": address, "districts": districts, "parcels": parcels, "follows": follows}
+        x = xlink.of(cur, address)
+    return {"address": address, "districts": districts, "parcels": parcels, "follows": follows, "x": x}
 
 
 @router.get("/v1/districts/{bitmap_number}")
@@ -144,6 +147,7 @@ def district(bitmap_number: int, tasks: BackgroundTasks, viewer: str | None = De
         levels, park_of = parks.scored(cur, bitmap_number, bitmap_number)
         notice = recruit.get(cur, bitmap_number, viewer)
         pets = holdings.shown(cur, bitmap_number, owner)
+        owner_x = xlink.of(cur, owner)
         # Pets on show keep their owner's balances fresh; the page doesn't wait for it.
         if holdings.chosen(cur, bitmap_number, owner) and holdings.stale(cur, owner):
             tasks.add_task(holdings.refresh, owner)
@@ -152,6 +156,7 @@ def district(bitmap_number: int, tasks: BackgroundTasks, viewer: str | None = De
         "bitmap_number": bitmap_number,
         "name": f"{bitmap_number}.bitmap",
         "owner": owner,
+        "owner_x": owner_x,
         "profile": profile,
         "pinned_post": pinned,
         "followers": counts["followers"],

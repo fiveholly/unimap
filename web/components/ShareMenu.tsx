@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { XIcon } from "./X";
 import { xIntent } from "@/lib/share";
 
 const ShareIcon = () => (
@@ -12,11 +13,6 @@ const ShareIcon = () => (
   </svg>
 );
 
-const XIcon = () => (
-  <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-    <path d="M17.8 3h3.1l-6.8 7.7 8 10.3h-6.3l-4.9-6.4L5.3 21H2.2l7.3-8.3L1.8 3h6.4l4.4 5.9L17.8 3zm-1.1 16.2h1.7L7.4 4.7H5.6l11.1 14.5z" />
-  </svg>
-);
 
 /** A 分享 button with 分享到 X, 复制链接 and, where the device has one, the system share sheet.
  * `path` is the page to share; its card image comes from that page's opengraph-image. */

@@ -197,3 +197,23 @@ CREATE TABLE IF NOT EXISTS social.notifications (
 	CONSTRAINT notifications_once UNIQUE NULLS NOT DISTINCT (address, kind, actor, bitmap_number, post_id)
 );
 CREATE INDEX IF NOT EXISTS notifications_address_idx ON social.notifications USING btree (address, id);
+
+-- X (Twitter) accounts linked to addresses (api/xlink.py), proven through X's OAuth sign-in.
+-- One X account can be linked to several addresses (one person, several wallets).
+CREATE TABLE IF NOT EXISTS social.x_accounts (
+	address text NOT NULL,
+	x_user_id text NOT NULL,
+	username text NOT NULL,
+	name text NOT NULL,
+	avatar_url text NULL,
+	linked_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT x_accounts_pk PRIMARY KEY (address)
+);
+-- A sign-in in progress: the OAuth state and PKCE verifier, for the address that started it.
+CREATE TABLE IF NOT EXISTS social.x_link_states (
+	state text NOT NULL,
+	address text NOT NULL,
+	verifier text NOT NULL,
+	expires_at timestamptz NOT NULL,
+	CONSTRAINT x_link_states_pk PRIMARY KEY (state)
+);

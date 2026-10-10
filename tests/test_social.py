@@ -382,6 +382,62 @@ class SocialApi(unittest.TestCase):
         self.assertEqual(self.client.get("/v1/notifications/unread", headers=self.h(ALICE)).json()["unread"], 2)
         self.client.delete(f"/v1/districts/{DISTRICT}/follow", headers=self.h(CAROL))
 
+    def test_x_link(self):
+        from api import xlink
+
+        class Fake:
+            seen = []
+
+            def user(self, code, verifier, client_id, secret, redirect):
+                Fake.seen.append((code, verifier, client_id, redirect))
+                if code == "bad":
+                    raise RuntimeError("invalid_grant")
+                return {"id": "42", "username": "alice_btc", "name": "Alice", "profile_image_url": "https://pbs.twimg.com/a.jpg"}
+
+        def state_of(url):
+            return urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+
+        old_env = {k: os.environ.get(k) for k in ("X_CLIENT_ID", "X_REDIRECT_URL")}
+        try:
+            os.environ.pop("X_CLIENT_ID", None)
+            self.assertFalse(self.client.get("/v1/x/link", headers=self.h(ALICE)).json()["available"])
+            self.assertEqual(self.client.post("/v1/x/link/start", headers=self.h(ALICE)).status_code, 503)
+            os.environ.update(X_CLIENT_ID="cid", X_REDIRECT_URL="https://unimap.test/x/callback")
+            xlink.provider = Fake()
+            self.assertEqual(self.client.post("/v1/x/link/start").status_code, 401)
+            q = state_of(self.client.post("/v1/x/link/start", headers=self.h(ALICE)).json()["url"])
+            self.assertEqual((q["client_id"], q["code_challenge_method"], q["redirect_uri"]), (["cid"], ["S256"], ["https://unimap.test/x/callback"]))
+            state = q["state"][0]
+            # The state belongs to the address that started, and works once.
+            self.assertEqual(self.client.post("/v1/x/link/finish", json={"code": "c", "state": state}, headers=self.h(BOB)).status_code, 400)
+            done = self.client.post("/v1/x/link/finish", json={"code": "c", "state": state}, headers=self.h(ALICE))
+            self.assertEqual(done.status_code, 200, done.text)
+            self.assertEqual(done.json()["x"]["username"], "alice_btc")
+            code, verifier, _, _ = Fake.seen[-1]
+            self.assertEqual(xlink._challenge(verifier), q["code_challenge"][0])
+            self.assertEqual(self.client.post("/v1/x/link/finish", json={"code": "c", "state": state}, headers=self.h(ALICE)).status_code, 400)
+            # X saying no keeps nothing.
+            state2 = state_of(self.client.post("/v1/x/link/start", headers=self.h(BOB)).json()["url"])["state"][0]
+            self.assertEqual(self.client.post("/v1/x/link/finish", json={"code": "bad", "state": state2}, headers=self.h(BOB)).status_code, 502)
+            self.assertIsNone(self.client.get("/v1/me", headers=self.h(BOB)).json()["x"])
+            # The handle shows on the owner's district, their posts and /v1/me.
+            self.assertEqual(self.client.get("/v1/me", headers=self.h(ALICE)).json()["x"]["url"], "https://x.com/alice_btc")
+            self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}").json()["owner_x"]["username"], "alice_btc")
+            post = self.post(ALICE, "gm from X")
+            self.assertEqual(post.json()["author"]["x"], "alice_btc")
+            self.assertIsNone(self.post(BOB, "no X here", reply_to=post.json()["id"]).json()["author"]["x"])
+            self.assertEqual(self.client.delete("/v1/x/link", headers=self.h(ALICE)).json(), {"x": None})
+            self.assertIsNone(self.client.get(f"/v1/districts/{DISTRICT}").json()["owner_x"])
+        finally:
+            xlink.provider = None
+            for k, v in old_env.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.x_accounts; delete from social.x_link_states;")
+
     def test_holdings_showcase(self):
         import tempfile
         from decimal import Decimal

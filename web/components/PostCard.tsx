@@ -7,6 +7,8 @@ import { Avatar } from "./Avatar";
 import { Composer } from "./Composer";
 import { short, useSession } from "./Session";
 import { ShareMenu } from "./ShareMenu";
+import { TweetEmbed, XHandle } from "./X";
+import { tweetsIn } from "@/lib/tweets";
 import { api, type Post } from "@/lib/api";
 import { timeAgo } from "@/lib/format";
 import { postText } from "@/lib/share";
@@ -120,6 +122,7 @@ export function PostCard({
               {name}
             </span>
           )}
+          {a.x && <XHandle username={a.x} />}
           <span className={`badge ${a.role}`}>{a.role === "owner" ? "街区主人" : a.role === "resident" ? "居民" : "访客"}</span>
           <button type="button" className="signed" onClick={() => setShowSig(!showSig)} aria-expanded={showSig} title="这条帖子由作者的比特币钱包签名，点击查看">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -137,6 +140,9 @@ export function PostCard({
           {menu.length > 0 && <PostMenu items={menu} />}
         </div>
         <p className="post-body">{post.body}</p>
+        {tweetsIn(post.body).map((t) => (
+          <TweetEmbed key={t.id} {...t} />
+        ))}
         {post.media.length > 0 && (
           <div className="media">
             {post.media.map((url) => (

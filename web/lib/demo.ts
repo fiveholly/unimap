@@ -3,7 +3,7 @@
 // here from deterministic fake data; what the visitor does (posts, likes, follows, profile
 // edits) is kept in localStorage, and "重置演示数据" clears it.
 
-import type { Application, District, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, Role, Showcase, Tile } from "./api";
+import type { Application, District, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, Role, Showcase, Tile, XAccount } from "./api";
 import { connected } from "./parks";
 import { PET_KEYS, PETS, type Pet, type PetKey } from "./pets";
 import { prosperity, THRESHOLDS, type ProsperityParts } from "./prosperity";
@@ -106,6 +106,7 @@ const SEEDS: Seed[] = [
   { n: 840001, who: 14, body: "隔壁 840000 今天很热闹，我们这条街也来点动静。", ago: 2.2 },
   { n: 812345, who: "owner", body: "这个街区的号码很好记，打算做成一个铭文收藏者的聚会点。", ago: 5 },
   { n: 0, who: "owner", body: "创世区块，一切开始的地方。只有一笔交易，所以这里只有一块地。", ago: 9 },
+  { n: 840001, who: "owner", body: "比特币的第一条推文，贴在这里留个纪念。\nhttps://x.com/halfin/status/1110302988", ago: 4 },
   { n: 839998, who: "owner", body: "减半前两个区块。手续费那几天很高，所以这里被划成了 CBD。", ago: 0.9 },
   { n: 840002, who: 5, body: "地块 #5 的居民，路过打个招呼。", ago: 1.8 },
   { n: 767430, who: "owner", body: "第一个铭文出现的区块。数据区的起点。", ago: 12 },
@@ -126,6 +127,7 @@ type State = {
   parks?: { id: number; name: string; owner: string; members: number[] }[];
   showcase?: Record<number, PetKey[]>; // what the visitor chose to show on their districts
   notifications?: Notification[]; // the visitor's, newest first
+  x?: XAccount | null; // the visitor's linked X account
 };
 type DemoPoll = { id: number; n: number; question: string; options: string[]; by: string; created_at: string; closes_at: string; closed_at: string | null; votes: Record<string, number> };
 
@@ -400,7 +402,16 @@ function profile(n: number): District["profile"] {
   const pinned = n === 840000 && p.pinned_post_id === undefined ? 1 : p.pinned_post_id ?? null;
   return { bio: p.bio ?? "", cover: p.cover ?? null, visitor_comments_on: p.visitor_comments_on ?? true, pinned_post_id: pinned, style: styleAt(n) };
 }
-const view = (p: Post, me: string | null): Post => ({ ...p, liked_by_me: !!me && !!load().likes[p.id], like_count: p.like_count + (me && load().likes[p.id] ? 1 : 0) });
+// Other owners who linked X in the demo city; the visitor links their own from 我的土地.
+const xAccount = (username: string, name: string): XAccount => ({ username, name, avatar_url: null, url: `https://x.com/${username}` });
+function xOf(address: string | null): XAccount | null {
+  if (!address) return null;
+  if (address === DEMO_ADDRESS) return load().x ?? null;
+  if (address === ownerOf(840001)) return xAccount("halving_next_door", "减半隔壁");
+  if (address === SEED_PARK.owner) return xAccount("miner_village", "矿工新村");
+  return null;
+}
+const view = (p: Post, me: string | null): Post => ({ ...p, author: { ...p.author, x: xOf(p.author.address)?.username ?? null }, liked_by_me: !!me && !!load().likes[p.id], like_count: p.like_count + (me && load().likes[p.id] ? 1 : 0) });
 const topPosts = (pred: (p: Post) => boolean, me: string | null) =>
   load().posts.filter((p) => !p.removed && p.reply_to == null && pred(p)).sort((a, b) => b.id - a.id).map((p) => view(p, me));
 function district(n: number, me: string | null): District {
@@ -410,7 +421,7 @@ function district(n: number, me: string | null): District {
   const [role, parcel] = roleOf(me, n);
   const pr = prosperity(parts(n));
   return {
-    bitmap_number: n, name: `${n}.bitmap`, owner: ownerOf(n), profile: prof, pinned_post: pinned ? view(pinned, me) : null,
+    bitmap_number: n, name: `${n}.bitmap`, owner: ownerOf(n), owner_x: xOf(ownerOf(n)), profile: prof, pinned_post: pinned ? view(pinned, me) : null,
     followers: pr.parts.followers,
     post_count: s.posts.filter((p) => p.bitmap_number === n && !p.removed && p.reply_to == null).length,
     viewer: me ? { address: me, role, parcel, muted: (s.mutes[n] ?? []).includes(me), following: s.follows.includes(n) } : null,
@@ -449,7 +460,25 @@ function route(path: string, opts: Opts): unknown {
   if ((m = p.match(/^\/v1\/land\/(\d+)\/events$/))) return { events: events(+m[1]) };
   if (p === "/v1/me") {
     const a = needMe();
-    return { address: a, districts: OWNED, parcels: [OWN_PARCEL], follows: [...s.follows].sort((x, y) => x - y) } satisfies Me;
+    return { address: a, districts: OWNED, parcels: [OWN_PARCEL], follows: [...s.follows].sort((x, y) => x - y), x: s.x ?? null } satisfies Me;
+  }
+  // X sign-in skips x.com in the demo: start goes straight to the callback page.
+  if (p === "/v1/x/link") {
+    const a = needMe();
+    if (method === "DELETE") {
+      s.x = null;
+      save();
+      return { x: null };
+    }
+    return { available: true, x: xOf(a) };
+  }
+  if (p === "/v1/x/link/start") return needMe() && { url: "/x/callback?state=demo&code=demo" };
+  if (p === "/v1/x/link/finish") {
+    needMe();
+    if (body.state !== "demo") fail(400, "这次 X 登录已过期，请重试");
+    s.x = xAccount("unimap_demo", "演示访客");
+    save();
+    return { x: s.x };
   }
   if (p === "/v1/feed") {
     needMe();
@@ -626,7 +655,7 @@ function route(path: string, opts: Opts): unknown {
       if (parent) parent.reply_count++;
     }
     save();
-    return post;
+    return view(post, a);
   }
   if ((m = p.match(/^\/v1\/posts\/(\d+)\/replies$/)))
     return { replies: s.posts.filter((x) => x.reply_to === +m![1] && !x.removed).sort((a, b) => a.id - b.id).map((x) => view(x, me)) };

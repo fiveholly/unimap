@@ -17,6 +17,7 @@ import { RecruitCard } from "@/components/Recruit";
 import { ShareMenu } from "@/components/ShareMenu";
 import { short, useSession } from "@/components/Session";
 import { TileThumb } from "@/components/TileThumb";
+import { XHandle } from "@/components/X";
 import { api, ApiError, type District, type Land, type LandEvent, type Me, type Post, type Tile } from "@/lib/api";
 import { btc, epochName } from "@/lib/format";
 import { districtText, parkText } from "@/lib/share";
@@ -191,7 +192,10 @@ function DistrictView() {
             <div className="grow">
               {land.claimed ? (
                 <>
-                  <div>拥有者</div>
+                  <div className="owner-name">
+                    拥有者
+                    {district.owner_x && <XHandle username={district.owner_x.username} />}
+                  </div>
                   <div className="mono muted small" title={district.owner || ""}>
                     {short(district.owner)}
                     {land.district && ` · 铭文 #${land.district.inscription_number}`}

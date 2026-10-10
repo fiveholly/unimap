@@ -91,7 +91,7 @@ export type Role = "owner" | "resident" | "visitor";
 export type Post = {
   id: number;
   bitmap_number: number;
-  author: { address: string; role: Role; parcel: number | null; as_bitmap: number | null };
+  author: { address: string; role: Role; parcel: number | null; as_bitmap: number | null; x?: string | null };
   reply_to: number | null;
   body: string | null;
   media: string[];
@@ -108,6 +108,7 @@ export type District = {
   bitmap_number: number;
   name: string;
   owner: string | null;
+  owner_x?: XAccount | null;
   profile: { bio: string; cover: string | null; visitor_comments_on: boolean; pinned_post_id: number | null; style?: DistrictStyle | null };
   pinned_post: Post | null;
   followers: number;
@@ -156,7 +157,11 @@ export type Me = {
   districts: number[];
   parcels: { bitmap_number: number; tx_index: number }[];
   follows: number[];
+  x?: XAccount | null;
 };
+
+/** An X (Twitter) account linked to an address through X's sign-in. */
+export type XAccount = { username: string; name: string; avatar_url: string | null; url: string };
 
 export type FeedItem = { type: "post"; time: number; post: Post } | { type: "event"; time: number; event: LandEvent };
 

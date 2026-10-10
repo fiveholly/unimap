@@ -71,6 +71,8 @@ media: none
 | PUT | `/v1/districts/{n}/style` | 街区主人设置外观 `{"color", "deco"}` |
 | GET | `/v1/parks/{id}` | 园区 |
 | POST / PUT / DELETE | `/v1/parks[/{id}]` | 建立、修改、解散园区 `{"name", "members"}` |
+| GET / DELETE | `/v1/x/link` | 查看 / 解除绑定的 X 账号 |
+| POST | `/v1/x/link/start` / `/v1/x/link/finish` | 开始绑定 X / 交回 X 的授权码 `{"code", "state"}` |
 
 ## 繁荣度
 
@@ -153,3 +155,13 @@ media: none
 - 顶栏的铃铛显示未读数，每分钟和每次换页时检查一次。通知页 `/notifications` 打开后把列表里的都标成已读，同一条帖子的点赞、同一个街区的关注合成一行。
 - 接口：`GET /v1/notifications?before=`（每页 30 条，带帖子摘要和未读数）、`GET /v1/notifications/unread`、`POST /v1/notifications/read`（`up_to` 不填就是全部）。
 - 下一步可以把同样的通知推到电报机器人或邮件。
+
+## 绑定 X 账号
+
+钱包地址看不出是谁，所以地址可以绑定一个 X 账号（`api/xlink.py`，表 `social.x_accounts`）。绑定后，街区主页的拥有者旁边、帖子作者旁边都会显示 `@用户名`，点开就是 X 主页。
+
+- 流程：在「我的土地」点「绑定 X」→ `POST /v1/x/link/start` 返回 X 的授权地址（OAuth 2.0 授权码 + PKCE，权限只有 `users.read tweet.read`）→ 用户在 X 同意后回到网页 `/x/callback` → 网页把 code 交给 `POST /v1/x/link/finish`，服务器换取令牌、读一次账号信息，然后立刻撤销令牌。我们只存 X 的用户 id、用户名、昵称和头像地址，不存令牌，也不会替用户发推。
+- 授权的 state 绑定发起它的地址，10 分钟内只能用一次，所以别人拿到回调链接也绑不到自己的地址上。
+- 一个地址只绑一个 X 账号，再绑会换成新的；同一个 X 账号可以绑多个地址（一个人有好几个钱包）。`DELETE /v1/x/link` 解除绑定，`GET /v1/x/link` 查看当前绑定以及服务器是否开启了这项功能。
+- 设置：在 X 开发者后台建一个 Web App，回调地址填 `https://你的域名/x/callback`，把 Client ID 和 Client Secret 写进 `/etc/unimap/unimap.env` 的 `X_CLIENT_ID`、`X_CLIENT_SECRET`。不填就不显示绑定按钮。
+- 帖子里贴推文链接（`x.com/…/status/…` 或 `twitter.com/…`），帖子下面会显示这条推文，最多两条。用的是 X 官方的嵌入脚本，脚本加载不了时显示成一个链接卡片。
