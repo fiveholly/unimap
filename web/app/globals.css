@@ -1313,6 +1313,42 @@ kbd {
   margin-bottom: 32px;
 }
 
+/* ---------- 个人主页 ---------- */
+.person-ids {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  min-width: 0;
+}
+.person-ids .link-btn {
+  color: var(--fg-2);
+  text-align: left;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  white-space: normal;
+  height: auto;
+}
+.person .me-head {
+  align-items: flex-start;
+}
+.person .me-head > .grow {
+  min-width: 0;
+}
+.person .me-head h1 {
+  margin: 0;
+}
+.person-stats {
+  margin: 8px 0 32px;
+}
+.chip.person-district {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 /* ---------- 关联钱包 ---------- */
 .wallet-list {
   list-style: none;

@@ -149,4 +149,17 @@ export const social: Record<string, string> = {
   "链接不完整，请回到我的土地重新绑定。": "The link is incomplete. Go back to My land and link again.",
   "回到我的土地": "Back to My land",
   "正在确认 X 账号…": "Confirming your X account…",
+  // Person page (app/address/[a])
+  "复制地址": "Copy address",
+  "已复制": "Copied",
+  "{who} 在 unimap 上的街区和帖子 #Bitmap": "{who}'s districts and posts on unimap #Bitmap",
+  "这是你的主页，别人看到的就是这样。": "This is your page, as others see it.",
+  "管理我的土地": "Manage my land",
+  "回复#count": "Replies",
+  "街区#count": "Districts",
+  "帖子和回复": "Posts and replies",
+  "从 {date} 开始发帖": "Posting since {date}",
+  "还没有发过帖子。": "No posts yet.",
+  "更早的帖子": "Older posts",
+  "看看别人眼中的我的主页": "See my public page",
 };

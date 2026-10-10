@@ -31,6 +31,9 @@ export default function MePage() {
         <div>
           <h1>{t("我的土地")}</h1>
           <p className="mono muted small break">{me.address}</p>
+          <Link className="small" href={`/address/${me.address}`}>
+            {t("看看别人眼中的我的主页")}
+          </Link>
         </div>
       </section>
       <XSection token={token} />

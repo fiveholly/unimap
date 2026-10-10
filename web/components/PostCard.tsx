@@ -119,9 +119,9 @@ export function PostCard({
               {name}
             </Link>
           ) : (
-            <span className="author mono" title={post.author.address}>
+            <Link className="author mono" href={`/address/${post.author.address}`} title={post.author.address}>
               {name}
-            </span>
+            </Link>
           )}
           {a.x && <XHandle username={a.x} />}
           <span className={`badge ${a.role}`}>{a.role === "owner" ? t("街区主人") : a.role === "resident" ? t("居民#one") : t("访客")}</span>

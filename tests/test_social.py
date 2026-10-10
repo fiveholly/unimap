@@ -600,6 +600,24 @@ class SocialApi(unittest.TestCase):
             with self.conn.cursor() as cur:
                 cur.execute("delete from social.park_members where park_id = 900; delete from social.parks where id = 900; delete from social.x_accounts;")
 
+    def test_person(self):
+        r = self.post(BOB, "住在 100 号的一个地块上")
+        self.assertEqual(r.status_code, 201, r.text)
+        page = self.client.get(f"/v1/people/{BOB.address.upper()}").json()
+        self.assertEqual(page["address"], BOB.address)
+        self.assertEqual(page["parcels"], [{"bitmap_number": 100, "tx_index": 1}])
+        self.assertEqual(page["districts"], [])
+        self.assertGreaterEqual(page["post_count"], 1)
+        self.assertEqual(page["posts"][0]["body"], "住在 100 号的一个地块上")
+        self.assertTrue(all(p["author"]["address"] == BOB.address for p in page["posts"]))
+        alice = self.client.get(f"/v1/people/{ALICE.address}").json()
+        self.assertIn(100, [d["bitmap_number"] for d in alice["districts"]])
+        self.assertTrue(all(d["level"] >= 0 for d in alice["districts"]))
+        older = self.client.get(f"/v1/people/{BOB.address}?before_id={page['posts'][0]['id']}").json()["posts"]
+        self.assertTrue(all(p["id"] < page["posts"][0]["id"] for p in older))
+        nobody = self.client.get("/v1/people/bcrt1qnobody").json()
+        self.assertEqual((nobody["districts"], nobody["posts"], nobody["post_count"]), ([], [], 0))
+
     # --- land changes hands ---
 
     def test_owner_change_moves_admin_rights(self):

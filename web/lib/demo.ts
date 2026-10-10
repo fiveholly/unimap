@@ -3,7 +3,7 @@
 // here from deterministic fake data; what the visitor does (posts, likes, follows, profile
 // edits) is kept in localStorage, and "重置演示数据" clears it.
 
-import type { Application, District, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, Role, LinkedWallet, SearchResults, Showcase, Tile, XAccount } from "./api";
+import type { Application, District, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, Role, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
 import { connected } from "./parks";
 import { MAX_SHOWN, PET_KEYS, PETS, type Pet, type PetKey } from "./pets";
 import { prosperity, THRESHOLDS, type ProsperityParts } from "./prosperity";
@@ -483,6 +483,26 @@ function searchDemo(q: string): SearchResults {
   return out;
 }
 
+// Someone's page in the demo: land comes from the made-up owners, posts from the demo feed.
+function personDemo(a: string, me: string | null, before: number | null): Person {
+  const districts =
+    a === DEMO_ADDRESS ? OWNED : a === SEED_PARK.owner ? SEED_PARK.members : a === ownerOf(840001) ? [840001] : [];
+  const mine = load().posts.filter((p) => !p.removed && p.author.address === a);
+  const posts = mine.filter((p) => before == null || p.id < before).sort((x, y) => y.id - x.id).slice(0, 20).map((p) => view(p, me));
+  const first = mine.map((p) => p.created_at).sort()[0] ?? null;
+  return {
+    address: a,
+    x: xOf(a),
+    districts: [...districts].sort((x, y) => x - y).map((n) => ({ bitmap_number: n, level: levelAt(n), park: parkOf(n)?.name ?? null })),
+    parcels: a === DEMO_ADDRESS ? [OWN_PARCEL] : [],
+    post_count: mine.filter((p) => p.reply_to == null).length,
+    reply_count: mine.filter((p) => p.reply_to != null).length,
+    follows: a === DEMO_ADDRESS ? load().follows.length : 0,
+    first_post_at: first,
+    posts,
+  };
+}
+
 const walletsView = (): LinkedWallet[] => [
   { address: DEMO_ADDRESS, main: true, me: true },
   ...(load().linked ?? []).map((address) => ({ address, main: false, me: false })),
@@ -515,6 +535,10 @@ function route(path: string, opts: Opts): unknown {
   if (p === "/v1/me") {
     const a = needMe();
     return { address: a, districts: OWNED, parcels: [OWN_PARCEL], follows: [...s.follows].sort((x, y) => x - y), x: s.x ?? null, wallets: walletsView() } satisfies Me;
+  }
+  if ((m = p.match(/^\/v1\/people\/([^/]+)$/))) {
+    const before = url.searchParams.get("before_id");
+    return personDemo(decodeURIComponent(m[1]), me, before ? Number(before) : null);
   }
   if (p === "/v1/search") return searchDemo((url.searchParams.get("q") ?? "").trim());
   if (p === "/v1/me/wallets") {

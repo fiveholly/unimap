@@ -164,6 +164,19 @@ export type Me = {
 /** One of the wallets linked together (关联钱包); main is the group's first address, me the one signed in. */
 export type LinkedWallet = { address: string; main: boolean; me: boolean };
 
+/** GET /v1/people/{address}: someone's land, X account and posts. */
+export type Person = {
+  address: string;
+  x: XAccount | null;
+  districts: { bitmap_number: number; level: number; park: string | null }[];
+  parcels: { bitmap_number: number; tx_index: number }[];
+  post_count: number;
+  reply_count: number;
+  follows: number;
+  first_post_at: string | null;
+  posts: Post[];
+};
+
 /** GET /v1/search: a district number, parks by name, people by address or X handle. */
 export type SearchResults = {
   districts: number[];
