@@ -405,6 +405,21 @@ CREATE TABLE IF NOT EXISTS social.market_listings (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS market_listings_one_active ON social.market_listings USING btree (inscription_id) WHERE status = 'active';
 CREATE INDEX IF NOT EXISTS market_listings_district_idx ON social.market_listings USING btree (bitmap_number) WHERE status = 'active';
+-- 园区打包卖: a listing of one output holding every district of a park, sold whole.
+ALTER TABLE social.market_listings ADD COLUMN IF NOT EXISTS park_id int8 NULL;
+ALTER TABLE social.market_listings ADD COLUMN IF NOT EXISTS members int4[] NULL; -- the park's districts, all in the listed output
+-- Moving a park's districts into one output (pack) or back into one output each (unpack), as handed to the owner's wallet.
+CREATE TABLE IF NOT EXISTS social.market_moves (
+	id bigserial NOT NULL,
+	kind text NOT NULL, -- pack | unpack
+	park_id int8 NOT NULL,
+	owner text NOT NULL,
+	psbt text NOT NULL, -- base64
+	expires_at timestamptz NOT NULL,
+	txid text NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT market_moves_pk PRIMARY KEY (id)
+);
 CREATE TABLE IF NOT EXISTS social.market_quotes (
 	id bigserial NOT NULL,
 	listing_id int8 NOT NULL,

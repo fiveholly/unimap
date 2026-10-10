@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { useSession } from "./Session";
-import { api, type MarketInfo, type MarketListing, type MarketOffer, type OfferQuote, type Quote } from "@/lib/api";
+import { api, type MarketInfo, type MarketListing, type MarketOffer, type OfferQuote, type ParkMove, type ParkSale, type Quote } from "@/lib/api";
 import { btc, short } from "@/lib/format";
 import { t } from "@/lib/i18n";
 import { walletById, type PsbtSigner } from "@/lib/wallets";
@@ -64,7 +64,7 @@ export function SellCard({ n, token }: { n: number; token: string }) {
   const [error, setError] = useState<string | null>(null);
   const load = () =>
     api<{ listings: MarketListing[] }>(`/v1/market/listings?bitmap_number=${n}`)
-      .then((r) => setMine(r.listings.find((l) => l.tx_index == null && l.seller === address) ?? null))
+      .then((r) => setMine(r.listings.find((l) => l.tx_index == null && l.park_id == null && l.seller === address) ?? null))
       .catch(() => setMine(null));
   useEffect(() => {
     if (market?.open) load();
@@ -158,7 +158,7 @@ type Sums = Omit<Quote, "quote_id" | "expires_in">;
 type Step = { kind: "quote"; sums: Sums; sign: () => Promise<void> } | { kind: "dummies" } | { kind: "dummies-sent"; txid: string } | { kind: "done"; txid: string | null };
 
 /** The buyer's side: quote, sign in the wallet, broadcast. */
-export function BuyButton({ listingId, price, label }: { listingId: number; price: number; label?: string }) {
+export function BuyButton({ listingId, price, label, doneText }: { listingId: number; price: number; label?: string; doneText?: string }) {
   const { token } = useSession();
   const [open, setOpen] = useState(false);
   if (!token) return null;
@@ -191,7 +191,7 @@ export function BuyButton({ listingId, price, label }: { listingId: number; pric
             };
           }}
           signLabel={t("签名购买")}
-          doneText={t("交易已发出。打包确认后，这块地就是你的了。")}
+          doneText={doneText ?? t("交易已发出。打包确认后，这块地就是你的了。")}
         />
       )}
     </>
@@ -472,5 +472,156 @@ export function OffersCard({ n, me, token, owner }: { n: number; me: string | nu
       </ul>
       {error && <p className="error small">{error}</p>}
     </section>
+  );
+}
+
+/** 园区打包卖: the whole park in one sale. Its owner first puts the districts into one output with a
+ * transaction to themselves, then lists that output like a district; whoever buys it gets the park. */
+export function ParkSaleCard({ parkId, owner }: { parkId: number; owner: string }) {
+  const market = useMarket();
+  const { address, token } = useSession();
+  const [signer, signerError] = useSigner();
+  const [sale, setSale] = useState<ParkSale | null>(null);
+  const [open, setOpen] = useState(false);
+  const [price, setPrice] = useState("");
+  const [sent, setSent] = useState<{ kind: "pack" | "unpack"; txid: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const load = useCallback(() => api<ParkSale>(`/v1/market/parks/${parkId}`).then(setSale).catch(() => setSale(null)), [parkId]);
+  useEffect(() => {
+    if (market?.open) load();
+  }, [market?.open, load]);
+  if (!market?.open || !sale) return null;
+  const listing = sale.listing;
+  const count = listing?.members?.length ?? sale.members.length;
+
+  if (!token || address !== owner)
+    return listing ? (
+      <div className="sale-banner">
+        <span className="sale-tag">{t("整体在售")}</span>
+        <b className="mono">{btc(listing.price_sats)}</b>
+        <span className="muted small">{t("{n} 个街区一起卖，一笔交易全部到手，园区跟着换主人", { n: count })}</span>
+        <span className="grow" />
+        <BuyButton listingId={listing.id} price={listing.price_sats} label={t("整体买下")} doneText={t("交易已发出。打包确认后，整个园区就是你的了。")} />
+      </div>
+    ) : null;
+
+  const run = async (f: () => Promise<void>) => {
+    setError(null);
+    if (!signer) return setError(signerError);
+    setBusy(true);
+    try {
+      await f();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  // Packing or splitting only moves the owner's own outputs to the owner's own address; the paying address covers the miners.
+  const move = (kind: "pack" | "unpack") =>
+    run(async () => {
+      const acc = await signer!.accounts();
+      const m = await api<ParkMove>(`/v1/market/parks/${parkId}/${kind}`, {
+        method: "POST",
+        token,
+        body: { payment_address: acc.payment_address, payment_public_key: acc.payment_public_key, public_key: acc.receive_public_key },
+      });
+      const signed = await signer!.sign(m.psbt, m.sign_inputs.map((index) => ({ index, address: m.own_inputs.includes(index) ? address! : acc.payment_address })));
+      const r = await api<{ txid: string }>(`/v1/market/moves/${m.move_id}/submit`, { method: "POST", token, body: { psbt: signed } });
+      setSent({ kind, txid: r.txid });
+      await load();
+    });
+  const list = () =>
+    run(async () => {
+      const p = Math.floor(Number(price));
+      if (!Number.isFinite(p) || p < 1000) throw new Error(t("价格至少 1,000 聪"));
+      const acc = await signer!.accounts();
+      const prep = await api<{ psbt: string }>(`/v1/market/parks/${parkId}/listing/prepare`, {
+        method: "POST",
+        token,
+        body: { price_sats: p, pay_to: acc.payment_address, public_key: acc.receive_public_key },
+      });
+      const signed = await signer!.sign(prep.psbt, [{ index: 0, address: address!, sighash: SINGLE_ACP }]);
+      await api(`/v1/market/parks/${parkId}/listing`, { method: "POST", token, body: { psbt: signed } });
+      setOpen(false);
+      await load();
+    });
+  const takeDown = async () => {
+    if (!listing || !confirm(t("在 unimap 下架？你签过的挂单在铭文转走之前仍然有效，想彻底作废就把园区拆开，或者把铭文转到你自己的另一个地址。"))) return;
+    await api(`/v1/market/listings/${listing.id}`, { method: "DELETE", token }).catch((e) => setError(e.message));
+    await load();
+  };
+
+  return (
+    <div className="sell-card">
+      <div className="row between">
+        <b>{t("整个园区一起卖")}</b>
+        <NetworkTag network={market.network} />
+      </div>
+      {sent ? (
+        // Until it confirms, ord still sees the old outputs, so there is nothing more to do here yet.
+        <>
+          <p className="small">
+            {sent.kind === "pack"
+              ? t("打包交易已发出。确认后（大约 10 分钟）就能整体挂单。")
+              : t("拆开的交易已发出。确认后每个街区又各在一个输出里，可以单独卖了。")}
+          </p>
+          <TxLink txid={sent.txid} network={market.network} />
+        </>
+      ) : listing ? (
+        <>
+          <p className="small">{t("你把 {n} 个街区一起挂了 {price}。买家一笔交易全部买走，园区跟着换主人。", { n: count, price: btc(listing.price_sats) })}</p>
+          <div className="row end">
+            <button type="button" className="ghost sm" onClick={takeDown}>
+              {t("下架")}
+            </button>
+          </div>
+        </>
+      ) : !sale.packed ? (
+        <>
+          <p className="muted small">
+            {t("一笔交易卖掉整个园区，园区跟着换主人。先把 {n} 个街区放进同一个输出：这是一笔转给你自己的交易，铭文不离开你的地址，只花一点矿工费。", { n: count })}
+          </p>
+          <div className="row end">
+            <button type="button" className="sm" onClick={() => move("pack")} disabled={busy}>
+              {busy ? t("等待钱包签名…") : t("打包")}
+            </button>
+          </div>
+        </>
+      ) : !open ? (
+        <>
+          <p className="muted small">{t("{n} 个街区已经在同一个输出里，可以整体挂单了。想单独卖其中一个，就先拆开。", { n: count })}</p>
+          <div className="row end">
+            <button type="button" className="ghost sm" onClick={() => move("unpack")} disabled={busy}>
+              {t("拆开")}
+            </button>
+            <button type="button" className="sm" onClick={() => setOpen(true)} disabled={busy}>
+              {t("整体挂单")}
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <label className="small">
+            {t("整个园区的价格（聪）")}
+            <input inputMode="numeric" value={price} onChange={(e) => setPrice(e.target.value.replace(/\D/g, "").slice(0, 16))} placeholder="5000000" />
+          </label>
+          {price && <p className="muted small mono">≈ {btc(Number(price))}</p>}
+          <p className="muted small">
+            {t("和单个街区挂单一样，你的钱包签一个半成品交易：装着 {n} 个街区的这个输出，换一笔付到你地址的钱。只有付够钱的交易能用这个签名。", { n: count })}
+          </p>
+          <div className="row end">
+            <button type="button" className="ghost sm" onClick={() => setOpen(false)} disabled={busy}>
+              {t("取消")}
+            </button>
+            <button type="button" className="primary sm" onClick={list} disabled={busy}>
+              {busy ? t("等待钱包签名…") : t("签名挂单")}
+            </button>
+          </div>
+        </>
+      )}
+      {error && <p className="error small">{error}</p>}
+    </div>
   );
 }

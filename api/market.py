@@ -28,6 +28,9 @@ until the inscription moves; the page says so and offers moving it to make sure.
 Offers (出价) run the other way round, for things nobody listed: the buyer signs the same purchase
 first, and the holder signs input 2 to accept it. See the offers section below.
 
+A whole park (园区打包卖) sells the same way once its districts sit in one output; see the parks
+section below.
+
 The market runs only when MARKET_NETWORK is set (testnet4, signet or regtest), and refuses
 mainnet unless MARKET_MAINNET_AUDITED=1, which is for after the outside audit.
 """
@@ -38,7 +41,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import btc, game, notify, wallets
+from api import btc, game, notify, parks, wallets
 from api.auth import current_address, optional_address
 from api.db import cursor
 from api.land import _bitcoind
@@ -223,14 +226,17 @@ def prepare_listing(req: ListBody, address: str = Depends(current_address)):
     if owner != address:
         raise HTTPException(403, "only the address holding it can sell it")
     value, spk = _sellable(inscription_id, outpoint)
+    return {**_listing_psbt(outpoint, value, spk, req.price_sats, pay_spk, req.public_key), "inscription_id": inscription_id}
+
+
+def _listing_psbt(outpoint, value, spk, price, pay_spk, public_key):
     txid, vout = outpoint.rsplit(":", 1)
-    tx = btc.Tx(2, [btc.TxIn(txid, int(vout), sequence=SEQUENCE)], [btc.TxOut(req.price_sats, pay_spk)])
+    tx = btc.Tx(2, [btc.TxIn(txid, int(vout), sequence=SEQUENCE)], [btc.TxOut(price, pay_spk)])
     psbt = btc.Psbt.from_tx(tx)
     psbt.set_witness_utxo(0, btc.TxOut(value, spk))
     psbt.set(0, btc.IN_SIGHASH_TYPE, btc.SINGLE_ACP.to_bytes(4, "little"))
-    _describe_inputs(psbt, 0, spk, req.public_key)
-    return {"psbt": psbt.b64(), "psbt_hex": psbt.serialize().hex(), "sign_inputs": [0], "sighash": btc.SINGLE_ACP,
-            "inscription_id": inscription_id, "postage_sats": value}
+    _describe_inputs(psbt, 0, spk, public_key)
+    return {"psbt": psbt.b64(), "psbt_hex": psbt.serialize().hex(), "sign_inputs": [0], "sighash": btc.SINGLE_ACP, "postage_sats": value}
 
 
 def _script(address, net):
@@ -258,16 +264,33 @@ def create_listing(req: SignedBody, address: str = Depends(current_address)):
     """Put up a listing the seller's wallet signed. Replaces their earlier listing of the same thing."""
     net = _need_market()
     psbt = _psbt(req.psbt)
-    tx = psbt.tx
-    if len(tx.inputs) != 1 or len(tx.outputs) != 1:
-        raise HTTPException(400, "a listing is one input and one output")
     with cursor() as cur:
         inscription_id, owner, outpoint = _land(cur, req.bitmap_number, req.tx_index)
     if owner != address:
         raise HTTPException(403, "only the address holding it can sell it")
+    pay = _seller_signed(net, psbt, outpoint, *_sellable(inscription_id, outpoint))
+    with cursor() as cur:
+        cur.execute(
+            "update social.market_listings set status = 'replaced', updated_at = now() where inscription_id = %s and status = 'active';",
+            (inscription_id,),
+        )
+        cur.execute(
+            "insert into social.market_listings (inscription_id, bitmap_number, tx_index, seller, price_sats, pay_to_script, outpoint, postage_sats, psbt) "
+            "values (%s, %s, %s, %s, %s, %s, %s, %s, %s) returning id;",
+            (inscription_id, req.bitmap_number, req.tx_index, address, pay.value, pay.script_pubkey.hex(), outpoint, psbt.witness_utxo(0).value, psbt.b64()),
+        )
+        listing_id = cur.fetchone()[0]
+        return _listing(cur, listing_id)
+
+
+def _seller_signed(net, psbt, outpoint, value, spk):
+    """The output a listing pays, after checking the seller's wallet signed it over outpoint with SIGHASH_SINGLE|ANYONECANPAY.
+    Finalizes input 0."""
+    tx = psbt.tx
+    if len(tx.inputs) != 1 or len(tx.outputs) != 1:
+        raise HTTPException(400, "a listing is one input and one output")
     if tx.inputs[0].outpoint != outpoint:
         raise HTTPException(409, "this listing spends an output that no longer holds the inscription")
-    value, spk = _sellable(inscription_id, outpoint)
     pay = tx.outputs[0]
     if not MIN_PRICE <= pay.value <= MAX_PRICE or btc.kind_of(pay.script_pubkey) is None:
         raise HTTPException(400, "the price or the address paid is out of bounds")
@@ -284,34 +307,24 @@ def create_listing(req: SignedBody, address: str = Depends(current_address)):
         raise HTTPException(400, "a listing is signed with SIGHASH_SINGLE|ANYONECANPAY")
     psbt.set_witness_utxo(0, btc.TxOut(value, spk))
     btc.finalize_input(psbt, 0)
-    with cursor() as cur:
-        cur.execute(
-            "update social.market_listings set status = 'replaced', updated_at = now() where inscription_id = %s and status = 'active';",
-            (inscription_id,),
-        )
-        cur.execute(
-            "insert into social.market_listings (inscription_id, bitmap_number, tx_index, seller, price_sats, pay_to_script, outpoint, postage_sats, psbt) "
-            "values (%s, %s, %s, %s, %s, %s, %s, %s, %s) returning id;",
-            (inscription_id, req.bitmap_number, req.tx_index, address, pay.value, pay.script_pubkey.hex(), outpoint, value, psbt.b64()),
-        )
-        listing_id = cur.fetchone()[0]
-        return _listing(cur, listing_id)
+    return pay
 
 
 LISTING_COLUMNS = (
     "m.id, m.inscription_id, m.bitmap_number, m.tx_index, m.seller, m.price_sats, m.outpoint, m.postage_sats, m.status, "
-    "m.created_at, m.sold_txid, m.buyer, o.outpoint = m.outpoint as fresh"
+    "m.created_at, m.sold_txid, m.buyer, m.park_id, m.members, o.outpoint = m.outpoint as fresh"
 )
 LISTING_FROM = "from social.market_listings m left join inscription_owners o on o.inscription_id = m.inscription_id "
 
 
 def _view(row):
-    lid, iid, n, tx_index, seller, price, outpoint, postage, status, created_at, sold_txid, buyer, fresh = row
+    lid, iid, n, tx_index, seller, price, outpoint, postage, status, created_at, sold_txid, buyer, park_id, members, fresh = row
     if status == "active" and not fresh:
         status = "gone"  # the inscription moved some other way
     return {
         "id": lid, "inscription_id": iid, "bitmap_number": n, "tx_index": tx_index, "seller": seller, "price_sats": price,
         "postage_sats": postage, "status": status, "created_at": created_at.isoformat(), "txid": sold_txid, "buyer": buyer,
+        "park_id": park_id, "members": members,
     }
 
 
@@ -325,14 +338,14 @@ def _listing(cur, listing_id):
 
 @router.get("/v1/market/listings")
 def market_listings(bitmap_number: int | None = None, limit: int = 50):
-    """Live listings, cheapest first; with bitmap_number, the district's and its parcels'."""
+    """Live listings, cheapest first; with bitmap_number, the district's and its parcels', and its park's if sold whole."""
     if network() is None:
         return {"listings": []}
     limit = max(1, min(limit, 200))
     with cursor() as cur:
         cur.execute(
             f"select {LISTING_COLUMNS} {LISTING_FROM} where m.status = 'active' and o.outpoint = m.outpoint "
-            "and (%(n)s::int4 is null or m.bitmap_number = %(n)s) order by m.price_sats, m.id limit %(limit)s;",
+            "and (%(n)s::int4 is null or m.bitmap_number = %(n)s or %(n)s = any(m.members)) order by m.price_sats, m.id limit %(limit)s;",
             {"n": bitmap_number, "limit": limit},
         )
         return {"listings": [_view(r) for r in cur.fetchall()]}
@@ -547,15 +560,24 @@ def submit(quote_id: int, req: SubmitBody, address: str = Depends(current_addres
             raise HTTPException(409, "this quote was already used")
         cur.execute(
             "update social.market_listings set status = 'sold', buyer = %s, sold_txid = %s, updated_at = now() "
-            "where id = %s and status = 'active' returning seller, bitmap_number, inscription_id;",
+            "where id = %s and status = 'active' returning seller, bitmap_number, inscription_id, park_id, members;",
             (address, quoted.tx.txid, listing_id),
         )
         sold = cur.fetchone()
         if sold is None:
             raise HTTPException(409, "this listing is no longer for sale")
         txid = c.send(raw)
-        _settle_offers(cur, sold[2])
-        notify.notify(cur, sold[0], "sold", address, sold[1])
+        seller, n, inscription_id, park_id, members = sold
+        if park_id is None:
+            _settle_offers(cur, inscription_id)
+        else:
+            cur.execute("select inscription_id from bitmaps where bitmap_number = any(%s);", (members,))
+            for (iid,) in cur.fetchall():
+                _settle_offers(cur, iid)
+            # The park changes hands with its districts: it is the address they went to that holds them now.
+            new_owner = btc.script_address(quoted.tx.outputs[1].script_pubkey, network())
+            cur.execute("update social.parks set owner_address = %s where id = %s;", (new_owner, park_id))
+        notify.notify(cur, seller, "sold", address, n)
     return {"txid": txid, "listing_id": listing_id}
 
 
@@ -766,6 +788,234 @@ def accept(offer_id: int, req: SubmitBody, address: str = Depends(current_addres
         _settle_offers(cur, view["inscription_id"])
         notify.notify(cur, view["buyer"], "offer_accepted", address, view["bitmap_number"])
     return {"txid": txid, "offer_id": offer_id}
+
+
+# --- parks ----------------------------------------------------------------------------------
+# 园区打包卖: a whole park in one sale. A listing's signature covers one input, so the park's
+# districts first go into one output (pack): a transaction that only moves the owner's own
+# inscription outputs to the owner's own address, those inputs first and their sats in order, with
+# the payment address's coins paying the miners and getting the change. That one output is then
+# listed and bought like any district, and the park changes hands with it. Whoever holds it can
+# split it back into one output per district (unpack), each starting at a district's sat.
+
+def _park_land(cur, park_id):
+    """(park, [(bitmap_number, inscription_id, outpoint)]) for the districts its owner still holds."""
+    park = parks.get(cur, park_id)
+    if park is None:
+        raise HTTPException(404, "no such park")
+    cur.execute(
+        "select b.bitmap_number, b.inscription_id, o.outpoint from bitmaps b join inscription_owners o on o.inscription_id = b.inscription_id "
+        "where b.bitmap_number = any(%s) order by b.bitmap_number;",
+        (park["members"],),
+    )
+    return park, cur.fetchall()
+
+
+def _park_listing(cur, park_id):
+    cur.execute(f"select {LISTING_COLUMNS} {LISTING_FROM} where m.park_id = %s and m.status = 'active' and o.outpoint = m.outpoint "
+                "order by m.id desc limit 1;", (park_id,))
+    row = cur.fetchone()
+    return _view(row) if row else None
+
+
+def _pieces(net, owner, land):
+    """[(outpoint, value, scriptPubKey)] of the outputs holding a park's districts, in district order, after checking
+    with ord and bitcoind that they hold those districts and nothing else."""
+    c = _chain()
+    owner_spk = _script(owner, net)
+    held = {}
+    for _, iid, outpoint in land:
+        held.setdefault(outpoint, set()).add(iid)
+    out = []
+    for outpoint, ids in held.items():
+        info = c.output(outpoint) or {}
+        if info.get("indexed") is False:
+            raise HTTPException(409, "ord hasn't caught up with these outputs yet; try again in a few minutes")
+        if set(info.get("inscriptions") or []) != ids or (info.get("runes") or {}):
+            raise HTTPException(409, f"{outpoint} holds other inscriptions or runes too; send them elsewhere first")
+        live = c.txout(outpoint)
+        if live is None or live[1] != owner_spk:
+            raise HTTPException(409, "a district has just moved; refresh and try again")
+        out.append((outpoint, live[0], live[1]))
+    return out
+
+
+def _own_park_land(cur, park_id, address):
+    park, land = _park_land(cur, park_id)
+    if park["owner"] != address:
+        raise HTTPException(403, "only the address holding the park can do this")
+    return park, land
+
+
+@router.get("/v1/market/parks/{park_id}")
+def park_sale(park_id: int):
+    """Whether a park's districts are in one output yet, and its live listing."""
+    _need_market()
+    with cursor() as cur:
+        park, land = _park_land(cur, park_id)
+        listing = _park_listing(cur, park_id)
+    outpoints = {outpoint for _, _, outpoint in land}
+    return {"park_id": park_id, "name": park["name"], "owner": park["owner"], "members": park["members"],
+            "packed": len(outpoints) == 1, "listing": listing}
+
+
+class MoveBody(BaseModel):
+    payment_address: str = Field(max_length=100)  # whose coins pay the miners
+    payment_public_key: str | None = Field(default=None, max_length=66)
+    public_key: str | None = Field(default=None, max_length=66)  # the inscription address's key, for the wallet
+    fee_rate: float | None = Field(default=None, gt=0, le=MAX_FEE_RATE)
+
+
+def _move(cur, net, req, kind, park_id, owner, pieces, outs):
+    """The owner's outputs pieces moved, in order, into outputs of the values outs at the same address; kept for submit."""
+    own_spk = pieces[0][2]
+    pay_spk = _script(req.payment_address, net)
+    pay_kind = btc.kind_of(pay_spk)
+    rate = req.fee_rate or _chain().fee_rate() or 2.0
+    taken = {p[0] for p in pieces}
+    coins = sorted([c for c in _coins(net, req.payment_address) if c[1] > DUMMY_MAX and c[0] not in taken], key=lambda x: -x[1])
+    kinds_in = [btc.kind_of(p[2]) for p in pieces]
+    kinds_out = [btc.kind_of(own_spk)] * len(outs) + [pay_kind]
+    chosen, have = [], 0
+    for coin in coins:
+        chosen.append(coin)
+        have += coin[1]
+        miners = int(rate * _vbytes(kinds_in + [pay_kind] * len(chosen), kinds_out)) + 1
+        if have >= miners + btc.dust_limit(pay_spk):
+            break
+    else:
+        raise HTTPException(409, "not enough sats in the paying address for the network fee")
+    tx = btc.Tx(2)
+    for outpoint, _, _ in pieces + chosen:
+        txid, vout = outpoint.rsplit(":", 1)
+        tx.inputs.append(btc.TxIn(txid, int(vout), sequence=SEQUENCE))
+    tx.outputs = [btc.TxOut(v, own_spk) for v in outs] + [btc.TxOut(have - miners, pay_spk)]
+    psbt = btc.Psbt.from_tx(tx)
+    for i, (_, value, spk) in enumerate(pieces + chosen):
+        psbt.set_witness_utxo(i, btc.TxOut(value, spk))
+        _describe_inputs(psbt, i, spk, req.public_key if i < len(pieces) else req.payment_public_key)
+    cur.execute(
+        "insert into social.market_moves (kind, park_id, owner, psbt, expires_at) values (%s, %s, %s, %s, now() + make_interval(mins => %s)) returning id;",
+        (kind, park_id, owner, psbt.b64(), QUOTE_MINUTES),
+    )
+    return {"move_id": cur.fetchone()[0], "psbt": psbt.b64(), "psbt_hex": psbt.serialize().hex(), "sign_inputs": list(range(len(tx.inputs))),
+            "own_inputs": list(range(len(pieces))), "network_fee_sats": miners, "fee_rate": rate}
+
+
+@router.post("/v1/market/parks/{park_id}/pack")
+def pack(park_id: int, req: MoveBody, address: str = Depends(current_address)):
+    """A transaction putting every district of the park into one output at the owner's address, for their wallet to sign."""
+    net = _need_market()
+    with cursor() as cur:
+        _, land = _own_park_land(cur, park_id, address)
+    pieces = _pieces(net, address, land)
+    if len(pieces) < 2:
+        raise HTTPException(409, "the park's districts are already in one output")
+    with cursor() as cur:
+        return _move(cur, net, req, "pack", park_id, address, pieces, [sum(p[1] for p in pieces)])
+
+
+@router.post("/v1/market/parks/{park_id}/unpack")
+def unpack(park_id: int, req: MoveBody, address: str = Depends(current_address)):
+    """A transaction splitting the park's one output into one output per district, each starting at its district's sat."""
+    net = _need_market()
+    with cursor() as cur:
+        _, land = _own_park_land(cur, park_id, address)
+    pieces = _pieces(net, address, land)
+    if len(pieces) != 1:
+        raise HTTPException(409, "the park's districts aren't in one output")
+    outpoint, value, spk = pieces[0]
+    offsets = []
+    for _, iid, _ in land:
+        satpoint = _chain().satpoint(iid) or ""
+        if satpoint.rsplit(":", 1)[0] != outpoint:
+            raise HTTPException(409, "a district has just moved; refresh and try again")
+        offsets.append(int(satpoint.rsplit(":", 1)[1]))
+    starts = [0] + sorted(offsets)[1:]
+    outs = [end - start for start, end in zip(starts, starts[1:] + [value])]
+    if min(outs) < btc.dust_limit(spk):
+        raise HTTPException(409, "the districts sit too close together in this output to split it here")
+    with cursor() as cur:
+        return _move(cur, net, req, "unpack", park_id, address, pieces, outs)
+
+
+@router.post("/v1/market/moves/{move_id}/submit")
+def submit_move(move_id: int, req: SubmitBody, address: str = Depends(current_address)):
+    """Check the owner signed exactly the pack or unpack handed out, then test and broadcast it."""
+    _need_market()
+    signed = _psbt(req.psbt)
+    with cursor() as cur:
+        cur.execute("select owner, psbt, expires_at > now(), txid from social.market_moves where id = %s;", (move_id,))
+        row = cur.fetchone()
+    if row is None or row[0] != address:
+        raise HTTPException(404, "no such transaction")
+    _, quoted_b64, fresh, sent = row
+    if sent is not None:
+        raise HTTPException(409, "this transaction was already sent")
+    if not fresh:
+        raise HTTPException(410, "this took too long; start again")
+    quoted = btc.Psbt.parse(quoted_b64)
+    _take_signatures(quoted, signed, range(len(quoted.tx.inputs)))
+    raw = quoted.extract().serialize().hex()
+    c = _chain()
+    allowed, reason = c.test_accept(raw)
+    if not allowed:
+        raise HTTPException(409, f"bitcoind won't take this transaction: {reason}")
+    with cursor() as cur:
+        cur.execute("update social.market_moves set txid = %s where id = %s and txid is null returning id;", (quoted.tx.txid, move_id))
+        if cur.fetchone() is None:
+            raise HTTPException(409, "this transaction was already sent")
+        return {"txid": c.send(raw)}
+
+
+class ParkListBody(BaseModel):
+    price_sats: int = Field(ge=MIN_PRICE, le=MAX_PRICE)
+    pay_to: str = Field(max_length=100)
+    public_key: str | None = Field(default=None, max_length=66)
+
+
+def _one_piece(cur, net, park_id, address):
+    park, land = _own_park_land(cur, park_id, address)
+    pieces = _pieces(net, address, land)
+    if len(pieces) != 1:
+        raise HTTPException(409, "put the park's districts into one output first")
+    return park, land, pieces[0]
+
+
+@router.post("/v1/market/parks/{park_id}/listing/prepare")
+def prepare_park_listing(park_id: int, req: ParkListBody, address: str = Depends(current_address)):
+    """The half-made sale of the park's one output, for the owner's wallet to sign like a district's listing."""
+    net = _need_market()
+    pay_spk = _script(req.pay_to, net)
+    with cursor() as cur:
+        park, _, (outpoint, value, spk) = _one_piece(cur, net, park_id, address)
+    return {**_listing_psbt(outpoint, value, spk, req.price_sats, pay_spk, req.public_key), "members": park["members"]}
+
+
+class SignedParkListing(BaseModel):
+    psbt: str = Field(max_length=200_000)
+
+
+@router.post("/v1/market/parks/{park_id}/listing", status_code=201)
+def create_park_listing(park_id: int, req: SignedParkListing, address: str = Depends(current_address)):
+    """Put the whole park up for sale. Replaces earlier listings of it or of any of its districts."""
+    net = _need_market()
+    psbt = _psbt(req.psbt)
+    with cursor() as cur:
+        park, land, (outpoint, value, spk) = _one_piece(cur, net, park_id, address)
+    pay = _seller_signed(net, psbt, outpoint, value, spk)
+    ids = [iid for _, iid, _ in land]
+    with cursor() as cur:
+        cur.execute(
+            "update social.market_listings set status = 'replaced', updated_at = now() where (inscription_id = any(%s) or park_id = %s) and status = 'active';",
+            (ids, park_id),
+        )
+        cur.execute(
+            "insert into social.market_listings (inscription_id, bitmap_number, tx_index, seller, price_sats, pay_to_script, outpoint, postage_sats, psbt, park_id, members) "
+            "values (%s, %s, null, %s, %s, %s, %s, %s, %s, %s, %s) returning id;",
+            (ids[0], land[0][0], address, pay.value, pay.script_pubkey.hex(), outpoint, value, psbt.b64(), park_id, park["members"]),
+        )
+        return _listing(cur, cur.fetchone()[0])
 
 
 # --- dummies ----------------------------------------------------------------------------------

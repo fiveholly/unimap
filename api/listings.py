@@ -138,7 +138,7 @@ def refresh(force=False):
 
 # Listings of districts whose seller still holds them, from a marketplace heard from lately.
 # Live listings from the marketplace and from unimap's own market (api/market.py) alike, as
-# (bitmap_number, market, inscription_id, price_sats, listed_at, listing_id). Districts only.
+# (bitmap_number, market, inscription_id, price_sats, listed_at, listing_id). Districts only, not parks sold whole.
 _LIVE = (
     "from (select b.bitmap_number, l.market, l.inscription_id, l.price_sats, l.listed_at, null::int8 as listing_id "
     "from social.listings l join bitmaps b on b.inscription_id = l.inscription_id "
@@ -147,7 +147,7 @@ _LIVE = (
     "and c.ok_at > now() - make_interval(hours => %(stale)s) "
     "union all select m.bitmap_number, 'unimap', m.inscription_id, m.price_sats, m.created_at, m.id "
     "from social.market_listings m join inscription_owners o on o.inscription_id = m.inscription_id and o.outpoint = m.outpoint "
-    "where %(own)s and m.status = 'active' and m.tx_index is null) l "
+    "where %(own)s and m.status = 'active' and m.tx_index is null and m.park_id is null) l "
 )
 
 
