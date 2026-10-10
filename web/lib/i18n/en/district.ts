@@ -181,4 +181,10 @@ export const district: Record<string, string> = {
   "{n} 天": "{n} days",
   "取消": "Cancel",
   "发起": "Start",
+
+  // For sale (在售)
+  "在售": "For sale",
+  "你在 {market} 挂单出售这个街区": "You've listed this district on {market}",
+  "拥有者在 {market} 挂单出售": "Listed by its owner on {market}",
+  "去 {market} 看看": "View on {market}",
 };

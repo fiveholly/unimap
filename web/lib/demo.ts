@@ -3,7 +3,7 @@
 // here from deterministic fake data; what the visitor does (posts, likes, follows, profile
 // edits) is kept in localStorage, and "重置演示数据" clears it.
 
-import type { Application, District, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
+import type { Application, District, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
 import { connected } from "./parks";
 import { MAX_SHOWN, PET_KEYS, PETS, type Pet, type PetKey } from "./pets";
 import { prosperity, THRESHOLDS, type ProsperityParts } from "./prosperity";
@@ -325,6 +325,20 @@ function showcaseView(n: number): Showcase {
     shown: petsAt(n),
   };
 }
+// 在售: a few districts listed on Magic Eden, among them one of the visitor's and two next to 840000.
+const LISTED: Record<number, number> = { 840002: 4_200_000, 840005: 12_500_000, 840008: 6_900_000, 839998: 25_000_000 };
+function saleAt(n: number): number | null {
+  if (!ownerOf(n)) return null;
+  if (LISTED[n]) return LISTED[n];
+  const h = hash(n * 7 + 3);
+  return h < 0.03 ? 300_000 + Math.round((h / 0.03) * 40) * 250_000 : null;
+}
+function saleOf(n: number): Sale | null {
+  const price = saleAt(n);
+  if (price == null) return null;
+  return { price_sats: price, market: "magiceden", url: `https://magiceden.io/ordinals/item-details/${inscriptionId(n)}`, listed_at: iso(0.5 + hash(n) * 9) };
+}
+
 function tile(n: number): Tile {
   const s = load();
   const o = ownerOf(n);
@@ -336,6 +350,7 @@ function tile(n: number): Tile {
     style: styleAt(n),
     park: parkOf(n)?.id ?? null,
     pets: petsAt(n).map((x) => `${x.asset}:${x.tier}`),
+    sale: saleAt(n),
   };
 }
 const ownScore = (n: number) => prosperity(parts(n));
@@ -412,7 +427,7 @@ function land(n: number): Land {
   }));
   return {
     ...base, claimed: true, parcels,
-    district: { inscription_id: inscriptionId(n), inscription_number: 30_000_000 + n, inscribed_height: 790_000 + (n % 40_000), owner: owner(o, n) },
+    district: { inscription_id: inscriptionId(n), inscription_number: 30_000_000 + n, inscribed_height: 790_000 + (n % 40_000), owner: owner(o, n), sale: saleOf(n) },
   };
 }
 function txValues(n: number): number[] {

@@ -13,6 +13,14 @@ export function btc(sats: number): string {
   return `${(sats / 1e8).toLocaleString("en-US", { maximumFractionDigits: 8 })} BTC`;
 }
 
+/** A price for a small tag on the map: ₿0.05, ₿0.123, ₿1.2. */
+export function btcShort(sats: number): string {
+  return `₿${(sats / 1e8).toLocaleString("en-US", { maximumSignificantDigits: 3 })}`;
+}
+
+/** Marketplaces that list districts, by the API's market key. */
+export const MARKETS: Record<string, string> = { magiceden: "Magic Eden" };
+
 const EPOCHS = ["老城区", "第一纪元", "第二纪元", "第三纪元", "第四纪元", "第五纪元", "第六纪元"];
 
 /** Halving epoch of a block: 210000 blocks each, epoch 0 being the old town. */

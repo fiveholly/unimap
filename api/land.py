@@ -2,9 +2,9 @@
 
 import os
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 
-from api import holdings, parks, style
+from api import holdings, listings, parks, style
 from api.db import cursor
 from parcel_index.sources import Bitcoind
 
@@ -63,8 +63,9 @@ def status():
 
 
 @router.get("/v1/land")
-def land_range(start: int, end: int):
-    """Map tiles for blocks start..end (inclusive): claimed or not, owner, parcel and post counts, prosperity level, look, park and pets."""
+def land_range(start: int, end: int, tasks: BackgroundTasks):
+    """Map tiles for blocks start..end (inclusive): claimed or not, owner, parcel and post counts, prosperity level, look, park,
+    pets and asking price when listed for sale."""
     if end < start or end - start + 1 > MAX_RANGE:
         raise HTTPException(400, f"range must cover 1 to {MAX_RANGE} blocks")
     with cursor() as cur:
@@ -89,6 +90,9 @@ def land_range(start: int, end: int):
         levels, park_of = parks.scored(cur, max(start, 0), end)
         styles = style.in_range(cur, max(start, 0), end)
         pets = holdings.in_range(cur, max(start, 0), end, {n: c[0] for n, c in claimed.items() if c[0]})
+        sale = listings.in_range(cur, max(start, 0), end)
+        if listings.stale(cur):
+            tasks.add_task(listings.refresh)
     tiles = []
     for n in range(max(start, 0), end + 1):
         owner, parcels, posts = claimed.get(n, (None, 0, 0))
@@ -106,6 +110,7 @@ def land_range(start: int, end: int):
                 "style": style.visible(styles.get(n), levels[n]),
                 "park": park_of[n]["id"] if n in park_of else None,
                 "pets": pets.get(n, []),
+                "sale": sale.get(n),
             }
         )
     return {"tip": tip, "tiles": tiles}
@@ -168,6 +173,7 @@ def land(bitmap_number: int):
                 "inscription_number": number,
                 "inscribed_height": height,
                 "owner": _owner(*owner),
+                "sale": listings.of(cur, bitmap_number),
             },
             "parcels": parcels,
         }

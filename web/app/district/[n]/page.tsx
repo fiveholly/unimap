@@ -18,8 +18,8 @@ import { ShareMenu } from "@/components/ShareMenu";
 import { short, useSession } from "@/components/Session";
 import { TileThumb } from "@/components/TileThumb";
 import { XHandle } from "@/components/X";
-import { api, ApiError, type District, type Land, type LandEvent, type Me, type Post, type Tile } from "@/lib/api";
-import { btc, epochName } from "@/lib/format";
+import { api, ApiError, type District, type Land, type LandEvent, type Me, type Post, type Sale, type Tile } from "@/lib/api";
+import { btc, epochName, MARKETS, timeAgo } from "@/lib/format";
 import { t, tn } from "@/lib/i18n";
 import { districtText, parkText } from "@/lib/share";
 import { LANDMARKS, ZONES, zoneOf } from "@/lib/zones";
@@ -212,6 +212,7 @@ function DistrictView() {
             {viewer && <RoleBadge role={viewer.role} parcel={viewer.parcel} />}
             {viewer?.muted && <span className="badge muted-badge">{t("你在这里被禁言了")}</span>}
           </div>
+          {land.district?.sale && <SaleBanner sale={land.district.sale} mine={!!viewer && viewer.address === district.owner} />}
           {district.park && (
             <div className="park-banner">
               <span>{tn("属于园区 {name}", { name: <b>{district.park.name}</b> })}</span>
@@ -495,6 +496,27 @@ function DistrictSkeleton({ n }: { n: number }) {
           <div className="mondrian-wrap placeholder" />
         </div>
       </section>
+    </div>
+  );
+}
+
+/** 在售: the district is listed on a marketplace; its price and a link to the listing. */
+function SaleBanner({ sale, mine }: { sale: Sale; mine: boolean }) {
+  const market = MARKETS[sale.market] ?? sale.market;
+  return (
+    <div className="sale-banner">
+      <span className="sale-tag">{t("在售")}</span>
+      <b className="mono">{btc(sale.price_sats)}</b>
+      <span className="muted small">
+        {mine ? t("你在 {market} 挂单出售这个街区", { market }) : t("拥有者在 {market} 挂单出售", { market })}
+        {sale.listed_at && ` · ${timeAgo(Date.parse(sale.listed_at) / 1000)}`}
+      </span>
+      <span className="grow" />
+      {sale.url && (
+        <a className="btn sm" href={sale.url} target="_blank" rel="noopener noreferrer">
+          {t("去 {market} 看看", { market })} ↗
+        </a>
+      )}
     </div>
   );
 }

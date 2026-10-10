@@ -83,6 +83,7 @@ media: none
 | POST | `/v1/admin/reports/{post_id}` | 站点管理员处理举报 `{"action": "remove"\|"dismiss"}` |
 | GET / POST | `/v1/admin/bans` | 站点管理员：封禁列表 / 封禁地址 `{"address", "reason", "days"}`（`days` 为空是永久） |
 | DELETE | `/v1/admin/bans/{address}` | 站点管理员解除封禁 |
+| GET | `/v1/listings?limit=` | 在售的街区，便宜的在前（默认 50 条，最多 200）；`/v1/land` 的地图格子带 `sale`（价格，聪），`/v1/land/{n}` 的 `district.sale` 带价格、市场和挂单链接 |
 
 ## 繁荣度
 
@@ -214,6 +215,14 @@ expires: …
 站点管理员是 `ADMIN_ADDRESSES` 里列出的地址（逗号分隔，写在 `/etc/unimap/unimap.env`）。管理员在“我的土地”里能看到“站点管理”入口（`/admin`），那里按被举报次数列出帖子，可以删除帖子、不处理，或者封禁作者 7 天、30 天或永久。被封禁的地址在任何街区都不能发帖和回复，`/v1/me` 返回 `banned: true`，“我的土地”里会显示提示。管理员自己不能被封禁。
 
 这和街区主人的权力是分开的：街区主人在自己的街区删帖、禁言，不需要站点管理员；站点管理员处理的是全站范围的问题，比如到处发钓鱼链接的地址。
+
+## 在售标记
+
+在市场上挂单的街区，地图上会挂一个绿色价签（缩小时是一个绿点），侧栏和街区页显示价格，街区页还有一个按钮直达挂单页面。
+
+挂单数据来自 Magic Eden 的 Ordinals 接口（`api/listings.py`，`bitmap` 系列），存在 `social.listings` 里。地图读取时如果数据已经超过 10 分钟，就在后台刷新一次；多个 API 进程同时读取时只有一个会去请求。只有卖家仍然持有这个街区（以我们自己的索引为准）的挂单才会显示，转手以后留下的旧挂单不算。如果市场接口连续 6 小时没有成功返回，就不再显示价格，免得显示过时的报价。
+
+Magic Eden 的接口需要 API key 才能稳定使用，在 `/etc/unimap/unimap.env` 里填 `LISTINGS_API_KEY`。系列名不对时改 `LISTINGS_COLLECTION`。
 
 ## 多语言（中文 / English）
 

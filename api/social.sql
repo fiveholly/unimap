@@ -252,3 +252,19 @@ CREATE TABLE IF NOT EXISTS social.bans (
 	expires_at timestamptz NULL,
 	CONSTRAINT bans_pk PRIMARY KEY (address)
 );
+
+-- Districts listed for sale on a marketplace (api/listings.py), replaced on every refresh.
+CREATE TABLE IF NOT EXISTS social.listings (
+	inscription_id text NOT NULL,
+	price_sats int8 NOT NULL,
+	seller text NOT NULL,
+	market text NOT NULL,
+	listed_at timestamptz NULL,
+	CONSTRAINT listings_pk PRIMARY KEY (inscription_id)
+);
+CREATE TABLE IF NOT EXISTS social.listings_checked (
+	market text NOT NULL,
+	checked_at timestamptz NOT NULL, -- last try, successful or not
+	ok_at timestamptz NULL, -- last time the marketplace answered
+	CONSTRAINT listings_checked_pk PRIMARY KEY (market)
+);
