@@ -704,14 +704,45 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
 
   useEffect(() => select(focus, true), [focus, select]);
 
-  // Drag to pan; a press that barely moves is a click.
+  // Drag to pan; a press that barely moves is a click. Two fingers pinch to zoom (and pan with
+  // their midpoint); a quick double tap zooms in where it lands.
   const drag = useRef<{ x: number; y: number; vx: number; vy: number; moved: boolean } | null>(null);
+  const pointers = useRef(new Map<number, [number, number]>()); // canvas coordinates of each finger
+  const pinch = useRef<{ dist: number; s: number; wx: number; wy: number } | null>(null);
+  const lastTap = useRef<{ t: number; x: number; y: number } | null>(null);
+  const local = (e: React.PointerEvent): [number, number] => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    return [e.clientX - rect.left, e.clientY - rect.top];
+  };
+  const startPinch = (w: number, h: number) => {
+    const [[ax, ay], [bx, by]] = [...pointers.current.values()];
+    const v = view.current, mx = (ax + bx) / 2, my = (ay + by) / 2;
+    pinch.current = { dist: Math.max(1, Math.hypot(ax - bx, ay - by)), s: v.s, wx: v.x + (mx - w / 2) / v.s, wy: v.y + (my - h / 2) / v.s };
+  };
   const onPointerDown = (e: React.PointerEvent) => {
     e.currentTarget.setPointerCapture(e.pointerId);
+    pointers.current.set(e.pointerId, local(e));
+    if (pointers.current.size === 2) {
+      startPinch(e.currentTarget.clientWidth, e.currentTarget.clientHeight);
+      drag.current = null;
+      return;
+    }
+    if (pointers.current.size > 2) return;
     drag.current = { x: e.clientX, y: e.clientY, vx: view.current.x, vy: view.current.y, moved: false };
   };
   const onPointerMove = (e: React.PointerEvent) => {
-    const rect = e.currentTarget.getBoundingClientRect();
+    if (pointers.current.has(e.pointerId)) pointers.current.set(e.pointerId, local(e));
+    const p = pinch.current;
+    if (p && pointers.current.size >= 2) {
+      const w = e.currentTarget.clientWidth, h = e.currentTarget.clientHeight;
+      const [[ax, ay], [bx, by]] = [...pointers.current.values()];
+      const s = Math.min(MAX_SCALE, Math.max(MIN_SCALE, (p.s * Math.hypot(ax - bx, ay - by)) / p.dist));
+      const mx = (ax + bx) / 2, my = (ay + by) / 2;
+      // The world point first between the fingers stays between them.
+      view.current = { s, x: p.wx - (mx - w / 2) / s, y: p.wy - (my - h / 2) / s };
+      invalidate();
+      return;
+    }
     const d = drag.current;
     if (d) {
       const dx = e.clientX - d.x, dy = e.clientY - d.y;
@@ -722,22 +753,54 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
       }
       return;
     }
-    const n = levelOf(view.current.s) === "area" ? null : tileAt(e.clientX - rect.left, e.clientY - rect.top);
+    const [px, py] = local(e);
+    const n = levelOf(view.current.s) === "area" ? null : tileAt(px, py);
     if (n !== hover.current) {
       hover.current = n;
       invalidate();
     }
   };
+  const release = (e: React.PointerEvent) => {
+    pointers.current.delete(e.pointerId);
+    if (pinch.current) {
+      if (pointers.current.size >= 2) return startPinch(e.currentTarget.clientWidth, e.currentTarget.clientHeight);
+      pinch.current = null;
+      // The finger left behind carries on panning, and lifting it isn't a tap.
+      const rest = [...pointers.current.values()][0];
+      if (rest) {
+        const rect = e.currentTarget.getBoundingClientRect();
+        drag.current = { x: rest[0] + rect.left, y: rest[1] + rect.top, vx: view.current.x, vy: view.current.y, moved: true };
+      }
+      return true;
+    }
+    return false;
+  };
   const onPointerUp = (e: React.PointerEvent) => {
+    if (release(e)) return;
     const d = drag.current;
     drag.current = null;
     if (d && !d.moved) {
-      const rect = e.currentTarget.getBoundingClientRect();
-      const px = e.clientX - rect.left, py = e.clientY - rect.top;
-      if (levelOf(view.current.s) === "area") return zoomTo("block", px, py);
+      const [px, py] = local(e);
+      // Zoomed out a tap already zooms in, so it doesn't start a double tap.
+      if (levelOf(view.current.s) === "area") {
+        lastTap.current = null;
+        return zoomTo("block", px, py);
+      }
+      if (e.pointerType === "touch") {
+        const last = lastTap.current, now = e.timeStamp;
+        if (last && now - last.t < 320 && Math.hypot(px - last.x, py - last.y) < 30) {
+          lastTap.current = null;
+          return zoom(2, px, py);
+        }
+        lastTap.current = { t: now, x: px, y: py };
+      }
       const n = tileAt(px, py);
       if (n != null) select(n);
     }
+  };
+  const onPointerCancel = (e: React.PointerEvent) => {
+    release(e);
+    drag.current = null;
   };
   const onKeyDown = (e: React.KeyboardEvent) => {
     const step: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -SIDE, ArrowDown: SIDE };
@@ -766,6 +829,7 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
+          onPointerCancel={onPointerCancel}
           onPointerLeave={() => {
             hover.current = null;
             invalidate();
@@ -852,7 +916,7 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
         ))}
         <span className="grow" />
         <span className="muted">
-          {level === "area" ? "每一片约 64 个区块，楼的种类按其中各地段的多少来摆。每次减半隔出一片大陆，海峡上有桥。点击放大" : level === "parcel" ? "每一块地是区块里的一笔交易；立起来的是已认领的地块" : "拖动平移，滚轮缩放，点击街区查看；放大到最近可看到地块"}
+          {level === "area" ? "每一片约 64 个区块，楼的种类按其中各地段的多少来摆。每次减半隔出一片大陆，海峡上有桥。点击放大" : level === "parcel" ? "每一块地是区块里的一笔交易；立起来的是已认领的地块" : "拖动平移，滚轮或双指缩放，点击街区查看；放大到最近可看到地块"}
         </span>
       </div>
     </div>
