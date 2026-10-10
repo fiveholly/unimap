@@ -2163,3 +2163,277 @@ span.act.tip-btn {
   align-items: center;
   cursor: default;
 }
+
+/* ---------- 区块节拍 (block beat) ---------- */
+.block-toast {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 60;
+  width: min(380px, calc(100vw - 32px));
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, #f2b544 50%, var(--line));
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  animation: toast-in 220ms ease-out;
+}
+.block-toast p {
+  margin: 4px 0 10px;
+}
+.block-toast .row {
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.block-toast-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: 50%;
+  color: #1a1206;
+  background: #f2b544;
+}
+@keyframes toast-in {
+  from {
+    transform: translateY(12px);
+    opacity: 0;
+  }
+}
+.lucky-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, #f2b544 40%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, #f2b544 7%, transparent);
+}
+.lucky-star,
+.lucky-text {
+  color: #f2b544;
+}
+.lucky-dot,
+.chest-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  vertical-align: -1px;
+  border-radius: 50%;
+  background: #f2b544;
+  box-shadow: 0 0 6px #f2b544;
+}
+.chest-dot {
+  border-radius: 2px;
+  background: #3b2a17;
+  border: 1.5px solid #b48ce0;
+  box-shadow: none;
+}
+.beat-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, #f2b544 40%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, #f2b544 6%, transparent);
+}
+.beat-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.beat-row p {
+  margin: 2px 0 0;
+}
+.badge-icon {
+  flex: none;
+}
+.claim-guide {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+}
+.claim-guide ol {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 4px;
+}
+.claim-guide code {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface-2);
+}
+.win-note {
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, #f2b544 40%, transparent);
+  border-radius: 10px;
+  color: #f2b544;
+}
+.badge-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px;
+}
+.badge-list li {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.badge-list .block {
+  display: block;
+}
+.game h1 {
+  margin-bottom: 8px;
+}
+.game-now {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 16px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.game-now > div {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.game-now b {
+  font-size: 22px;
+}
+.alerts-toggle {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.alerts-toggle input {
+  width: auto;
+  margin: 0;
+}
+.game-card {
+  margin-top: 20px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.game-card .row {
+  gap: 12px;
+  align-items: center;
+}
+.game-card.lucky {
+  border-color: color-mix(in srgb, #f2b544 45%, var(--line));
+}
+.lucky-name {
+  font-size: 20px;
+  font-weight: 600;
+  color: #f2b544;
+}
+.round-bar {
+  height: 6px;
+  margin: 14px 0 10px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.round-bar i {
+  display: block;
+  height: 100%;
+  background: #f2b544;
+}
+.draw-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+}
+.draw-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.draw-list .grow {
+  min-width: 0;
+}
+.draw-state {
+  color: var(--fg-2);
+}
+.check {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg);
+}
+.check.compact {
+  flex-basis: 100%;
+}
+.check .ok {
+  color: #6fcf97;
+}
+.rules ul {
+  padding-left: 20px;
+  display: grid;
+  gap: 4px;
+}
+.rules h3 {
+  margin: 18px 0 6px;
+  font-size: 15px;
+}
+.odds {
+  border-collapse: collapse;
+  margin: 12px 0;
+}
+.odds th,
+.odds td {
+  text-align: left;
+  padding: 4px 16px 4px 0;
+  border-bottom: 1px solid var(--line);
+}
+.verifier {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+}
+.verifier input,
+.verifier select {
+  width: 100%;
+  min-width: 0;
+}
+.verifier .row {
+  gap: 8px;
+}
+@media (max-width: 640px) {
+  .block-toast {
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: auto;
+  }
+}

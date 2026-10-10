@@ -3,7 +3,9 @@
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 
+import { useTip } from "@/components/BlockWatch";
 import { CityMap } from "@/components/CityMap";
+import { LuckyStrip } from "@/components/GameBits";
 import { EventItem } from "@/components/EventItem";
 import { PostCard } from "@/components/PostCard";
 import { useSession } from "@/components/Session";
@@ -23,15 +25,14 @@ export default function Home() {
 function HomeView() {
   const { token } = useSession();
   const search = useSearchParams();
-  const [tip, setTip] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { tip, error } = useTip();
+  // Where the map opens: ?b=, else the newest block when the page was opened (a new block later doesn't move it).
+  const [opened, setOpened] = useState<number | null>(null);
   useEffect(() => {
-    api<{ indexed_height: { bitmap: number | null } }>("/v1/status")
-      .then((s) => setTip(s.indexed_height.bitmap ?? 0))
-      .catch((e) => setError(String(e.message || e)));
-  }, []);
+    if (tip != null && opened == null) setOpened(tip);
+  }, [tip, opened]);
   const b = Number(search.get("b"));
-  const focus = tip == null ? 0 : Number.isInteger(b) && b >= 0 && b <= tip && search.get("b") ? b : tip;
+  const focus = tip == null ? 0 : Number.isInteger(b) && b >= 0 && b <= tip && search.get("b") ? b : (opened ?? tip);
 
   return (
     <div className="page">
@@ -49,6 +50,7 @@ function HomeView() {
         )}
       </section>
       {tip != null && <Welcome tip={tip} />}
+      {tip != null && <LuckyStrip tip={tip} />}
       {error && <p className="error">{t("连不上 unimap 服务：{error}", { error })}</p>}
       {tip == null && !error && <div className="city-skeleton" aria-label={t("地图加载中")} />}
       {tip != null && <CityMap tip={tip} focus={focus} />}

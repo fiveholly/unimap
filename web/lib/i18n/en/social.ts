@@ -52,8 +52,8 @@ export const social: Record<string, string> = {
   "{who} 申请入住你的街区 {place}，去「管理街区 → 招募」看看":
     "{who} applied to move into your district {place}. See Manage district → Recruiting",
   "连接钱包后可以看到你的通知。": "Connect a wallet to see your notifications.",
-  "还没有通知。有人回复、点赞、打赏你的帖子，关注你的街区或者申请入住时，会在这里告诉你。":
-    "No notifications yet. When someone replies to, likes or tips your post, follows your district or applies to move in, you'll see it here.",
+  "还没有通知。有人回复、点赞、打赏你的帖子，关注你的街区或者申请入住，或者区块给你送来宝箱时，会在这里告诉你。":
+    "No notifications yet. When someone replies to, likes or tips your post, follows your district or applies to move in, or a block brings you a treasure, you'll see it here.",
   "更早的通知": "Older notifications",
 
   // Posts (PostCard, Composer, post page)

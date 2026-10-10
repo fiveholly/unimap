@@ -8,6 +8,7 @@ import { short } from "./Session";
 import { api, type Land, type Tile } from "@/lib/api";
 import { btc, btcShort } from "@/lib/format";
 import { CX, CY, GROUND, PAVED, rng, TILE_H, TILE_W, tileSprite } from "@/lib/iso";
+import { RARITY_COLORS, RARITY_NAMES, type Rarity } from "@/lib/game";
 import { layout } from "@/lib/mondrian";
 import { side } from "@/lib/parks";
 import { bridgeAt, continent, CONTINENTS, epochOf, HALVING, isWater, nearStrait, shoreBlocks } from "@/lib/terrain";
@@ -36,6 +37,8 @@ const COMPACT_SCALE = 0.11; // below this an area tile is a single building
 const PARCEL_FADE = [1.9, 2.5] as const;
 const SALE = "#6FCF97"; // the 在售 tag
 const SALE_TEXT_SCALE = 0.7; // below this a listed district gets a dot, not its price
+const LUCKY = "#F2B544"; // 今日幸运街区
+const BORN_MS = 8000; // how long a newly mined block's district pulses
 const PARCEL_FETCH_LIMIT = 80; // never fetch parcels for more tiles than this at once
 const PLAN = 384; // px of a cached parcel plan
 
@@ -85,6 +88,24 @@ function parcelPlan(txValues: number[], claimed: Set<number>, zone: Zone | null)
 }
 
 type View = { x: number; y: number; s: number };
+
+/** 宝箱: a small chest standing on a district, in its rarity's colour. */
+function chest(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, color: string) {
+  const w = Math.max(7, 18 * s), h = w * 0.7;
+  ctx.fillStyle = "#3B2A17";
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(1.2, 2 * s);
+  ctx.beginPath();
+  ctx.roundRect(x - w / 2, y - h, w, h, w * 0.12);
+  ctx.fill();
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x - w / 2, y - h * 0.55);
+  ctx.lineTo(x + w / 2, y - h * 0.55);
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.fillRect(x - w * 0.08, y - h * 0.68, w * 0.16, h * 0.26);
+}
 
 const STREET = "#2E2C28";
 const AREA_LABEL = 1;
@@ -259,6 +280,8 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
   const selectedRef = useRef(focus);
   const [, setLoaded] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const tipRef = useRef(tip);
+  const born = useRef<{ n: number; at: number } | null>(null); // the newest block, pulsing for a while after it arrives
 
   const draw = useCallback(() => {
     frame.current = 0;
@@ -280,6 +303,7 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
     const toScreen = (wx: number, wy: number): [number, number] => [(wx - vx) * s + w / 2, (wy - vy) * s + h / 2];
     const lvl = levelOf(s);
     setLevel(lvl);
+    const luckyLabel = `★ ${t("幸运街区")}`;
     {
       const qr = Math.max(0, Math.round(vy / QH - 1));
       const qc = Math.min(QUARTERS - 1, Math.max(0, Math.floor((vx - (qr & 1) * (QW / 2)) / QW)));
@@ -331,7 +355,7 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
       ctx.fill();
     }
     const want = new Set<number>();
-    const labels: [number, number, string, "landmark" | "park" | "sale"][] = [];
+    const labels: [number, number, string, "landmark" | "park" | "sale" | "lucky"][] = [];
     const parkCells = new Map<number, [number, number][]>(); // park id -> screen centres of its members
     // A park's outline goes over everything at the end, like a territory line in a game:
     // drawn at ground level it would hide behind the tall buildings in front.
@@ -497,6 +521,15 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
           list.push([c.x, c.y]);
           parkCells.set(t.park, list);
         }
+        if (t?.lucky) {
+          // 今日幸运街区: a warm glow on its ground.
+          const glow = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, 70 * s);
+          glow.addColorStop(0, "rgba(242,181,68,0.75)");
+          glow.addColorStop(1, "rgba(242,181,68,0)");
+          ctx.fillStyle = glow;
+          diamond(c.x, c.y, 72 * s, 36 * s);
+          ctx.fill();
+        }
         if (plan && typeof plan === "object") {
           // A bare slab with the plots on top: map the unit square onto the ground diamond.
           const g = GROUND[zone ?? "unknown"];
@@ -543,6 +576,26 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
             ctx.fill();
           }
         }
+        if (t?.treasure && s >= AREA_SCALE) chest(ctx, c.x + 34 * s, c.y - 6 * s, s, RARITY_COLORS[t.treasure]);
+        if (t?.lucky) {
+          if (s >= SALE_TEXT_SCALE) labels.push([c.x, c.y - (t.sale ? 140 : 112) * s, luckyLabel, "lucky"]);
+          ctx.strokeStyle = LUCKY;
+          ctx.lineWidth = 2;
+          diamond(c.x, c.y, 62 * s, 31 * s);
+          ctx.stroke();
+        }
+        const b = born.current;
+        if (b && b.n === n) {
+          // 新街区诞生: rings spreading out from the block that was just mined.
+          const age = performance.now() - b.at;
+          for (const lag of [0, 700]) {
+            const p = ((age + lag) % 1400) / 1400;
+            ctx.strokeStyle = `rgba(242,181,68,${(1 - p) * (1 - age / BORN_MS)})`;
+            ctx.lineWidth = 2.5;
+            diamond(c.x, c.y, (60 + 50 * p) * s, (30 + 25 * p) * s);
+            ctx.stroke();
+          }
+        }
         if (n === selectedRef.current || n === hover.current) {
           ctx.strokeStyle = n === selectedRef.current ? "#EDEAE3" : "rgba(237,234,227,0.45)";
           ctx.lineWidth = 2;
@@ -586,7 +639,7 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
     ctx.textBaseline = "middle";
     for (const [x, y, text, kind] of labels) {
       const tw = ctx.measureText(text).width + 18;
-      ctx.fillStyle = kind === "park" ? "rgba(22,21,18,0.88)" : kind === "sale" ? SALE : "#E8B04A";
+      ctx.fillStyle = kind === "park" ? "rgba(22,21,18,0.88)" : kind === "sale" ? SALE : kind === "lucky" ? LUCKY : "#E8B04A";
       ctx.beginPath();
       ctx.roundRect(x - tw / 2, y - 10, tw, 20, 10);
       ctx.fill();
@@ -598,6 +651,9 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
       ctx.fillStyle = kind === "park" ? "#EDEAE3" : "#1A1206";
       ctx.fillText(text, x, y + 0.5);
     }
+
+    if (born.current && performance.now() - born.current.at > BORN_MS) born.current = null;
+    if (born.current && !frame.current) frame.current = requestAnimationFrame(draw);
 
     for (const k of want) {
       if (chunks.current.has(k) || chunks.current.size > 400) continue;
@@ -636,7 +692,7 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
 
   const select = useCallback(
     (n: number, recentre = false) => {
-      if (n < 0 || n > tip) return;
+      if (n < 0 || n > tipRef.current) return;
       selectedRef.current = n;
       setSelected(n);
       if (recentre) {
@@ -645,7 +701,7 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
       }
       invalidate();
     },
-    [tip, invalidate],
+    [invalidate],
   );
 
   const zoom = useCallback(
@@ -717,6 +773,25 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
   }, [invalidate, zoom]);
 
   useEffect(() => select(focus, true), [focus, select]);
+
+  // A new block: its district appears at the city's edge, and every loaded chunk is fetched again,
+  // since each block moves the treasures (and every 144th the lucky district).
+  useEffect(() => {
+    const prev = tipRef.current;
+    tipRef.current = tip;
+    if (tip <= prev) return;
+    born.current = { n: tip, at: performance.now() };
+    for (const k of [...chunks.current].slice(-20))
+      api<{ tiles: Tile[] }>(`/v1/land?start=${k * CHUNK}&end=${k * CHUNK + CHUNK - 1}`)
+        .then((res) => {
+          for (const t of res.tiles) tiles.current.set(t.bitmap_number, t);
+          areas.current.clear();
+          invalidate();
+        })
+        .catch(() => {});
+    chunks.current.add(Math.floor(tip / CHUNK));
+    invalidate();
+  }, [tip, invalidate]);
 
   // Drag to pan; a press that barely moves is a click. Two fingers pinch to zoom (and pan with
   // their midpoint); a quick double tap zooms in where it lands.
@@ -909,6 +984,18 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
         <dl className="facts">
           <dt>{t("拥有者")}</dt>
           <dd className="mono">{tile ? (tile.claimed ? short(tile.owner) : t("未认领")) : "—"}</dd>
+          {tile?.lucky && (
+            <>
+              <dt>{t("区块节拍")}</dt>
+              <dd className="lucky-text">★ {t("今日幸运街区")}</dd>
+            </>
+          )}
+          {tile?.treasure && (
+            <>
+              <dt>{t("宝箱")}</dt>
+              <dd style={{ color: RARITY_COLORS[tile.treasure as Rarity] }}>{t(RARITY_NAMES[tile.treasure as Rarity])}</dd>
+            </>
+          )}
           {tile?.sale && (
             <>
               <dt>{t("在售")}</dt>
@@ -937,6 +1024,14 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
         <span>
           <i className="sale-dot" />
           {t("在售")}
+        </span>
+        <span>
+          <i className="lucky-dot" />
+          {t("幸运街区")}
+        </span>
+        <span>
+          <i className="chest-dot" />
+          {t("宝箱")}
         </span>
         <span className="grow" />
         <span className="muted">

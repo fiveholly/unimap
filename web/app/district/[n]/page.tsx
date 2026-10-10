@@ -17,6 +17,8 @@ import { RecruitCard } from "@/components/Recruit";
 import { ShareMenu } from "@/components/ShareMenu";
 import { short, useSession } from "@/components/Session";
 import { TileThumb } from "@/components/TileThumb";
+import { useTip } from "@/components/BlockWatch";
+import { ClaimGuide, DistrictBeat } from "@/components/GameBits";
 import { TipButton } from "@/components/Tip";
 import { XHandle } from "@/components/X";
 import { api, ApiError, type District, type Land, type LandEvent, type Me, type Post, type Sale, type Tile } from "@/lib/api";
@@ -51,6 +53,8 @@ function DistrictView() {
   const [around, setAround] = useState<Tile[]>([]);
   const [me, setMe] = useState<Me | null>(null);
   const [tipNote, setTipNote] = useState<string | null>(null);
+  const [won, setWon] = useState<string | null>(null); // a badge the last check-in earned
+  const { tip } = useTip();
   const [selected, setSelected] = useState<number | null>(search.get("parcel") ? Number(search.get("parcel")) : null);
   const [tab, setTab] = useState<Tab>("posts");
   const [editing, setEditing] = useState(false);
@@ -115,6 +119,15 @@ function DistrictView() {
     try {
       await api(path, { method, token, body });
       await Promise.all([loadDistrict(), loadPosts()]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  const checkIn = async () => {
+    try {
+      const r = await api<{ badges?: { kind: string }[] }>(`/v1/districts/${n}/checkin`, { method: "POST", token });
+      if (r.badges?.some((b) => b.kind === "lucky_visit")) setWon(t("签到成功。今天这里是幸运街区，你得到一枚幸运来访徽章。"));
+      await loadDistrict();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -223,6 +236,9 @@ function DistrictView() {
             {viewer?.muted && <span className="badge muted-badge">{t("你在这里被禁言了")}</span>}
           </div>
           {tipNote && <p className="muted small">{tipNote}</p>}
+          {!land.claimed && <ClaimGuide n={n} fresh={tip != null && tip - n < 6} />}
+          {district.game && <DistrictBeat game={district.game} token={token} onOpened={loadDistrict} />}
+          {won && <p className="win-note small">{won}</p>}
           {land.district?.sale && <SaleBanner sale={land.district.sale} mine={!!viewer && viewer.address === district.owner} />}
           {district.park && (
             <div className="park-banner">
@@ -266,7 +282,7 @@ function DistrictView() {
                 type="button"
                 className="ghost lg"
                 disabled={district.checked_in_today}
-                onClick={() => act(`/v1/districts/${n}/checkin`, "POST")}
+                onClick={checkIn}
               >
                 {district.checked_in_today ? t("今天已签到") : t("签到")}
               </button>

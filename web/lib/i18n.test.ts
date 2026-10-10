@@ -39,3 +39,13 @@ test("t() fills placeholders and falls back to Chinese", () => {
   assert.equal(t("没有这句话 {n}", { n: 2 }), "没有这句话 2");
   setLang("zh");
 });
+
+test("only a #word glued to the end is a context, not shown in Chinese", () => {
+  setLang("zh");
+  assert.equal(t("举报#tab"), "举报");
+  assert.equal(t("地块 #{n}", { n: 7 }), "地块 #7");
+  assert.equal(t("unimap 繁荣榜：比特币城市里最热闹的街区。#Bitmap #unimap"), "unimap 繁荣榜：比特币城市里最热闹的街区。#Bitmap #unimap");
+  setLang("en");
+  assert.equal(t("地块 #{n}", { n: 7 }), "Parcel #7");
+  setLang("zh");
+});

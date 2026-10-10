@@ -3,6 +3,7 @@ import { GeistMono } from "geist/font/mono";
 import { GeistSans } from "geist/font/sans";
 
 import "./globals.css";
+import { BlockWatch } from "@/components/BlockWatch";
 import { DemoBanner } from "@/components/DemoBanner";
 import { Footer, Header } from "@/components/Header";
 import { LangProvider } from "@/components/Lang";
@@ -23,10 +24,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <LangProvider>
           <SessionProvider>
-            <Header />
-            <DemoBanner />
-            <main>{children}</main>
-            <Footer />
+            <BlockWatch>
+              <Header />
+              <DemoBanner />
+              <main>{children}</main>
+              <Footer />
+            </BlockWatch>
           </SessionProvider>
         </LangProvider>
       </body>

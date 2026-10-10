@@ -34,9 +34,11 @@ export function detectLang(): Lang {
 type Vars = Record<string, string | number>;
 
 // A key may end in "#context" when the same Chinese needs different English, e.g. t("居民#one")
-// for a single resident's badge; the Chinese shown is the part before the "#".
+// for a single resident's badge; the Chinese shown is the part before the "#". Only a lowercase
+// word glued to the end counts, so "地块 #{n}" and "#Bitmap #unimap" are shown as written.
+const CONTEXT = /(?<=\S)#[a-z]+$/;
 function lookup(zh: string): string {
-  const text = zh.includes("#") ? zh.slice(0, zh.indexOf("#")) : zh;
+  const text = zh.replace(CONTEXT, "");
   return current === "en" ? EN[zh] ?? text : text;
 }
 

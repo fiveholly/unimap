@@ -4,7 +4,7 @@ import os
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
-from api import holdings, listings, parks, style
+from api import game, holdings, listings, parks, style
 from api.db import cursor
 from parcel_index.sources import Bitcoind
 
@@ -65,7 +65,7 @@ def status():
 @router.get("/v1/land")
 def land_range(start: int, end: int, tasks: BackgroundTasks):
     """Map tiles for blocks start..end (inclusive): claimed or not, owner, parcel and post counts, prosperity level, look, park,
-    pets and asking price when listed for sale."""
+    pets, asking price when listed for sale, and whether it is the lucky district or holds an open treasure (api/game.py)."""
     if end < start or end - start + 1 > MAX_RANGE:
         raise HTTPException(400, f"range must cover 1 to {MAX_RANGE} blocks")
     with cursor() as cur:
@@ -93,6 +93,8 @@ def land_range(start: int, end: int, tasks: BackgroundTasks):
         sale = listings.in_range(cur, max(start, 0), end)
         if listings.stale(cur):
             tasks.add_task(listings.refresh)
+        beat = game.in_range(cur, max(start, 0), end)
+        game.ensure_soon(cur, tasks)
     tiles = []
     for n in range(max(start, 0), end + 1):
         owner, parcels, posts = claimed.get(n, (None, 0, 0))
@@ -111,6 +113,8 @@ def land_range(start: int, end: int, tasks: BackgroundTasks):
                 "park": park_of[n]["id"] if n in park_of else None,
                 "pets": pets.get(n, []),
                 "sale": sale.get(n),
+                "lucky": n in beat and beat[n]["lucky"],
+                "treasure": beat[n]["treasure"] if n in beat else None,
             }
         )
     return {"tip": tip, "tiles": tiles}
