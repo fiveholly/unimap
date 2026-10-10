@@ -9,8 +9,9 @@ import { api, type Land, type Tile } from "@/lib/api";
 import { CX, CY, GROUND, PAVED, rng, TILE_H, TILE_W, tileSprite } from "@/lib/iso";
 import { layout } from "@/lib/mondrian";
 import { side } from "@/lib/parks";
-import { bridgeAt, continent, epochOf, HALVING, isWater, nearStrait, shoreBlocks } from "@/lib/terrain";
+import { bridgeAt, continent, CONTINENTS, epochOf, HALVING, isWater, nearStrait, shoreBlocks } from "@/lib/terrain";
 import { LANDMARKS, ZONE_ORDER, ZONES, zoneOf, type Zone } from "@/lib/zones";
+import { t } from "@/lib/i18n";
 
 // Blocks are grouped into quarters of 8 x 8, laid out like a city's street grid: inside a
 // quarter consecutive blocks run along its rows, and every quarter has a street along two of its
@@ -359,7 +360,7 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
     for (const [n, name] of Object.entries(LANDMARKS)) {
       if (+n > tip) continue;
       const [lx, ly] = toScreen(...centre(+n));
-      if (lx > -60 && lx < w + 60 && ly > -40 && ly < h + 40) labels.push([lx, ly - (lvl === "area" ? 46 * AREA_LABEL * s : 150 * s), name, "landmark"]);
+      if (lx > -60 && lx < w + 60 && ly > -40 && ly < h + 40) labels.push([lx, ly - (lvl === "area" ? 46 * AREA_LABEL * s : 150 * s), t(name), "landmark"]);
     }
 
     if (lvl === "area") {
@@ -816,8 +817,8 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
     }
   };
 
-  const t = tiles.current.get(selected);
-  const zone = zoneOf(t?.zone);
+  const tile = tiles.current.get(selected);
+  const zone = zoneOf(tile?.zone);
   return (
     <div className="city" ref={box}>
       <div className="city-stage">
@@ -825,7 +826,7 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
           ref={canvas}
           className="city-canvas"
           tabIndex={0}
-          aria-label={`城市地图，当前选中 ${selected}.bitmap。方向键移动，回车进入街区，加减号缩放。`}
+          aria-label={t("城市地图，当前选中 {n}.bitmap。方向键移动，回车进入街区，加减号缩放。", { n: selected })}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
@@ -836,74 +837,74 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
           }}
           onKeyDown={onKeyDown}
         />
-        <div className="city-levels" role="group" aria-label="显示层级">
+        <div className="city-levels" role="group" aria-label={t("显示层级")}>
           {LEVELS.map(([l, name]) => (
             <button key={l} type="button" className={l === level ? "on" : ""} aria-pressed={l === level} onClick={() => zoomTo(l)}>
-              {name}
+              {t(name)}
             </button>
           ))}
         </div>
         <div className="city-controls">
-          <button type="button" className="icon-btn" aria-label="放大" onClick={() => zoom(1.25)}>
+          <button type="button" className="icon-btn" aria-label={t("放大")} onClick={() => zoom(1.25)}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
               <path d="M5 12h14M12 5v14" />
             </svg>
           </button>
-          <button type="button" className="icon-btn" aria-label="缩小" onClick={() => zoom(0.8)}>
+          <button type="button" className="icon-btn" aria-label={t("缩小")} onClick={() => zoom(0.8)}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
               <path d="M5 12h14" />
             </svg>
           </button>
           <button type="button" className="ghost small" onClick={() => select(tip, true)}>
-            最新区块
+            {t("最新区块")}
           </button>
         </div>
         <div className="city-continent" aria-live="polite">
-          <b>{continent(epoch).name}</b>
+          <b>{epoch < CONTINENTS.length ? t(continent(epoch).name) : t("第 {n} 纪元", { n: epoch })}</b>
           <span className="mono">
-            {(epoch * HALVING).toLocaleString("en-US")} – {epoch < Math.floor(tip / HALVING) ? ((epoch + 1) * HALVING - 1).toLocaleString("en-US") : "今天"}
+            {(epoch * HALVING).toLocaleString("en-US")} – {epoch < Math.floor(tip / HALVING) ? ((epoch + 1) * HALVING - 1).toLocaleString("en-US") : t("今天")}
           </span>
         </div>
-        {error && <p className="city-error small">地图数据加载失败：{error}</p>}
+        {error && <p className="city-error small">{t("地图数据加载失败：{error}", { error })}</p>}
       </div>
 
       <aside className="city-panel" aria-live="polite">
         <div className="zone-line">
           <span className="swatch" style={{ background: zone ? ZONES[zone].color : "var(--line)" }} />
-          <span>{zone ? ZONES[zone].name : t ? "地段计算中" : "加载中"}</span>
-          {LANDMARKS[selected] && <span className="landmark-name">· {LANDMARKS[selected]}</span>}
+          <span>{zone ? t(ZONES[zone].name) : tile ? t("地段计算中") : t("加载中")}</span>
+          {LANDMARKS[selected] && <span className="landmark-name">· {t(LANDMARKS[selected])}</span>}
         </div>
         <div className="panel-title mono">
           {selected}
           <span className="dim">.bitmap</span>
         </div>
-        {zone && <p className="muted">{ZONES[zone].story}</p>}
+        {zone && <p className="muted">{t(ZONES[zone].story)}</p>}
         <div className="stats small-stats">
           <div>
-            <b className="mono">{t?.tx_count?.toLocaleString() ?? "—"}</b>
-            <span>地块</span>
+            <b className="mono">{tile?.tx_count?.toLocaleString() ?? "—"}</b>
+            <span>{t("地块")}</span>
           </div>
           <div>
-            <b className="mono">{t ? t.parcels.toLocaleString() : "—"}</b>
-            <span>已认领</span>
+            <b className="mono">{tile ? tile.parcels.toLocaleString() : "—"}</b>
+            <span>{t("已认领")}</span>
           </div>
           <div>
-            <b className="mono">{t ? t.posts.toLocaleString() : "—"}</b>
-            <span>帖子</span>
+            <b className="mono">{tile ? tile.posts.toLocaleString() : "—"}</b>
+            <span>{t("帖子")}</span>
           </div>
         </div>
         <dl className="facts">
-          <dt>拥有者</dt>
-          <dd className="mono">{t ? (t.claimed ? short(t.owner) : "未认领") : "—"}</dd>
+          <dt>{t("拥有者")}</dt>
+          <dd className="mono">{tile ? (tile.claimed ? short(tile.owner) : t("未认领")) : "—"}</dd>
           {zone && (
             <>
-              <dt>划分依据</dt>
-              <dd>{ZONES[zone].basis}</dd>
+              <dt>{t("划分依据")}</dt>
+              <dd>{t(ZONES[zone].basis)}</dd>
             </>
           )}
         </dl>
         <Link className="btn primary block" href={`/district/${selected}`}>
-          进入街区
+          {t("进入街区")}
         </Link>
       </aside>
 
@@ -911,12 +912,12 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
         {ZONE_ORDER.map((z) => (
           <span key={z}>
             <i className="swatch" style={{ background: ZONES[z].color }} />
-            {ZONES[z].name}
+            {t(ZONES[z].name)}
           </span>
         ))}
         <span className="grow" />
         <span className="muted">
-          {level === "area" ? "每一片约 64 个区块，楼的种类按其中各地段的多少来摆。每次减半隔出一片大陆，海峡上有桥。点击放大" : level === "parcel" ? "每一块地是区块里的一笔交易；立起来的是已认领的地块" : "拖动平移，滚轮或双指缩放，点击街区查看；放大到最近可看到地块"}
+          {level === "area" ? t("每一片约 64 个区块，楼的种类按其中各地段的多少来摆。每次减半隔出一片大陆，海峡上有桥。点击放大") : level === "parcel" ? t("每一块地是区块里的一笔交易；立起来的是已认领的地块") : t("拖动平移，滚轮或双指缩放，点击街区查看；放大到最近可看到地块")}
         </span>
       </div>
     </div>

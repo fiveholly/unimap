@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { PostCard } from "@/components/PostCard";
 import { useSession } from "@/components/Session";
 import { api, ApiError, type Post } from "@/lib/api";
+import { t } from "@/lib/i18n";
 
 /** One post on its own, the page a shared post link opens. */
 export default function PostPage() {
@@ -17,20 +18,20 @@ export default function PostPage() {
   useEffect(() => {
     api<Post>(`/v1/posts/${id}`, { token })
       .then(setPost)
-      .catch((e) => setError(e instanceof ApiError && e.status === 404 ? "这条帖子不存在，或者已经删除了。" : e.message));
+      .catch((e) => setError(e instanceof ApiError && e.status === 404 ? t("这条帖子不存在，或者已经删除了。") : e.message));
   }, [id, token]);
   if (error) return <p className="page error">{error}</p>;
-  if (!post) return <p className="page muted">加载中…</p>;
+  if (!post) return <p className="page muted">{t("加载中…")}</p>;
   return (
     <div className="page narrow post-page">
       <div className="crumbs">
         <Link href={`/district/${post.bitmap_number}`}>{post.bitmap_number}.bitmap</Link>
         <span aria-hidden>·</span>
-        <span>帖子</span>
+        <span>{t("帖子#one")}</span>
       </div>
       <PostCard post={post} showDistrict />
       <Link className="btn lg" href={`/district/${post.bitmap_number}`}>
-        去 {post.bitmap_number}.bitmap 看看
+        {t("去 {n}.bitmap 看看", { n: post.bitmap_number })}
       </Link>
     </div>
   );

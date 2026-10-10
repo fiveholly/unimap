@@ -4,6 +4,7 @@
 // ordinals / taproot address) and signs with BIP-322 where it can.
 
 import { DEMO, DEMO_ADDRESS, DEMO_SECOND_ADDRESS } from "./demo";
+import { t } from "./i18n/index.ts";
 
 export type WalletId = "unisat" | "xverse" | "okx" | "manual" | "demo" | "demo2";
 
@@ -87,7 +88,9 @@ const manual: Wallet = {
 // Demo mode only: a pretend wallet that holds a couple of districts and a parcel.
 const demo: Wallet = {
   id: "demo",
-  name: "演示钱包",
+  get name() {
+    return t("演示钱包");
+  },
   available: () => DEMO,
   connect: async () => DEMO_ADDRESS,
   sign: async () => "demo-" + Math.random().toString(36).slice(2),
@@ -96,7 +99,9 @@ const demo: Wallet = {
 // Demo mode only: a second pretend wallet to link to the first (关联钱包).
 const demo2: Wallet = {
   id: "demo2",
-  name: "演示钱包 2",
+  get name() {
+    return t("演示钱包 2");
+  },
   available: () => DEMO,
   connect: async () => DEMO_SECOND_ADDRESS,
   sign: async () => "demo-" + Math.random().toString(36).slice(2),

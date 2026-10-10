@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { t, tn } from "@/lib/i18n";
+
 
 /** X's logo, for 分享到 X and linked accounts. */
 export const XIcon = ({ size = 13 }: { size?: number }) => (
@@ -18,7 +20,7 @@ export function XHandle({ username, className = "" }: { username: string; classN
       href={`https://x.com/${username}`}
       target="_blank"
       rel="noopener noreferrer"
-      title={`已绑定 X 账号 @${username}`}
+      title={t("已绑定 X 账号 @{username}", { username })}
       onClick={(e) => e.stopPropagation()}
     >
       <XIcon size={11} />
@@ -56,7 +58,7 @@ export function TweetEmbed({ user, id }: { user: string; id: string }) {
     let live = true;
     const el = box.current;
     loadWidgets()
-      .then((t) => el && t.widgets.createTweet(id, el, { theme: "dark", dnt: true, conversation: "none", align: "left" }))
+      .then((tw) => el && tw.widgets.createTweet(id, el, { theme: "dark", dnt: true, conversation: "none", align: "left" }))
       .then((made) => live && made && setShown(true))
       .catch(() => {});
     return () => {
@@ -70,10 +72,8 @@ export function TweetEmbed({ user, id }: { user: string; id: string }) {
       {!shown && (
         <a className="tweet-link" href={`https://x.com/${user}/status/${id}`} target="_blank" rel="noopener noreferrer">
           <XIcon size={16} />
-          <span>
-            <b>@{user}</b> 在 X 上的推文
-          </span>
-          <span className="muted small">打开 ↗</span>
+          <span>{tn("{user} 在 X 上的推文", { user: <b>@{user}</b> })}</span>
+          <span className="muted small">{t("打开 ↗")}</span>
         </a>
       )}
     </div>

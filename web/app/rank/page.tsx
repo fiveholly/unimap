@@ -10,6 +10,7 @@ import { api, type Ranking } from "@/lib/api";
 import { LEVEL_NAMES, type Level } from "@/lib/prosperity";
 import { rankText } from "@/lib/share";
 import { ZONES, zoneOf } from "@/lib/zones";
+import { t } from "@/lib/i18n";
 
 export default function RankPage() {
   const [rows, setRows] = useState<Ranking[] | null>(null);
@@ -17,19 +18,19 @@ export default function RankPage() {
   useEffect(() => {
     api<{ rankings: Ranking[] }>("/v1/rankings")
       .then((r) => setRows(r.rankings))
-      .catch((e) => setError(e.status === 404 ? "繁荣榜还没有上线。" : e.message));
+      .catch((e) => setError(e.status === 404 ? t("繁荣榜还没有上线。") : e.message));
   }, []);
   return (
     <div className="page narrow rank">
       <div className="row between">
-        <h1>繁荣榜</h1>
-        <ShareMenu path="/rank" text={rankText} />
+        <h1>{t("繁荣榜")}</h1>
+        <ShareMenu path="/rank" text={rankText()} />
       </div>
-      <p className="muted">最热闹的 50 个街区。按繁荣度排序，只算近 30 天的帖子、回复和签到，所以名次每天都会变。</p>
+      <p className="muted">{t("最热闹的 50 个街区。按繁荣度排序，只算近 30 天的帖子、回复和签到，所以名次每天都会变。")}</p>
       {error ? (
         <p className="error">{error}</p>
       ) : !rows ? (
-        <p className="muted">加载中…</p>
+        <p className="muted">{t("加载中…")}</p>
       ) : (
         <ol className="rank-list">
           {rows.map((r, i) => {
@@ -42,13 +43,13 @@ export default function RankPage() {
                   <span className="grow">
                     <b className="mono">{r.name}</b>
                     <span className="muted small">
-                      {zone ? ZONES[zone].name : "地段计算中"} · {short(r.owner)}
+                      {zone ? t(ZONES[zone].name) : t("地段计算中")} · {short(r.owner)}
                     </span>
                   </span>
                   <span className="rank-score">
                     <b className="mono">{r.score}</b>
                     <span className="muted small">
-                      {r.level} 级 · {LEVEL_NAMES[r.level as Level]}
+                      {t("{n} 级", { n: r.level })} · {t(LEVEL_NAMES[r.level as Level])}
                     </span>
                   </span>
                 </Link>

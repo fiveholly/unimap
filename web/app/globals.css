@@ -473,6 +473,12 @@ kbd {
   align-items: center;
   gap: 8px;
 }
+.lang-switch {
+  flex: none;
+  min-width: 36px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
 .me-link {
   display: flex;
   align-items: center;

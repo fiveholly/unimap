@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 
+import { t } from "@/lib/i18n";
 import { layout } from "@/lib/mondrian";
 
 export type ParcelInfo = (index: number) => React.ReactNode;
@@ -37,7 +38,7 @@ export function Mondrian({
   }
   return (
     <div className="mondrian-wrap" onMouseLeave={() => setHover(null)}>
-      <svg className="mondrian" viewBox={`0 0 ${extent} ${extent}`} role="img" aria-label={`${txValues.length} 笔交易的 Mondrian 地块图`}>
+      <svg className="mondrian" viewBox={`0 0 ${extent} ${extent}`} role="img" aria-label={t("{n} 笔交易的 Mondrian 地块图", { n: txValues.length })}>
         {squares.map((sq, i) => (
           <rect
             key={i}

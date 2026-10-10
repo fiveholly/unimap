@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { api, type Poll } from "@/lib/api";
+import { locale, t } from "@/lib/i18n";
 
 const DAYS = [1, 3, 7, 14];
 
@@ -24,19 +25,19 @@ export function Polls({ n, token, canVote, isOwner }: { n: number; token: string
       .catch((e) => setError(e.message));
 
   if (error) return <p className="error">{error}</p>;
-  if (!polls) return <p className="muted">加载中…</p>;
+  if (!polls) return <p className="muted">{t("加载中…")}</p>;
   return (
     <div className="polls">
       {isOwner && <NewPoll n={n} token={token} onCreated={(p) => setPolls([p, ...polls])} />}
-      {!canVote && token && polls.some((p) => !p.closed) && <p className="muted small hint">街区主人和居民可以投票，访客可以看结果。</p>}
-      {polls.length === 0 && <p className="muted empty">还没有投票。{isOwner ? "" : "街区主人可以在这里发起投票。"}</p>}
+      {!canVote && token && polls.some((p) => !p.closed) && <p className="muted small hint">{t("街区主人和居民可以投票，访客可以看结果。")}</p>}
+      {polls.length === 0 && <p className="muted empty">{t("还没有投票。")}{isOwner ? "" : t("街区主人可以在这里发起投票。")}</p>}
       {polls.map((p) => (
         <PollCard
           key={p.id}
           poll={p}
           canVote={canVote && !p.closed}
           onVote={(o) => act(`/v1/polls/${p.id}/vote`, "PUT", { option: o })}
-          onClose={isOwner && !p.closed ? () => confirm("提前结束这个投票？") && act(`/v1/polls/${p.id}/close`, "POST") : undefined}
+          onClose={isOwner && !p.closed ? () => confirm(t("提前结束这个投票？")) && act(`/v1/polls/${p.id}/close`, "POST") : undefined}
         />
       ))}
     </div>
@@ -46,11 +47,12 @@ export function Polls({ n, token, canVote, isOwner }: { n: number; token: string
 function PollCard({ poll, canVote, onVote, onClose }: { poll: Poll; canVote: boolean; onVote: (o: number) => void; onClose?: () => void }) {
   const ends = new Date(poll.closes_at);
   const lead = Math.max(...poll.counts);
+  const when = { n: poll.total, date: ends.toLocaleDateString(locale()), time: ends.toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" }) };
   return (
     <article className="poll" aria-label={poll.question}>
       <div className="row between">
         <b>{poll.question}</b>
-        <span className={`badge${poll.closed ? "" : " resident"}`}>{poll.closed ? "已结束" : "进行中"}</span>
+        <span className={`badge${poll.closed ? "" : " resident"}`}>{poll.closed ? t("已结束") : t("进行中")}</span>
       </div>
       <ul className="poll-options">
         {poll.options.map((o, i) => {
@@ -68,10 +70,10 @@ function PollCard({ poll, canVote, onVote, onClose }: { poll: Poll; canVote: boo
                 <i style={{ width: `${pct}%` }} aria-hidden />
                 <span>
                   {o}
-                  {mine && " · 我的选择"}
+                  {mine && ` · ${t("我的选择")}`}
                 </span>
                 <span className="mono">
-                  {poll.counts[i]} 票 · {pct}%
+                  {t("{n} 票 · {pct}%", { n: poll.counts[i], pct })}
                 </span>
               </button>
             </li>
@@ -80,11 +82,11 @@ function PollCard({ poll, canVote, onVote, onClose }: { poll: Poll; canVote: boo
       </ul>
       <div className="row between small muted">
         <span>
-          {poll.total} 人投票 · {poll.closed ? "结束于" : "截止"} {ends.toLocaleDateString("zh-CN")} {ends.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
+          {poll.closed ? t("{n} 人投票 · 结束于 {date} {time}", when) : t("{n} 人投票 · 截止 {date} {time}", when)}
         </span>
         {onClose && (
           <button type="button" className="link-btn small" onClick={onClose}>
-            提前结束
+            {t("提前结束")}
           </button>
         )}
       </div>
@@ -102,7 +104,7 @@ function NewPoll({ n, token, onCreated }: { n: number; token: string | null; onC
   if (!open)
     return (
       <button type="button" className="ghost new-poll" onClick={() => setOpen(true)}>
-        发起投票
+        {t("发起投票")}
       </button>
     );
   const filled = options.map((o) => o.trim()).filter(Boolean);
@@ -123,21 +125,21 @@ function NewPoll({ n, token, onCreated }: { n: number; token: string | null; onC
     }
   };
   return (
-    <section className="composer poll-form" aria-label="发起投票">
-      <input value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="要问大家什么？" maxLength={200} name="question" />
+    <section className="composer poll-form" aria-label={t("发起投票")}>
+      <input value={question} onChange={(e) => setQuestion(e.target.value)} placeholder={t("要问大家什么？")} maxLength={200} name="question" />
       {options.map((o, i) => (
         <div className="row tight" key={i}>
           <input
             value={o}
             onChange={(e) => setOptions(options.map((x, j) => (j === i ? e.target.value : x)))}
-            placeholder={`选项 ${i + 1}`}
+            placeholder={t("选项 {n}", { n: i + 1 })}
             maxLength={60}
             name={`option${i}`}
             className="grow"
           />
           {options.length > 2 && (
-            <button type="button" className="ghost" onClick={() => setOptions(options.filter((_, j) => j !== i))} aria-label={`删除选项 ${i + 1}`}>
-              删除
+            <button type="button" className="ghost" onClick={() => setOptions(options.filter((_, j) => j !== i))} aria-label={t("删除选项 {n}", { n: i + 1 })}>
+              {t("删除")}
             </button>
           )}
         </div>
@@ -145,15 +147,15 @@ function NewPoll({ n, token, onCreated }: { n: number; token: string | null; onC
       <div className="composer-bar">
         {options.length < 4 && (
           <button type="button" className="link-btn small" onClick={() => setOptions([...options, ""])}>
-            加一个选项
+            {t("加一个选项")}
           </button>
         )}
         <label className="inline small">
-          投票时长
+          {t("投票时长")}
           <select value={days} onChange={(e) => setDays(Number(e.target.value))} name="days">
             {DAYS.map((d) => (
               <option key={d} value={d}>
-                {d} 天
+                {t("{n} 天", { n: d })}
               </option>
             ))}
           </select>
@@ -161,10 +163,10 @@ function NewPoll({ n, token, onCreated }: { n: number; token: string | null; onC
         <span className="grow" />
         {error && <span className="error small">{error}</span>}
         <button type="button" className="ghost" onClick={() => setOpen(false)}>
-          取消
+          {t("取消")}
         </button>
         <button type="button" className="primary" disabled={!ok || busy} onClick={submit}>
-          发起
+          {t("发起")}
         </button>
       </div>
     </section>

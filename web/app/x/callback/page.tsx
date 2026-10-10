@@ -6,6 +6,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 
 import { useSession } from "@/components/Session";
 import { api } from "@/lib/api";
+import { t } from "@/lib/i18n";
 
 // X sends the browser back here after its sign-in; the code goes to the API, which links the
 // account to the signed-in address.
@@ -26,9 +27,9 @@ function Callback() {
   const code = params.get("code"), state = params.get("state");
   useEffect(() => {
     if (!ready || sent.current) return;
-    if (params.get("error")) return setError(params.get("error") === "access_denied" ? "你在 X 上取消了授权。" : "X 没有完成授权。");
-    if (!token) return setError("请先连接钱包，再绑定 X。");
-    if (!code || !state) return setError("链接不完整，请回到我的土地重新绑定。");
+    if (params.get("error")) return setError(params.get("error") === "access_denied" ? t("你在 X 上取消了授权。") : t("X 没有完成授权。"));
+    if (!token) return setError(t("请先连接钱包，再绑定 X。"));
+    if (!code || !state) return setError(t("链接不完整，请回到我的土地重新绑定。"));
     sent.current = true;
     api("/v1/x/link/finish", { method: "POST", token, body: { code, state } })
       .then(() => router.replace("/me"))
@@ -39,10 +40,10 @@ function Callback() {
       {error ? (
         <>
           <p className="error">{error}</p>
-          <Link href="/me">回到我的土地</Link>
+          <Link href="/me">{t("回到我的土地")}</Link>
         </>
       ) : (
-        <p className="muted">正在确认 X 账号…</p>
+        <p className="muted">{t("正在确认 X 账号…")}</p>
       )}
     </div>
   );

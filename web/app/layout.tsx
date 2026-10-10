@@ -4,14 +4,15 @@ import { GeistSans } from "geist/font/sans";
 
 import "./globals.css";
 import { DemoBanner } from "@/components/DemoBanner";
-import { Header } from "@/components/Header";
+import { Footer, Header } from "@/components/Header";
+import { LangProvider } from "@/components/Lang";
 import { SessionProvider } from "@/components/Session";
 import { SITE_URL } from "@/lib/share";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: "unimap",
-  description: "比特币上的 Bitmap 城市：每一个区块都是一个街区。",
+  description: "比特币上的 Bitmap 城市：每一个区块都是一个街区。 The Bitmap city on Bitcoin: every block is a district.",
   openGraph: { siteName: "unimap", locale: "zh_CN", type: "website" },
   twitter: { card: "summary_large_image" },
 };
@@ -20,15 +21,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="zh-CN" className={`${GeistSans.variable} ${GeistMono.variable}`}>
       <body>
-        <SessionProvider>
-          <Header />
-          <DemoBanner />
-          <main>{children}</main>
-          <footer className="footer">
-            <span className="mono">unimap</span>
-            <span>比特币上的 Bitmap 城市</span>
-          </footer>
-        </SessionProvider>
+        <LangProvider>
+          <SessionProvider>
+            <Header />
+            <DemoBanner />
+            <main>{children}</main>
+            <Footer />
+          </SessionProvider>
+        </LangProvider>
       </body>
     </html>
   );

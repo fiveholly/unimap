@@ -20,6 +20,7 @@ import { TileThumb } from "@/components/TileThumb";
 import { XHandle } from "@/components/X";
 import { api, ApiError, type District, type Land, type LandEvent, type Me, type Post, type Tile } from "@/lib/api";
 import { btc, epochName } from "@/lib/format";
+import { t, tn } from "@/lib/i18n";
 import { districtText, parkText } from "@/lib/share";
 import { LANDMARKS, ZONES, zoneOf } from "@/lib/zones";
 
@@ -96,7 +97,7 @@ function DistrictView() {
   const claimed = useMemo(() => new Set(land?.parcels.map((p) => p.tx_index)), [land]);
   const own = useMemo(() => new Set(me?.parcels.filter((p) => p.bitmap_number === n).map((p) => p.tx_index)), [me, n]);
 
-  if (notFound) return <p className="page muted">区块 {params.n} 还没挖出来，或者还没被索引。</p>;
+  if (notFound) return <p className="page muted">{t("区块 {n} 还没挖出来，或者还没被索引。", { n: params.n })}</p>;
   if (error) return <p className="page error">{error}</p>;
   if (!land || !district) return <DistrictSkeleton n={n} />;
 
@@ -121,7 +122,7 @@ function DistrictView() {
     isOwner,
     asOptions,
     onPin: (p) => act(`/v1/districts/${n}/pin`, "PUT", { post_id: p.id }),
-    onMute: (a) => confirm(`在 ${n}.bitmap 禁言 ${short(a)}？`) && act(`/v1/districts/${n}/mutes/${a}`, "PUT"),
+    onMute: (a) => confirm(t("在 {n}.bitmap 禁言 {who}？", { n, who: short(a) })) && act(`/v1/districts/${n}/mutes/${a}`, "PUT"),
   };
   const parcelOwner = (i: number) => land.parcels.find((p) => p.tx_index === i)?.owner?.address;
 
@@ -136,14 +137,14 @@ function DistrictView() {
           <div className="crumbs">
             <span>{epochName(n)}</span>
             <span aria-hidden>·</span>
-            <span>区块 {n.toLocaleString("en-US")}</span>
+            <span>{t("区块 {n}", { n: n.toLocaleString("en-US") })}</span>
             {zone && (
               <>
                 <span aria-hidden>·</span>
                 <span className="zone-tag">
                   <i className="swatch" style={{ background: ZONES[zone].color }} />
-                  {ZONES[zone].name}
-                  {LANDMARKS[n] && ` · ${LANDMARKS[n]}`}
+                  {t(ZONES[zone].name)}
+                  {LANDMARKS[n] && ` · ${t(LANDMARKS[n])}`}
                 </span>
               </>
             )}
@@ -155,36 +156,36 @@ function DistrictView() {
             </h1>
             <div className="row tight">
               {n > 0 ? (
-                <Link className="icon-btn" href={`/district/${n - 1}`} aria-label="上一个街区">
+                <Link className="icon-btn" href={`/district/${n - 1}`} aria-label={t("上一个街区")}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                     <path d="m15 18-6-6 6-6" />
                   </svg>
                 </Link>
               ) : null}
-              <Link className="icon-btn" href={`/district/${n + 1}`} aria-label="下一个街区">
+              <Link className="icon-btn" href={`/district/${n + 1}`} aria-label={t("下一个街区")}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                   <path d="m9 18 6-6-6-6" />
                 </svg>
               </Link>
             </div>
           </div>
-          <p className="lede">{district.profile.bio || (zone ? ZONES[zone].story : "")}</p>
+          <p className="lede">{district.profile.bio || (zone ? t(ZONES[zone].story) : "")}</p>
           <div className="stats">
             <div>
               <b className="mono">{txCount?.toLocaleString("en-US") ?? "—"}</b>
-              <span>地块</span>
+              <span>{t("地块")}</span>
             </div>
             <div>
               <b className="mono">{land.parcels.length.toLocaleString("en-US")}</b>
-              <span>已认领</span>
+              <span>{t("已认领")}</span>
             </div>
             <div>
               <b className="mono">{district.followers.toLocaleString("en-US")}</b>
-              <span>关注</span>
+              <span>{t("关注")}</span>
             </div>
             <div>
               <b className="mono">{district.post_count.toLocaleString("en-US")}</b>
-              <span>帖子</span>
+              <span>{t("帖子")}</span>
             </div>
           </div>
           <div className="owner-row">
@@ -193,31 +194,29 @@ function DistrictView() {
               {land.claimed ? (
                 <>
                   <div className="owner-name">
-                    拥有者
+                    {t("拥有者")}
                     {district.owner_x && <XHandle username={district.owner_x.username} />}
                   </div>
                   <div className="mono muted small" title={district.owner || ""}>
                     {short(district.owner)}
-                    {land.district && ` · 铭文 #${land.district.inscription_number}`}
+                    {land.district && ` · ${t("铭文 #{n}", { n: land.district.inscription_number })}`}
                   </div>
                 </>
               ) : (
                 <>
-                  <div>还没有人认领</div>
-                  <div className="muted small">铭刻 {n}.bitmap 就能成为这里的主人。</div>
+                  <div>{t("还没有人认领")}</div>
+                  <div className="muted small">{t("铭刻 {n}.bitmap 就能成为这里的主人。", { n })}</div>
                 </>
               )}
             </div>
             {viewer && <RoleBadge role={viewer.role} parcel={viewer.parcel} />}
-            {viewer?.muted && <span className="badge muted-badge">你在这里被禁言了</span>}
+            {viewer?.muted && <span className="badge muted-badge">{t("你在这里被禁言了")}</span>}
           </div>
           {district.park && (
             <div className="park-banner">
-              <span>
-                属于园区 <b>{district.park.name}</b>
-              </span>
+              <span>{tn("属于园区 {name}", { name: <b>{district.park.name}</b> })}</span>
               <span className="muted small">
-                {district.park.members.length} 个街区 · 合计 {district.park.score} 分 · {district.park.level} 级
+                {t("{n} 个街区 · 合计 {score} 分 · {level} 级", { n: district.park.members.length, score: district.park.score, level: district.park.level })}
               </span>
               <span className="chips">
                 {district.park.members
@@ -231,7 +230,7 @@ function DistrictView() {
               <ShareMenu
                 path={`/district/${n}`}
                 text={parkText(district.park.name, district.park.members.length, district.park.level, viewer?.address === district.park.owner)}
-                label="晒园区"
+                label={t("晒园区")}
                 className="ghost sm"
               />
             </div>
@@ -245,10 +244,10 @@ function DistrictView() {
                 onClick={() => act(`/v1/districts/${n}/follow`, viewer?.following ? "DELETE" : "PUT")}
                 aria-pressed={!!viewer?.following}
               >
-                {viewer?.following ? "已关注" : "关注街区"}
+                {viewer?.following ? t("已关注") : t("关注街区")}
               </button>
             ) : (
-              <span className="muted small">连接钱包后可以关注和回复。</span>
+              <span className="muted small">{t("连接钱包后可以关注和回复。")}</span>
             )}
             {token && district.checked_in_today !== undefined && (
               <button
@@ -257,13 +256,13 @@ function DistrictView() {
                 disabled={district.checked_in_today}
                 onClick={() => act(`/v1/districts/${n}/checkin`, "POST")}
               >
-                {district.checked_in_today ? "今天已签到" : "签到"}
+                {district.checked_in_today ? t("今天已签到") : t("签到")}
               </button>
             )}
             <ShareMenu path={`/district/${n}`} text={districtText(district, isOwner)} />
             {isOwner && (
               <button type="button" className="ghost lg" onClick={() => setEditing(!editing)} aria-expanded={editing}>
-                管理街区
+                {t("管理街区")}
               </button>
             )}
           </div>
@@ -280,17 +279,17 @@ function DistrictView() {
               card={(i) => (
                 <>
                   <div className="row between">
-                    <b>地块 #{i}</b>
-                    <span className="muted small">{claimed.has(i) ? "已认领" : "未认领"}</span>
+                    <b>{t("地块 #{n}", { n: i })}</b>
+                    <span className="muted small">{claimed.has(i) ? t("已认领") : t("未认领")}</span>
                   </div>
-                  {i === 0 && <div className="muted small">coinbase，街区的市政厅</div>}
+                  {i === 0 && <div className="muted small">{t("coinbase，街区的市政厅")}</div>}
                   <div className="row between small">
-                    <span className="muted">交易金额</span>
+                    <span className="muted">{t("交易金额")}</span>
                     <span className="mono">{btc(txValues[i])}</span>
                   </div>
                   {claimed.has(i) && (
                     <div className="row between small">
-                      <span className="muted">居民</span>
+                      <span className="muted">{t("居民#one")}</span>
                       <span className="mono">{short(parcelOwner(i))}</span>
                     </div>
                   )}
@@ -303,20 +302,20 @@ function DistrictView() {
           <div className="legend">
             <span>
               <i className="swatch free" />
-              未认领
+              {t("未认领")}
             </span>
             <span>
               <i className="swatch claimed" />
-              已认领
+              {t("已认领")}
             </span>
             {own.size > 0 && (
               <span>
                 <i className="swatch own" />
-                你的地块
+                {t("你的地块")}
               </span>
             )}
             <span className="grow" />
-            <span>方块大小 = 交易金额</span>
+            <span>{t("方块大小 = 交易金额")}</span>
           </div>
         </div>
       </section>
@@ -336,7 +335,7 @@ function DistrictView() {
       )}
 
       {around.length > 1 && (
-        <section className="neighbors" aria-label="相邻街区">
+        <section className="neighbors" aria-label={t("相邻街区")}>
           {around.map((t) => (
             <Link key={t.bitmap_number} href={`/district/${t.bitmap_number}`} className={`neighbor${t.bitmap_number === n ? " current" : ""}`} aria-current={t.bitmap_number === n ? "page" : undefined}>
               <TileThumb zone={zoneOf(t.zone)} n={t.bitmap_number} width={88} />
@@ -346,13 +345,13 @@ function DistrictView() {
         </section>
       )}
 
-      <nav className="tabs" aria-label="街区内容">
+      <nav className="tabs" aria-label={t("街区内容")}>
         {(
           [
-            ["posts", "动态"],
-            ["polls", "投票"],
-            ["parcels", "地块"],
-            ["history", "历史"],
+            ["posts", t("动态")],
+            ["polls", t("投票")],
+            ["parcels", t("地块")],
+            ["history", t("历史")],
           ] as [Tab, string][]
         ).map(([k, label]) => (
           <button key={k} type="button" className={tab === k ? "active" : ""} aria-pressed={tab === k} onClick={() => setTab(k)}>
@@ -369,13 +368,13 @@ function DistrictView() {
                 <Composer
                   district={n}
                   asOptions={asOptions}
-                  speakingAs={isOwner ? "街区主人身份" : viewer?.parcel != null ? `地块 #${viewer.parcel} ` : undefined}
+                  speakingAs={isOwner ? t("街区主人身份") : viewer?.parcel != null ? t("地块 #{n} ", { n: viewer.parcel }) : undefined}
                   onPosted={(p) => setPosts([p, ...posts])}
                 />
               )}
               {token && viewer?.role === "visitor" && (
                 <p className="muted small hint">
-                  {district.profile.visitor_comments_on ? "访客可以回复帖子。持有这里的地块后就能发帖。" : "街区主人关闭了访客回复。"}
+                  {district.profile.visitor_comments_on ? t("访客可以回复帖子。持有这里的地块后就能发帖。") : t("街区主人关闭了访客回复。")}
                 </p>
               )}
               {district.pinned_post && (
@@ -384,14 +383,14 @@ function DistrictView() {
               {posts.filter((p) => p.id !== district.pinned_post?.id).map((p) => (
                 <PostCard key={p.id} post={p} actions={actions} onRemoved={(id) => setPosts(posts.filter((x) => x.id !== id))} />
               ))}
-              {posts.length === 0 && !district.pinned_post && <p className="muted empty">还没有帖子。</p>}
+              {posts.length === 0 && !district.pinned_post && <p className="muted empty">{t("还没有帖子。")}</p>}
             </>
           )}
           {tab === "polls" && <Polls n={n} token={token} canVote={!!viewer && viewer.role !== "visitor"} isOwner={isOwner} />}
           {tab === "parcels" && <ParcelList land={land} txValues={txValues} own={own} onPick={(i) => setSelected(i)} />}
           {tab === "history" && (
             <ul className="events">
-              {events.length === 0 && <li className="muted">还没有认领或转手记录。</li>}
+              {events.length === 0 && <li className="muted">{t("还没有认领或转手记录。")}</li>}
               {events.map((e) => (
                 <EventItem key={e.id} event={e} />
               ))}
@@ -412,30 +411,30 @@ function DistrictView() {
           )}
           <PetsCard pets={district.pets ?? []} />
           <section>
-            <h2 className="section-title">最近变动</h2>
+            <h2 className="section-title">{t("最近变动")}</h2>
             <ul className="events">
-              {events.length === 0 && <li className="muted small">还没有认领或转手记录。</li>}
+              {events.length === 0 && <li className="muted small">{t("还没有认领或转手记录。")}</li>}
               {events.slice(0, 4).map((e) => (
                 <EventItem key={e.id} event={e} />
               ))}
             </ul>
             {events.length > 4 && (
               <button type="button" className="link-btn small" onClick={() => setTab("history")}>
-                查看全部历史
+                {t("查看全部历史")}
               </button>
             )}
           </section>
           {!district.recruit && land.claimed && txCount != null && txCount > land.parcels.length && (
             <section className="callout">
-              <b>认领这里的地块</b>
+              <b>{t("认领这里的地块")}</b>
               <p className="muted small">
-                还有 {(txCount - land.parcels.length).toLocaleString("en-US")} 个地块没人认领。街区主人可以把地块铭刻成子铭文分给居民，居民可以在这里发帖。
+                {t("还有 {n} 个地块没人认领。街区主人可以把地块铭刻成子铭文分给居民，居民可以在这里发帖。", { n: (txCount - land.parcels.length).toLocaleString("en-US") })}
               </p>
             </section>
           )}
           {nearby.length > 0 && (
             <section>
-              <h2 className="section-title">附近在聊</h2>
+              <h2 className="section-title">{t("附近在聊")}</h2>
               {nearby.map((p) => (
                 <PostCard key={p.id} post={p} showDistrict />
               ))}
@@ -448,16 +447,16 @@ function DistrictView() {
 }
 
 function ParcelList({ land, txValues, own, onPick }: { land: Land; txValues: number[] | null; own: Set<number>; onPick: (i: number) => void }) {
-  if (land.parcels.length === 0) return <p className="muted empty">还没有地块被认领。</p>;
+  if (land.parcels.length === 0) return <p className="muted empty">{t("还没有地块被认领。")}</p>;
   return (
     <div className="table-wrap">
       <table className="table">
         <thead>
           <tr>
-            <th>地块</th>
-            <th>居民</th>
-            <th className="num">交易金额</th>
-            <th className="num">铭文</th>
+            <th>{t("地块")}</th>
+            <th>{t("居民")}</th>
+            <th className="num">{t("交易金额")}</th>
+            <th className="num">{t("铭文")}</th>
           </tr>
         </thead>
         <tbody>
@@ -467,7 +466,7 @@ function ParcelList({ land, txValues, own, onPick }: { land: Land; txValues: num
                 <button type="button" className="link-btn" onClick={() => onPick(p.tx_index)}>
                   #{p.tx_index}
                 </button>
-                {own.has(p.tx_index) && <span className="badge resident">你的</span>}
+                {own.has(p.tx_index) && <span className="badge resident">{t("你的")}</span>}
               </td>
               <td className="mono">{short(p.owner?.address)}</td>
               <td className="num mono">{txValues ? btc(txValues[p.tx_index]) : "—"}</td>
