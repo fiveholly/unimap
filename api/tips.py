@@ -20,7 +20,7 @@ import requests
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import notify, wallets
+from api import events, notify, wallets
 from api.auth import current_address
 from api.db import cursor
 
@@ -184,12 +184,17 @@ def clear_lightning(address: str = Depends(current_address)):
 class TipBody(BaseModel):
     post_id: int | None = None
     bitmap_number: int | None = None  # with no post: a tip to the district's owner
+    event_id: int | None = None  # with place: the host paying a prize of a 街区活动 (api/events.py)
+    place: int | None = None
     amount_sats: int = Field(ge=MIN_SATS, le=MAX_SATS)
     comment: str = Field(default="", max_length=MAX_COMMENT)
 
 
-def _target(cur, req):
+def _target(cur, req, tipper):
     """(recipient, bitmap_number, post_id) for a tip."""
+    if req.event_id is not None:
+        recipient, n = events.prize_target(cur, req.event_id, req.place or 0, tipper, req.amount_sats)
+        return recipient, n, None
     if req.post_id is not None:
         cur.execute("select author_address, bitmap_number from social.posts where id = %s and removed_at is null;",
                     (req.post_id,))
@@ -214,7 +219,7 @@ def _target(cur, req):
 def create_tip(req: TipBody, address: str = Depends(current_address)):
     """Ask the recipient's wallet for an invoice. Returns it with the tip's id to check on."""
     with cursor() as cur:
-        recipient, n, post_id = _target(cur, req)
+        recipient, n, post_id = _target(cur, req, address)
         if wallets.main_of(cur, recipient) == wallets.main_of(cur, address):
             raise HTTPException(400, "you can't tip yourself")
         to = lightning_of(cur, recipient)
@@ -233,9 +238,10 @@ def create_tip(req: TipBody, address: str = Depends(current_address)):
         raise HTTPException(502, str(e)) from e
     with cursor() as cur:
         cur.execute(
-            "insert into social.tips (tipper, recipient, bitmap_number, post_id, amount_sats, comment, invoice, verify_url) "
-            "values (%s, %s, %s, %s, %s, %s, %s, %s) returning id;",
-            (address, recipient, n, post_id, req.amount_sats, comment, invoice, verify),
+            "insert into social.tips (tipper, recipient, bitmap_number, post_id, amount_sats, comment, invoice, verify_url, "
+            "event_id, event_place) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) returning id;",
+            (address, recipient, n, post_id, req.amount_sats, comment, invoice, verify, req.event_id,
+             req.place if req.event_id is not None else None),
         )
         tip_id = cur.fetchone()[0]
     return {"id": tip_id, "invoice": invoice, "amount_sats": req.amount_sats, "verifiable": verify is not None,
@@ -263,7 +269,7 @@ def top(days: int = 7):
             posts = {r["id"]: _post(r) for r in cur.fetchall()}
         cur.execute(
             "select bitmap_number, sum(amount_sats) as sats, count(distinct tipper) as tippers from social.tips "
-            "where status = 'settled' and settled_at > now() - make_interval(days => %s) "
+            "where status = 'settled' and event_id is null and settled_at > now() - make_interval(days => %s) "
             "group by bitmap_number order by sum(amount_sats) desc, bitmap_number limit 20;",
             (days,),
         )
@@ -323,7 +329,7 @@ def district_tips(cur, n):
     """{sats30, tippers30} in confirmed tips on district n and its posts, last 30 days."""
     cur.execute(
         "select coalesce(sum(amount_sats), 0), count(distinct tipper) from social.tips "
-        "where status = 'settled' and bitmap_number = %s and settled_at > now() - interval '30 days';",
+        "where status = 'settled' and event_id is null and bitmap_number = %s and settled_at > now() - interval '30 days';",
         (n,),
     )
     sats, tippers = cur.fetchone()

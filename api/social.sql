@@ -186,7 +186,7 @@ CREATE TABLE IF NOT EXISTS social.holdings_checked (
 CREATE TABLE IF NOT EXISTS social.notifications (
 	id bigserial NOT NULL,
 	address text NOT NULL,
-	kind text NOT NULL, -- reply | like | post | follow | apply | tip | treasure | lucky | crown
+	kind text NOT NULL, -- reply | like | post | follow | apply | tip | treasure | lucky | crown | event_win
 	actor text NOT NULL,
 	bitmap_number int4 NOT NULL,
 	post_id int8 NULL, -- the reply, the liked post or the new post
@@ -360,3 +360,25 @@ CREATE TABLE IF NOT EXISTS social.seasons (
 	frozen_at timestamptz NULL,
 	CONSTRAINT seasons_pk PRIMARY KEY (number)
 );
+
+-- 街区活动 (api/events.py): an owner's prizes in sats for whoever does the most in the district
+-- over one season. The host pays each prize as a tip carrying event_id and event_place.
+CREATE TABLE IF NOT EXISTS social.events (
+	id bigserial NOT NULL,
+	bitmap_number int4 NOT NULL,
+	season int4 NOT NULL,
+	host text NOT NULL, -- the owner who put it up
+	metric text NOT NULL, -- posts | replies | checkins
+	prizes int8[] NOT NULL, -- sats for 1st, 2nd, 3rd
+	note text NOT NULL DEFAULT '',
+	created_at timestamptz NOT NULL DEFAULT now(),
+	cancelled_at timestamptz NULL, -- only before the season starts
+	winners jsonb NULL, -- [{address, score, prize_sats}], best first; null until the season ends
+	frozen_at timestamptz NULL,
+	CONSTRAINT events_pk PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS events_one_a_season ON social.events USING btree (bitmap_number, season) WHERE cancelled_at IS NULL;
+CREATE INDEX IF NOT EXISTS events_season_idx ON social.events USING btree (season) WHERE cancelled_at IS NULL;
+ALTER TABLE social.tips ADD COLUMN IF NOT EXISTS event_id int8 NULL;
+ALTER TABLE social.tips ADD COLUMN IF NOT EXISTS event_place int2 NULL;
+CREATE INDEX IF NOT EXISTS tips_event_idx ON social.tips USING btree (event_id) WHERE event_id IS NOT NULL;

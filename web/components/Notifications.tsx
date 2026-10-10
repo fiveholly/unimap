@@ -114,6 +114,11 @@ function sentence(item: Item): [React.ReactNode, string] {
         tn("你的街区 {place} 在第 {n} 赛季进了前三，戴上了王冠", { place, n: Math.floor((n.block_height ?? 0) / SEASON) }),
         `/district/${n.bitmap_number}`,
       ];
+    case "event_win":
+      return [
+        tn("你在 {place} 第 {n} 赛季的街区活动里获奖了，主人 {who} 会用闪电把奖金发给你", { place, n: Math.floor((n.block_height ?? 0) / SEASON), who }),
+        `/district/${n.bitmap_number}?tab=contests`,
+      ];
     case "lucky":
       return [
         tn("区块 {h} 抽中你的街区 {place} 做今日幸运街区，你得到一枚徽章", { h: <span className="mono">{(n.block_height ?? 0).toLocaleString("en-US")}</span>, place }),

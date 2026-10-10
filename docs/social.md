@@ -84,12 +84,16 @@ media: none
 | GET / POST | `/v1/admin/bans` | 站点管理员：封禁列表 / 封禁地址 `{"address", "reason", "days"}`（`days` 为空是永久） |
 | DELETE | `/v1/admin/bans/{address}` | 站点管理员解除封禁 |
 | GET / PUT / DELETE | `/v1/me/lightning` | 查看 / 设置 / 关闭闪电收款地址 `{"lightning_address"}`，设置时会先向对方钱包确认地址可用 |
-| POST | `/v1/tips` | 发起打赏 `{"post_id"或"bitmap_number", "amount_sats", "comment"}`，返回收款方钱包开出的发票；不能打赏自己，对方没开通是 409，10 分钟超过 20 次是 429 |
+| POST | `/v1/tips` | 发起打赏 `{"post_id"或"bitmap_number"或"event_id"+"place", "amount_sats", "comment"}`，返回收款方钱包开出的发票；不能打赏自己，对方没开通是 409，10 分钟超过 20 次是 429 |
 | GET | `/v1/tips/{id}` | 打赏人查询付款状态 `pending`/`settled`/`expired` |
 | GET | `/v1/tips/top?days=7` | 打赏榜：近几天收到打赏最多的帖子和街区 |
 | GET | `/v1/game` | 区块节拍：当前的幸运街区、最近 20 个区块抽中的宝箱（带验算用的哈希、候选数和序号）、登录时附上自己的徽章 |
 | POST | `/v1/game/treasures/{height}/open` | 地块主人（钱包组里任一地址）打开宝箱；不是主人 403，已打开 409，过期 410 |
 | GET | `/v1/season` | 难度调整赛季：本赛季的区块范围、开始时间、前 10 名街区和各项得分、上赛季戴王冠的前三名、奖池（聪）和分配 |
+| GET | `/v1/districts/{n}/events` | 街区活动：这个街区的活动（新赛季在前），进行中的带前 5 名 `standings`，结束的带获奖者 `winners` 和每份奖金的发放状态 `paid` |
+| POST | `/v1/districts/{n}/events` | 街区主人办活动 `{"metric": "posts"/"replies"/"checkins", "prizes": [第1名, 第2名, 第3名], "note", "next_season"}`；每份 100 到 1,000,000 聪，名次越后奖金不能越多；同一赛季已经有活动是 409 |
+| DELETE | `/v1/events/{id}` | 主人取消还没开始的活动；已经开始的是 409 |
+| GET | `/v1/events` | 全城进行中和下赛季要开始的活动，奖金多的在前 |
 | GET | `/v1/listings?limit=` | 在售的街区，便宜的在前（默认 50 条，最多 200）；`/v1/land` 的地图格子带 `sale`（价格，聪），`/v1/land/{n}` 的 `district.sale` 带价格、市场和挂单链接 |
 
 ## 繁荣度
@@ -260,7 +264,9 @@ Magic Eden 的接口需要 API key 才能稳定使用，在 `/etc/unimap/unimap.
 - 奖池：环境变量 `GAME_SEASON_POOL_SATS` 设了金额时，`/game` 和 `/v1/season` 会显示奖池，按 50% / 30% / 20% 分给前三名。奖金由项目方通过闪电付给获奖地址，unimap 的代码不经手钱。
 - 街区生日：按区块时间估算，今天是哪些区块在往年的同一天挖出来的（`web/lib/game.ts` 的 `birthdays`），这些街区在地图上带蛋糕，街区页显示几岁生日。
 - 减半节：`/game` 显示离下一次减半还有多少个区块；减半后的 144 个区块里显示节日横幅。
-- 徽章现在只存在 unimap 的数据库里。按方案，下一步是把王冠和稀有徽章铭刻成挂在 unimap 父铭文下的真铭文（需要项目方的钱包），以及让街区主人用打赏办自己的活动。
+- 街区活动（`api/events.py`，表 `social.events`）：街区主人自己出聪，奖励一个赛季里在自己街区发帖、回复或签到最多的人，最多三个名次。可以办在当前赛季或下一个赛季，每个街区每个赛季一个；开始以后就不能取消，因为它是公开的承诺。排名把钱包组里的地址算作一个人，主人自己的钱包组不参与，同分时先来的在前。赛季结束后第一个请求把获奖者定下来，并给他们发通知 `event_win`。
+- 发奖：主人在活动里点「发 N 聪」，就是一笔带 `event_id` 和 `place` 的闪电打赏，金额必须等于那份奖金，只有主人能发。获奖者的钱包确认收款后，活动上显示「已发」。奖金不算街区收到的打赏，不进打赏榜、繁荣度和赛季得分。unimap 只公示规则、排名和发放状态，钱不经过 unimap，参加也不花钱。
+- 徽章现在只存在 unimap 的数据库里。按方案，下一步是把王冠和稀有徽章铭刻成挂在 unimap 父铭文下的真铭文，这需要项目方的钱包。
 
 ## 多语言（中文 / English）
 

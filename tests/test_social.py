@@ -939,6 +939,89 @@ class SocialApi(unittest.TestCase):
                 )
 
 
+    def test_events(self):
+        from api import tips
+
+        class Fake:
+            paid = set()
+            pay_request = staticmethod(lambda a: {"tag": "payRequest"})
+            ask_invoice = staticmethod(lambda a, sats, comment: (f"lnbc{sats * 10}n1prize", f"https://wallet.test/p/{sats}"))
+            settled = staticmethod(lambda url: url in Fake.paid)
+
+        hashes = {h: f"{h:061x}def" for h in range(1958, 2102)}
+        with self.conn.cursor() as cur:
+            cur.execute("insert into bitmap_block_hashes (block_height, block_hash) values (2100, 'h2100');")
+            cur.execute("insert into parcel_block_hashes (block_height, block_hash) select * from unnest(%s::int[], %s::text[]);", (list(hashes), list(hashes.values())))
+            # Season 0 ended about 85 blocks ago (ten minutes a block). ALICE ran an event in it for the most posts.
+            cur.execute(
+                "insert into social.events (bitmap_number, season, host, metric, prizes, note) values (100, 0, %s, 'posts', '{1000,500}', 'most posts') returning id;",
+                (ALICE.address,),
+            )
+            old = cur.fetchone()[0]
+            cur.execute(
+                "insert into social.posts (bitmap_number, author_address, author_role, body, signed_message, signature, created_at) values "
+                "(100, %s, 'resident', 'a', 'm', 'event-1', now() - interval '2 days'), (100, %s, 'resident', 'b', 'm', 'event-2', now() - interval '3 days'), "
+                "(100, %s, 'visitor', 'c', 'm', 'event-3', now() - interval '3 days'), (100, %s, 'owner', 'd', 'm', 'event-4', now() - interval '2 days'), "
+                "(100, %s, 'owner', 'e', 'm', 'event-5', now() - interval '3 days') returning id;",
+                (BOB.address, BOB.address, CAROL.address, ALICE.address, ALICE.address),
+            )
+            posts = [r[0] for r in cur.fetchall()]
+        saved, tips.lnurl = tips.lnurl, Fake
+        try:
+            # The season is over: the winners are frozen (the host doesn't count) and told.
+            evs = self.client.get("/v1/districts/100/events").json()
+            self.assertEqual(evs["season"], 1)
+            ev = evs["events"][0]
+            self.assertEqual((ev["id"], ev["status"], ev["since"], ev["until"], ev["total_sats"]), (old, "ended", 0, 2015, 1500))
+            self.assertEqual([(w["place"], w["address"], w["score"], w["prize_sats"], w["paid"]) for w in ev["winners"]],
+                             [(1, BOB.address, 2, 1000, None), (2, CAROL.address, 1, 500, None)])
+            n = next(x for x in self.client.get("/v1/notifications", headers=self.h(BOB)).json()["notifications"] if x["kind"] == "event_win")
+            self.assertEqual((n["actor"], n["bitmap_number"], n["block_height"]), (ALICE.address, 100, 0))
+            # Only the host pays a prize, and in full; the winner gets it like a tip, and the event shows it paid.
+            self.client.put("/v1/me/lightning", json={"lightning_address": "bob@wallet.test"}, headers=self.h(BOB))
+            pay = lambda w, **body: self.client.post("/v1/tips", json={"event_id": old, **body}, headers=self.h(w))
+            self.assertEqual(pay(CAROL, place=1, amount_sats=1000).status_code, 403)
+            self.assertEqual(pay(ALICE, place=1, amount_sats=999).status_code, 400)
+            self.assertEqual(pay(ALICE, place=3, amount_sats=1000).status_code, 404)
+            self.assertEqual(pay(ALICE, place=2, amount_sats=500).status_code, 409)  # CAROL has no Lightning address
+            t = pay(ALICE, place=1, amount_sats=1000).json()
+            self.assertEqual(self.client.get("/v1/districts/100/events").json()["events"][0]["winners"][0]["paid"], "pending")
+            Fake.paid.add("https://wallet.test/p/1000")
+            self.assertEqual(self.client.get(f"/v1/tips/{t['id']}", headers=self.h(ALICE)).json()["status"], "settled")
+            self.assertEqual(self.client.get("/v1/districts/100/events").json()["events"][0]["winners"][0]["paid"], "settled")
+            self.assertEqual(self.client.get("/v1/districts/100").json()["tips"]["sats30"], 0)  # a prize isn't a tip to the district
+            # The owner puts one up for this season: one a season, prizes don't grow down the podium, others can't.
+            make = lambda w, **body: self.client.post("/v1/districts/100/events", json=body, headers=self.h(w))
+            self.assertEqual(make(BOB, metric="checkins", prizes=[300]).status_code, 403)
+            self.assertEqual(make(ALICE, metric="likes", prizes=[300]).status_code, 400)
+            self.assertEqual(make(ALICE, metric="checkins", prizes=[100, 500]).status_code, 400)
+            self.assertEqual(make(ALICE, metric="checkins", prizes=[50]).status_code, 400)
+            now = make(ALICE, metric="checkins", prizes=[300], note=" come by ").json()
+            self.assertEqual((now["season"], now["status"], now["note"]), (1, "running", "come by"))
+            self.assertEqual(make(ALICE, metric="posts", prizes=[300]).status_code, 409)
+            with self.conn.cursor() as cur:
+                cur.execute("insert into social.checkins (address, bitmap_number, day) values (%s, 100, (now() at time zone 'utc')::date) on conflict do nothing;", (CAROL.address,))
+            running = next(e for e in self.client.get("/v1/events").json()["events"] if e["id"] == now["id"])
+            self.assertIn({"address": CAROL.address, "score": 1}, running["standings"])
+            self.assertNotIn(ALICE.address, [x["address"] for x in running["standings"]])
+            # Called off only before it starts.
+            self.assertEqual(self.client.delete(f"/v1/events/{now['id']}", headers=self.h(ALICE)).status_code, 409)
+            nxt = make(ALICE, metric="replies", prizes=[2000, 1000, 500], next_season=True).json()
+            self.assertEqual((nxt["season"], nxt["status"], nxt["since"]), (2, "upcoming", 4032))
+            self.assertEqual(self.client.delete(f"/v1/events/{nxt['id']}", headers=self.h(BOB)).status_code, 403)
+            self.assertEqual(self.client.delete(f"/v1/events/{nxt['id']}", headers=self.h(ALICE)).json()["status"], "cancelled")
+            self.assertEqual(make(ALICE, metric="replies", prizes=[2000], next_season=True).status_code, 201)
+        finally:
+            tips.lnurl = saved
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "delete from bitmap_block_hashes where block_height = 2100; delete from parcel_block_hashes; delete from social.block_draws; "
+                    "delete from social.badges; delete from social.seasons; delete from social.events; delete from social.tips; delete from social.lightning_addresses; "
+                    "delete from social.notifications where kind in ('treasure', 'lucky', 'crown', 'event_win', 'tip'); "
+                    "delete from social.posts where id = any(%s);",
+                    (posts,),
+                )
+
     def test_lnurl_checks(self):
         from api import tips
 

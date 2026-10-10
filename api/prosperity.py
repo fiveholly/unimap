@@ -79,7 +79,7 @@ def parts_for(cur, lo, hi):
     # People who tipped sats here (confirmed), each counted once, so a district can't buy its level
     # with many small tips from one wallet.
     cur.execute(
-        "select bitmap_number, count(distinct tipper) from social.tips where status = 'settled' "
+        "select bitmap_number, count(distinct tipper) from social.tips where status = 'settled' and event_id is null "
         "and settled_at > now() - make_interval(days => %s) and bitmap_number between %s and %s group by 1;",
         (WINDOW_DAYS, lo, hi),
     )

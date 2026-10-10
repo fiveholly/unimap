@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { BadgeIcon, BadgeList } from "@/components/Badge";
+import { CityContests } from "@/components/Contests";
 import { useTip } from "@/components/BlockWatch";
 import { short, useSession } from "@/components/Session";
 import { api, type Draw, type Game, type Season } from "@/lib/api";
@@ -76,6 +77,7 @@ export default function GamePage() {
       )}
 
       <SeasonCard tip={tip} />
+      <CityContests />
       {tip != null && <Calendar tip={tip} />}
 
       {game && game.draws.length > 0 && (

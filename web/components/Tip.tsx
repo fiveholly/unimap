@@ -10,7 +10,7 @@ import { t } from "@/lib/i18n";
 export const TIP_AMOUNTS = [100, 500, 2100] as const;
 const POLL_MS = 2500;
 
-type Target = { post_id: number } | { bitmap_number: number };
+type Target = { post_id: number } | { bitmap_number: number } | { event_id: number; place: number };
 type WebLN = { enable: () => Promise<void>; sendPayment: (invoice: string) => Promise<unknown> };
 
 /** The lightning bolt the tip buttons share. */
@@ -34,8 +34,8 @@ function InvoiceQr({ invoice }: { invoice: string }) {
 }
 
 /** 打赏: pick an amount, get an invoice from the recipient's wallet, pay it, and wait for the wallet to confirm. */
-export function TipDialog({ target, to, token, close }: { target: Target; to: string; token: string; close: (paidSats: number) => void }) {
-  const [amount, setAmount] = useState<number>(500);
+export function TipDialog({ target, to, token, close, fixed }: { target: Target; to: string; token: string; close: (paidSats: number) => void; fixed?: number }) {
+  const [amount, setAmount] = useState<number>(fixed ?? 500);
   const [custom, setCustom] = useState("");
   const [comment, setComment] = useState("");
   const [tip, setTip] = useState<Tip | null>(null);
@@ -91,11 +91,16 @@ export function TipDialog({ target, to, token, close }: { target: Target; to: st
     <div className="dialog-backdrop" role="dialog" aria-modal="true" aria-labelledby="tip-title" onClick={(e) => e.target === e.currentTarget && !busy && done()}>
       <div className="dialog tip-dialog">
         <h2 id="tip-title">
-          <Bolt size={18} /> {"post_id" in target ? t("打赏这条帖子") : t("打赏街区主人")}
+          <Bolt size={18} /> {"post_id" in target ? t("打赏这条帖子") : "event_id" in target ? t("发放活动奖金") : t("打赏街区主人")}
         </h2>
         {!tip ? (
           <>
             <p className="muted small">{t("聪会通过闪电网络直接到 {to} 的钱包，unimap 不经手。", { to })}</p>
+            {fixed != null ? (
+              <p className="tip-fixed">
+                <span className="mono">{fixed.toLocaleString("en-US")}</span> {t("聪")}
+              </p>
+            ) : (
             <div className="tip-amounts" role="radiogroup" aria-label={t("金额")}>
               {TIP_AMOUNTS.map((a) => (
                 <button key={a} type="button" role="radio" aria-checked={!custom && amount === a} className={!custom && amount === a ? "on" : ""} onClick={() => (setAmount(a), setCustom(""))}>
@@ -111,6 +116,7 @@ export function TipDialog({ target, to, token, close }: { target: Target; to: st
                 aria-label={t("自定义金额（聪）")}
               />
             </div>
+            )}
             <input id="tip-comment" value={comment} onChange={(e) => setComment(e.target.value)} maxLength={200} placeholder={t("留一句话（可选）")} />
             {error && <p className="error small">{error}</p>}
             <div className="row end">
@@ -118,7 +124,7 @@ export function TipDialog({ target, to, token, close }: { target: Target; to: st
                 {t("取消")}
               </button>
               <button type="button" className="primary" onClick={start} disabled={busy}>
-                {busy ? t("正在生成发票…") : t("打赏 {n} 聪", { n: Number.isFinite(sats) ? sats.toLocaleString("en-US") : "—" })}
+                {busy ? t("正在生成发票…") : t(fixed != null ? "发 {n} 聪" : "打赏 {n} 聪", { n: Number.isFinite(sats) ? sats.toLocaleString("en-US") : "—" })}
               </button>
             </div>
           </>

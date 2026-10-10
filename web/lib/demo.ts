@@ -3,8 +3,8 @@
 // here from deterministic fake data; what the visitor does (posts, likes, follows, profile
 // edits) is kept in localStorage, and "重置演示数据" clears it.
 
-import type { Application, Badge, District, DistrictGame, Draw, Game, Season, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
-import { CLAIM_BLOCKS, pick, rarityOf, ROUND, roundOf, seasonOf, sha256, type Rarity } from "./game";
+import type { Application, Badge, Contest, ContestMetric, District, DistrictGame, Draw, Game, Season, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
+import { CLAIM_BLOCKS, pick, rarityOf, ROUND, roundOf, SEASON, seasonOf, sha256, type Rarity } from "./game";
 import { connected } from "./parks";
 import { MAX_SHOWN, PET_KEYS, PETS, type Pet, type PetKey } from "./pets";
 import { prosperity, THRESHOLDS, type ProsperityParts } from "./prosperity";
@@ -150,8 +150,11 @@ type State = {
   boot?: number; // when this demo began: a new block is "mined" every DEMO_BLOCK_MS after it
   badges?: Badge[]; // the visitor's
   opened?: Record<number, string>; // treasures opened, by block height
+  contests?: DemoContest[]; // 街区活动
 };
-type DemoTip = { id: number; tipper: string; recipient: string; n: number; post_id: number | null; sats: number; comment: string; status: Tip["status"]; at: number };
+type DemoTip = { id: number; tipper: string; recipient: string; n: number; post_id: number | null; sats: number; comment: string; status: Tip["status"]; at: number; event?: [number, number] };
+type DemoContest = { id: number; bitmap_number: number; season: number; host: string; metric: ContestMetric; prizes: number[]; note: string; created_at: string; cancelled?: boolean;
+  winners?: { address: string; score: number; prize_sats: number }[]; crowd?: [string, number][] };
 type DemoPoll = { id: number; n: number; question: string; options: string[]; by: string; created_at: string; closes_at: string; closed_at: string | null; votes: Record<string, number> };
 
 const iso = (daysAgo: number) => new Date((NOW - daysAgo * DAY) * 1000).toISOString();
@@ -180,6 +183,12 @@ function seedExtras(s: State) {
   s.bans ??= [{ address: fakeAddress(705), reason: "scam", banned_by: DEMO_ADDRESS, created_at: iso(2), expires_at: iso(-28) }];
   s.boot ??= Date.now();
   s.badges ??= [{ kind: "treasure", height: DEMO_TIP - 400, bitmap_number: 840001, tx_index: OWN_PARCEL.tx_index, rarity: "rare", created_at: iso(3) }];
+  if (!s.contests) {
+    s.contests = seedContests(s);
+    const ids = (s.notifications ?? []).map((x) => x.id);
+    s.notifications = [{ id: Math.max(0, ...ids) + 1, kind: "event_win", actor: ownerOf(840001)!, bitmap_number: 840001, post_id: null, created_at: iso(0.15), read: false, snippet: null,
+      block_height: (seasonOf(DEMO_TIP)[0] - 1) * SEASON }, ...(s.notifications ?? [])];
+  }
   s.opened ??= Object.fromEntries(Array.from({ length: 12 }, (_, i) => [DEMO_TIP - 3 - i * 9, fakeAddress(900 + i)]));
   return s;
 }
@@ -201,7 +210,7 @@ function seedTips(s: State): DemoTip[] {
 const strHash = (a: string) => [...a].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
 /** Who has a Lightning address in the demo: the visitor if they set one, and most other wallets. */
 const tippable = (a: string | null) => !!a && (a === DEMO_ADDRESS ? !!load().lightning : strHash(a) % 10 < 7);
-const settledTips = () => (load().tips ?? []).filter((x) => x.status === "settled");
+const settledTips = () => (load().tips ?? []).filter((x) => x.status === "settled" && !x.event); // a prize isn't a tip the district earned
 const postTips = (id: number) => settledTips().filter((x) => x.post_id === id).reduce((a, x) => a + x.sats, 0);
 function tipsSince(days: number) {
   const since = Date.now() - days * DAY * 1000;
@@ -241,6 +250,62 @@ const fakeInvoice = (sats: number, seed: number) =>
 
 // What the visitor's wallet hears about: replies on their posts, likes, new followers of
 // 840000 and someone asking to live there.
+// 街区活动 in the demo: 840001's owner ran one last season (the visitor came second, all paid) and runs one now;
+// the visitor ran one on 840000 last season with the second prize still to pay; the park's owner has one coming.
+function seedContests(s: State): DemoContest[] {
+  const S = seasonOf(DEMO_TIP)[0], host = ownerOf(840001)!;
+  const payable = (i: number) => {
+    while (!tippable(fakeAddress(i))) i++;
+    return fakeAddress(i);
+  };
+  const out: DemoContest[] = [
+    { id: 1, bitmap_number: 840001, season: S - 1, host, metric: "posts", prizes: [5000, 2100, 1000], note: "谢谢大家上个赛季把街区写得这么热闹", created_at: iso(20),
+      winners: [{ address: payable(931), score: 14, prize_sats: 5000 }, { address: DEMO_ADDRESS, score: 9, prize_sats: 2100 }, { address: payable(937), score: 6, prize_sats: 1000 }] },
+    { id: 2, bitmap_number: 840001, season: S, host, metric: "checkins", prizes: [10000, 5000, 2000], note: "这个赛季每天来签到的邻居，前三名有奖", created_at: iso(4),
+      crowd: [[fakeAddress(941), 6], [fakeAddress(942), 5], [fakeAddress(943), 3], [fakeAddress(944), 2]] },
+    { id: 3, bitmap_number: 840000, season: S - 1, host: DEMO_ADDRESS, metric: "replies", prizes: [3000, 1000], note: "", created_at: iso(18),
+      winners: [{ address: payable(951), score: 11, prize_sats: 3000 }, { address: payable(961), score: 7, prize_sats: 1000 }] },
+    { id: 4, bitmap_number: 839941, season: S + 1, host: SEED_PARK.owner, metric: "replies", prizes: [21000], note: "矿工新村下个赛季的回帖王", created_at: iso(1) },
+  ];
+  const paid = (c: DemoContest, place: number, tipper: string) => {
+    const w = c.winners![place - 1];
+    (s.tips ??= []).push({ id: s.tips.length + 1, tipper, recipient: w.address, n: c.bitmap_number, post_id: null, sats: w.prize_sats, comment: "", status: "settled", at: (NOW - 2 * DAY) * 1000, event: [c.id, place] });
+  };
+  [1, 2, 3].forEach((place) => paid(out[0], place, host));
+  paid(out[2], 1, DEMO_ADDRESS);
+  return out;
+}
+
+/** Who leads a running contest: the seeded crowd plus what really happened in the demo since the season began. */
+function contestStandings(c: DemoContest) {
+  const s = load(), tip = demoTip(), since = seasonOf(tip)[1];
+  const start = Date.now() - (tip - since) * 600_000;
+  const score = new Map<string, number>(c.crowd ?? []);
+  if (c.metric === "checkins") {
+    const days = (s.checkins?.[c.bitmap_number] ?? []).filter((d) => Date.parse(d) >= start - DAY * 1000).length;
+    if (days && c.host !== DEMO_ADDRESS) score.set(DEMO_ADDRESS, days);
+  } else
+    for (const p of s.posts)
+      if (p.bitmap_number === c.bitmap_number && !p.removed && (p.reply_to == null) === (c.metric === "posts") && Date.parse(p.created_at) >= start && p.author.address !== c.host)
+        score.set(p.author.address, (score.get(p.author.address) ?? 0) + 1);
+  return [...score.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([address, n]) => ({ address, score: n }));
+}
+function contestView(c: DemoContest): Contest {
+  const cur = seasonOf(demoTip())[0], [, since, until] = seasonOf(c.season * SEASON);
+  const status = c.cancelled ? "cancelled" : c.season > cur ? "upcoming" : c.season === cur ? "running" : "ended";
+  const tips = load().tips ?? [];
+  const paid = (place: number) => {
+    const mine = tips.filter((x) => x.event?.[0] === c.id && x.event[1] === place);
+    return mine.some((x) => x.status === "settled") ? "settled" : mine.some((x) => x.status === "pending") ? "pending" : null;
+  };
+  return {
+    id: c.id, bitmap_number: c.bitmap_number, season: c.season, since, until, host: c.host, metric: c.metric, prizes: c.prizes,
+    total_sats: c.prizes.reduce((a, b) => a + b, 0), note: c.note, status, created_at: c.created_at,
+    ...(status === "running" ? { standings: contestStandings(c) } : {}),
+    ...(status === "ended" ? { winners: (c.winners ?? []).map((w, i) => ({ ...w, place: i + 1, paid: paid(i + 1) })) } : {}),
+  };
+}
+
 function seedNotifications(s: State): Notification[] {
   const mine = s.posts.filter((p) => p.author.address === DEMO_ADDRESS && p.reply_to == null);
   const out: Omit<Notification, "id">[] = [];
@@ -1032,13 +1097,47 @@ function route(path: string, opts: Opts): unknown {
     }
     return { lightning_address: s.lightning ?? null };
   }
+  if ((m = p.match(/^\/v1\/districts\/(\d+)\/events$/))) {
+    const n = +m[1], cur = seasonOf(demoTip())[0];
+    if (method === "GET")
+      return { season: cur, events: s.contests!.filter((c) => c.bitmap_number === n).sort((a, b) => b.season - a.season || b.id - a.id).map(contestView) };
+    const a = owns(n);
+    const metric = String(body.metric) as ContestMetric, prizes = (body.prizes as number[]).map(Number);
+    if (!["posts", "replies", "checkins"].includes(metric)) fail(400, "metric is one of posts, replies, checkins");
+    if (!prizes.length || prizes.length > 3 || prizes.some((x) => !Number.isInteger(x) || x < 100 || x > 1_000_000)) fail(400, "each prize is 100 to 1,000,000 sats");
+    if (prizes.some((x, i) => i > 0 && x > prizes[i - 1])) fail(400, "a lower place can't get more than a higher one");
+    const season = cur + (body.next_season ? 1 : 0);
+    if (s.contests!.some((c) => c.bitmap_number === n && c.season === season && !c.cancelled)) fail(409, "this district already has an event that season");
+    const c: DemoContest = { id: Math.max(0, ...s.contests!.map((x) => x.id)) + 1, bitmap_number: n, season, host: a, metric, prizes, note: String(body.note ?? "").trim(), created_at: new Date().toISOString() };
+    s.contests!.push(c);
+    save();
+    return contestView(c);
+  }
+  if (p === "/v1/events") {
+    const cur = seasonOf(demoTip())[0];
+    return { events: s.contests!.filter((c) => !c.cancelled && c.season >= cur).sort((a, b) => a.season - b.season || b.prizes.reduce((x, y) => x + y, 0) - a.prizes.reduce((x, y) => x + y, 0)).map(contestView) };
+  }
+  if ((m = p.match(/^\/v1\/events\/(\d+)$/)) && method === "DELETE") {
+    const a = needMe(), c = s.contests!.find((x) => x.id === +m![1]) ?? fail(404, "no such event");
+    if (c.host !== a) fail(403, "only the host can call this event off");
+    if (!c.cancelled && c.season <= seasonOf(demoTip())[0]) fail(409, "this event has started; it runs to the end of the season");
+    c.cancelled = true;
+    save();
+    return contestView(c);
+  }
   if (p === "/v1/tips/top") return tipTop(me);
   if (p === "/v1/tips" && method === "POST") {
     const a = needMe();
     const sats = Number(body.amount_sats);
     if (!Number.isInteger(sats) || sats < 1 || sats > 1_000_000) fail(422, "amount_sats is 1 to 1,000,000");
-    let recipient: string | null, n: number, postId: number | null = null;
-    if (body.post_id != null) {
+    let recipient: string | null, n: number, postId: number | null = null, event: [number, number] | undefined;
+    if (body.event_id != null) {
+      const c = s.contests!.find((x) => x.id === Number(body.event_id)) ?? fail(404, "no such event");
+      if (c.host !== a) fail(403, "only the host pays this event's prizes");
+      const w = contestView(c).winners?.[Number(body.place) - 1] ?? fail(404, "no such place");
+      if (sats !== w.prize_sats) fail(400, `this prize is ${w.prize_sats} sats`);
+      [recipient, n, event] = [w.address, c.bitmap_number, [c.id, w.place]];
+    } else if (body.post_id != null) {
       const post = s.posts.find((x) => x.id === Number(body.post_id) && !x.removed) ?? fail(404, "no such post");
       [recipient, n, postId] = [post.author.address, post.bitmap_number, post.id];
     } else {
@@ -1047,7 +1146,7 @@ function route(path: string, opts: Opts): unknown {
     }
     if (recipient === a) fail(400, "you can't tip yourself");
     if (!tippable(recipient)) fail(409, "this person hasn't set up a Lightning address yet");
-    const tip: DemoTip = { id: (s.tips ??= []).length + 1, tipper: a, recipient: recipient!, n, post_id: postId, sats, comment: String(body.comment ?? "").trim(), status: "pending", at: Date.now() };
+    const tip: DemoTip = { id: (s.tips ??= []).length + 1, tipper: a, recipient: recipient!, n, post_id: postId, sats, comment: String(body.comment ?? "").trim(), status: "pending", at: Date.now(), event };
     s.tips.push(tip);
     save();
     return { id: tip.id, invoice: fakeInvoice(sats, tip.id), amount_sats: sats, verifiable: true, status: "pending" } satisfies Tip;
