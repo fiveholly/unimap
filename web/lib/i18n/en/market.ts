@@ -1,5 +1,26 @@
 // English for 站内交易 (buying and selling in unimap with PSBTs): components/Market.tsx.
 export const market: Record<string, string> = {
+  "出价": "Offer",
+  "出价买下": "Make an offer",
+  "给 {what} 出价": "Make an offer for {what}",
+  "你出的价（聪）": "Your offer (sats)",
+  "有效期": "Good for",
+  "你的钱包会签好整笔买卖，只差持有人那一个签名：钱付到持有人现在的地址，铭文到你的地址。持有人点接受就成交，钱在那之前一直在你的钱包里。":
+    "Your wallet signs the whole sale except the holder's one signature: the sats go to the holder's current address, the inscription to yours. It goes through when the holder accepts; until then the sats stay in your wallet.",
+  "在 unimap 撤回后，unimap 不再把它交给持有人。想万无一失，就把这笔出价用到的币花掉，比如转给自己。":
+    "Once you withdraw it on unimap, unimap won't hand it to the holder any more. To be completely sure, spend the coins it uses, for example by sending them to yourself.",
+  "签名出价": "Sign the offer",
+  "出价已发给持有人。对方接受后交易会直接发出，你会收到通知。": "Your offer went to the holder. If they accept, the sale goes out straight away and you get a notification.",
+  "收到的出价": "Offers for you",
+  "成交了，交易已发出。": "Sold. The transaction is out.",
+  "{who} 出价，{date} 前有效": "from {who}, good until {date}",
+  "你的出价，{date} 前有效": "your offer, good until {date}",
+  "拒绝": "Decline",
+  "接受": "Accept",
+  "撤回": "Withdraw",
+  "接受 {price} 的出价？签名后交易会立刻发出，铭文会转给买家。": "Accept the offer of {price}? Once you sign, the sale goes out and the inscription goes to the buyer.",
+  "{who} 给你的 {place} 出了价，去看看": "{who} made an offer for your {place}. Take a look",
+  "{who} 接受了你对 {place} 的出价，交易已经发出": "{who} accepted your offer for {place}. The sale is out",
   "{wallet} 不能签交易，换 UniSat、Xverse 或 OKX 连接": "{wallet} can't sign transactions. Connect with UniSat, Xverse or OKX instead",
   "测试网 {net}": "Test network {net}",
   "价格至少 1,000 聪": "The price is at least 1,000 sats",

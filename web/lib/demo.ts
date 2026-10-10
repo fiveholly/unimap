@@ -3,7 +3,7 @@
 // here from deterministic fake data; what the visitor does (posts, likes, follows, profile
 // edits) is kept in localStorage, and "重置演示数据" clears it.
 
-import type { Agent, AgentDraft, AgentGrant, AgentInfo, AgentTask, AgentView, Application, Badge, Contest, MarketListing, ContestMetric, District, DistrictGame, Draw, Game, Season, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
+import type { MarketOffer, OfferQuote, Agent, AgentDraft, AgentGrant, AgentInfo, AgentTask, AgentView, Application, Badge, Contest, MarketListing, ContestMetric, District, DistrictGame, Draw, Game, Season, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
 import { CLAIM_BLOCKS, pick, rarityOf, ROUND, roundOf, SEASON, seasonOf, sha256, type Rarity } from "./game";
 import { connected } from "./parks";
 import { MAX_SHOWN, PET_KEYS, PETS, type Pet, type PetKey } from "./pets";
@@ -154,6 +154,7 @@ type State = {
   market?: DemoListing[]; // 站内交易
   dummies?: boolean; // the visitor made the two small outputs a purchase needs
   agents?: DemoAgent[]; // 街区 agent, on the visitor's districts
+  offers?: MarketOffer[]; // 出价
   agentPay?: { id: number; at: number; settled: boolean } | null;
 };
 type DemoAgent = Omit<Agent, "posted_today" | "running" | "problem"> & { n: number; message: string; revoked?: boolean; drafts: AgentDraft[] };
@@ -190,6 +191,16 @@ function seedExtras(s: State) {
   s.boot ??= Date.now();
   s.badges ??= [{ kind: "treasure", height: DEMO_TIP - 400, bitmap_number: 840001, tx_index: OWN_PARCEL.tx_index, rarity: "rare", created_at: iso(3) }];
   s.market ??= [{ id: 1, n: 840005, seller: ownerOf(840005)!, price: 9_800_000, status: "active", at: iso(0.8) }];
+  if (!s.offers) {
+    const at = (d: number) => ({ created_at: iso(d), expires_at: iso(d - 7) });
+    s.offers = [
+      { id: 1, inscription_id: inscriptionId(840000), bitmap_number: 840000, tx_index: null, buyer: fakeAddress(611), seller: DEMO_ADDRESS, price_sats: 4_200_000, status: "active", txid: null, ...at(0.3) },
+      { id: 2, inscription_id: inscriptionId(840000), bitmap_number: 840000, tx_index: null, buyer: fakeAddress(612), seller: DEMO_ADDRESS, price_sats: 3_500_000, status: "active", txid: null, ...at(1.5) },
+    ];
+    const ids = (s.notifications ?? []).map((x) => x.id);
+    s.notifications = [{ id: Math.max(0, ...ids) + 1, kind: "offer", actor: fakeAddress(611), bitmap_number: 840000, post_id: null, created_at: iso(0.3), read: false, snippet: null },
+      ...(s.notifications ?? [])];
+  }
   if (!s.contests) {
     s.contests = seedContests(s);
     const ids = (s.notifications ?? []).map((x) => x.id);
@@ -1282,6 +1293,53 @@ function route(path: string, opts: Opts): unknown {
     const g = s.agents!.find((x) => x.id === +m![1] && x.granted_at) ?? fail(404, "no such grant");
     return { id: g.id, bitmap_number: g.n, owner: ownerOf(g.n) ?? DEMO_ADDRESS, agent_key: g.key, message: g.message, signature: "演示签名", granted_at: g.granted_at,
       expires_at: g.expires_at, revoked_at: g.revoked ? new Date().toISOString() : null } satisfies AgentGrant;
+  }
+  if (p === "/v1/market/offers" && method === "GET") {
+    const n = url.searchParams.get("bitmap_number"), mine = url.searchParams.get("mine");
+    const live = (o: MarketOffer) => o.status === "active" && Date.parse(o.expires_at) > Date.now();
+    if (mine) return { offers: s.offers!.filter((o) => o.status !== ("unsigned" as string) && (o.buyer === needMe() || o.seller === me)).sort((a, b) => b.id - a.id) };
+    return { offers: s.offers!.filter((o) => live(o) && (n == null || o.bitmap_number === +n)).sort((a, b) => b.price_sats - a.price_sats) };
+  }
+  if (p === "/v1/market/offers/prepare") {
+    const a = needMe(), n = Number(body.bitmap_number), tx = (body.tx_index as number | null) ?? null;
+    const holder = (tx == null ? ownerOf(n) : parcelOwner(n, tx)) ?? fail(404, "nobody holds it yet");
+    if (holder === a) fail(400, "it's already yours");
+    if (!s.dummies) fail(409, "need_dummies: the paying address needs two small outputs (up to 1000 sats) first");
+    const price = Number(body.price_sats);
+    if (!Number.isInteger(price) || price < 1000) fail(422, "price_sats is at least 1000");
+    const o = { id: Math.max(0, ...s.offers!.map((x) => x.id)) + 1, inscription_id: inscriptionId(n), bitmap_number: n, tx_index: tx, buyer: a, seller: holder, price_sats: price,
+      status: "unsigned" as MarketOffer["status"], txid: null, created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 600_000).toISOString() };
+    s.offers!.push(o);
+    save();
+    const network = 141 * 3;
+    return { offer_id: o.id, psbt: DEMO_PSBT, sign_inputs: [0, 1, 3], price_sats: price, fee_sats: 0, network_fee_sats: network, fee_rate: 3, postage_sats: 546, total_sats: price + network } satisfies OfferQuote;
+  }
+  if ((m = p.match(/^\/v1\/market\/offers\/(\d+)(\/sign|\/accept\/prepare|\/accept)?$/))) {
+    const a = needMe(), o = s.offers!.find((x) => x.id === +m![1]) ?? fail(404, "no such offer");
+    const sub = m[2] ?? "";
+    if (sub === "/sign") {
+      if (o.buyer !== a) fail(404, "no such offer");
+      s.offers!.forEach((x) => x.buyer === a && x.inscription_id === o.inscription_id && x.status === "active" && (x.status = "expired"));
+      Object.assign(o, { status: "active", expires_at: new Date(Date.now() + Number(body.days ?? 7) * DAY * 1000).toISOString() });
+      save();
+      return o;
+    }
+    if (sub === "" && method === "DELETE") {
+      if (a !== o.buyer && a !== o.seller) fail(403, "only the buyer or the holder can do this");
+      if (o.status === "active") o.status = a === o.buyer ? "cancelled" : "declined";
+      save();
+      return o;
+    }
+    if (o.seller !== a) fail(403, "only the holder can accept it");
+    if (o.status !== "active") fail(409, "this offer can't be accepted any more");
+    if (sub === "/accept/prepare") return { psbt: DEMO_PSBT, psbt_hex: "", sign_inputs: [2], price_sats: o.price_sats, postage_sats: 546 };
+    if (sub === "/accept") {
+      o.status = "accepted";
+      o.txid = sha256(`offer:${o.id}`);
+      s.offers!.forEach((x) => x.inscription_id === o.inscription_id && x.status === "active" && (x.status = "expired"));
+      save();
+      return { txid: o.txid, offer_id: o.id };
+    }
   }
   if (p === "/v1/market") return { open: true, network: "testnet4", fee_bps: 0, dummy_sats: 600 };
   if (p === "/v1/market/listings" && method === "GET") {

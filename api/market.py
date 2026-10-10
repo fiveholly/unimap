@@ -25,6 +25,9 @@ the one it quoted, asks bitcoind to test it, and broadcasts it.
 Taking a listing down here stops unimap from offering it, but the seller's signature stays good
 until the inscription moves; the page says so and offers moving it to make sure.
 
+Offers (出价) run the other way round, for things nobody listed: the buyer signs the same purchase
+first, and the holder signs input 2 to accept it. See the offers section below.
+
 The market runs only when MARKET_NETWORK is set (testnet4, signet or regtest), and refuses
 mainnet unless MARKET_MAINNET_AUDITED=1, which is for after the outside audit.
 """
@@ -35,8 +38,8 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import btc, notify, wallets
-from api.auth import current_address
+from api import btc, game, notify, wallets
+from api.auth import current_address, optional_address
 from api.db import cursor
 from api.land import _bitcoind
 from parcel_index.sources import OrdServer
@@ -383,32 +386,19 @@ def _vbytes(kinds_in, kinds_out):
     return 11 + sum(btc.INPUT_VBYTES[k] for k in kinds_in) + sum(OUT_VBYTES[k] for k in kinds_out)
 
 
-@router.post("/v1/market/listings/{listing_id}/quote")
-def quote(listing_id: int, req: QuoteBody, address: str = Depends(current_address)):
-    """The purchase for the buyer's wallet to sign: every input but the seller's (index 2), SIGHASH_ALL."""
-    net = _need_market()
+def _purchase(net, req, seller_in, seller_utxo, seller_out):
+    """The purchase laid out as above, with input 2 (the seller's) left for the caller to fill in.
+    (psbt, sign_inputs, the sums for the buyer)."""
     pay_spk = _script(req.payment_address, net)
     recv_spk = _script(req.receive_address, net)
     if btc.kind_of(recv_spk) != "p2tr":
         raise HTTPException(400, "inscriptions go to a taproot (bc1p…) address")
-    with cursor() as cur:
-        cur.execute(f"select {LISTING_COLUMNS}, m.psbt {LISTING_FROM} where m.id = %s;", (listing_id,))
-        row = cur.fetchone()
-        if row is None:
-            raise HTTPException(404, "no such listing")
-        listing, listing_psbt = _view(row[:-1]), row[-1]
-        if listing["status"] != "active":
-            raise HTTPException(409, "this listing is no longer for sale")
-        if wallets.main_of(cur, listing["seller"]) == wallets.main_of(cur, address):
-            raise HTTPException(400, "you can't buy your own listing")
-    seller = btc.Psbt.parse(listing_psbt)
-    seller_out, seller_utxo = seller.tx.outputs[0], seller.witness_utxo(0)
-    if _chain().txout(seller.tx.inputs[0].outpoint) is None:
+    if _chain().txout(seller_in.outpoint) is None:
         raise HTTPException(409, "the inscription's output is already being spent")
     if seller_utxo.value < btc.dust_limit(recv_spk):
         raise HTTPException(409, "the inscription's output is too small to send on")
 
-    coins = [c for c in _coins(net, req.payment_address) if c[0] != seller.tx.inputs[0].outpoint]
+    coins = [c for c in _coins(net, req.payment_address) if c[0] != seller_in.outpoint]
     dummies = [c for c in coins if c[1] <= DUMMY_MAX][:2]
     if len(dummies) < 2:
         raise HTTPException(409, f"need_dummies: the paying address needs two small outputs (up to {DUMMY_MAX} sats) first")
@@ -443,7 +433,7 @@ def quote(listing_id: int, req: QuoteBody, address: str = Depends(current_addres
     for outpoint, _, _ in dummies:
         txid, vout = outpoint.rsplit(":", 1)
         tx.inputs.append(btc.TxIn(txid, int(vout), sequence=SEQUENCE))
-    tx.inputs.append(btc.TxIn(seller.tx.inputs[0].txid, seller.tx.inputs[0].vout, sequence=seller.tx.inputs[0].sequence))
+    tx.inputs.append(btc.TxIn(seller_in.txid, seller_in.vout, sequence=seller_in.sequence))
     for outpoint, _, _ in chosen:
         txid, vout = outpoint.rsplit(":", 1)
         tx.inputs.append(btc.TxIn(txid, int(vout), sequence=SEQUENCE))
@@ -456,7 +446,6 @@ def quote(listing_id: int, req: QuoteBody, address: str = Depends(current_addres
 
     psbt = btc.Psbt.from_tx(tx)
     sign = []
-    psbt.inputs[2] = dict(seller.inputs[0])  # final already: the witness UTXO and the seller's witness
     for i, coin in enumerate(dummies + [None] + chosen):
         if coin is None:
             continue
@@ -464,23 +453,64 @@ def quote(listing_id: int, req: QuoteBody, address: str = Depends(current_addres
         psbt.set_witness_utxo(i, btc.TxOut(value, spk))
         _describe_inputs(psbt, i, spk, req.payment_public_key)
         sign.append(i)
+    spent = sum(v for _, v, _ in dummies + chosen)
+    back = a + b + DUMMY * 2 + change
+    sums = {"price_sats": seller_out.value, "fee_sats": fee_out, "network_fee_sats": miners, "fee_rate": rate,
+            "postage_sats": seller_utxo.value, "total_sats": spent - back}
+    return psbt, sign, sums
+
+
+@router.post("/v1/market/listings/{listing_id}/quote")
+def quote(listing_id: int, req: QuoteBody, address: str = Depends(current_address)):
+    """The purchase for the buyer's wallet to sign: every input but the seller's (index 2), SIGHASH_ALL."""
+    net = _need_market()
+    with cursor() as cur:
+        cur.execute(f"select {LISTING_COLUMNS}, m.psbt {LISTING_FROM} where m.id = %s;", (listing_id,))
+        row = cur.fetchone()
+        if row is None:
+            raise HTTPException(404, "no such listing")
+        listing, listing_psbt = _view(row[:-1]), row[-1]
+        if listing["status"] != "active":
+            raise HTTPException(409, "this listing is no longer for sale")
+        if wallets.main_of(cur, listing["seller"]) == wallets.main_of(cur, address):
+            raise HTTPException(400, "you can't buy your own listing")
+    seller = btc.Psbt.parse(listing_psbt)
+    psbt, sign, sums = _purchase(net, req, seller.tx.inputs[0], seller.witness_utxo(0), seller.tx.outputs[0])
+    psbt.inputs[2] = dict(seller.inputs[0])  # final already: the witness UTXO and the seller's witness
     with cursor() as cur:
         cur.execute(
             "insert into social.market_quotes (listing_id, buyer, psbt, expires_at) values (%s, %s, %s, now() + make_interval(mins => %s)) returning id;",
             (listing_id, address, psbt.b64(), QUOTE_MINUTES),
         )
         quote_id = cur.fetchone()[0]
-    spent = sum(v for _, v, _ in dummies + chosen)
-    back = a + b + DUMMY * 2 + change
-    return {
-        "quote_id": quote_id, "psbt": psbt.b64(), "psbt_hex": psbt.serialize().hex(), "sign_inputs": sign,
-        "price_sats": seller_out.value, "fee_sats": fee_out, "network_fee_sats": miners, "fee_rate": rate,
-        "postage_sats": seller_utxo.value, "total_sats": spent - back, "expires_in": QUOTE_MINUTES * 60,
-    }
+    return {"quote_id": quote_id, "psbt": psbt.b64(), "psbt_hex": psbt.serialize().hex(), "sign_inputs": sign,
+            **sums, "expires_in": QUOTE_MINUTES * 60}
 
 
 class SubmitBody(BaseModel):
     psbt: str = Field(max_length=400_000)
+
+
+def _take_signatures(quoted, signed, inputs):
+    """Check signed carries SIGHASH_ALL signatures on exactly the quoted transaction for these inputs, and finalize them in quoted."""
+    if signed.tx.serialize(witness=False) != quoted.tx.serialize(witness=False):
+        raise HTTPException(400, "the signed transaction isn't the one quoted")
+    spent = [quoted.witness_utxo(i) for i in range(len(quoted.tx.inputs))]
+    for i in inputs:
+        found = btc.input_signature(_with_utxo(signed, i, spent[i]), i)
+        if found is None:
+            raise HTTPException(400, f"input {i} isn't signed")
+        try:
+            hash_type = btc.check_signature(quoted.tx, i, spent, *found)
+        except btc.BadTx as e:
+            raise HTTPException(400, str(e)) from e
+        if hash_type not in (btc.SIGHASH_DEFAULT, btc.SIGHASH_ALL):
+            raise HTTPException(400, "these inputs are signed with SIGHASH_ALL")
+        quoted.inputs[i] = {**quoted.inputs[i], **_signature_fields(signed, i)}
+        try:
+            btc.finalize_input(quoted, i)
+        except btc.BadTx as e:
+            raise HTTPException(400, str(e)) from e
 
 
 @router.post("/v1/market/quotes/{quote_id}/submit")
@@ -505,26 +535,7 @@ def submit(quote_id: int, req: SubmitBody, address: str = Depends(current_addres
     if status != "active":
         raise HTTPException(409, "this listing is no longer for sale")
     quoted = btc.Psbt.parse(quoted_b64)
-    if signed.tx.serialize(witness=False) != quoted.tx.serialize(witness=False):
-        raise HTTPException(400, "the signed transaction isn't the one quoted")
-    spent = [quoted.witness_utxo(i) for i in range(len(quoted.tx.inputs))]
-    for i in range(len(quoted.tx.inputs)):
-        if i == 2:
-            continue
-        found = btc.input_signature(_with_utxo(signed, i, spent[i]), i)
-        if found is None:
-            raise HTTPException(400, f"input {i} isn't signed")
-        try:
-            hash_type = btc.check_signature(quoted.tx, i, spent, *found)
-        except btc.BadTx as e:
-            raise HTTPException(400, str(e)) from e
-        if hash_type not in (btc.SIGHASH_DEFAULT, btc.SIGHASH_ALL):
-            raise HTTPException(400, "the buyer's inputs are signed with SIGHASH_ALL")
-        quoted.inputs[i] = {**quoted.inputs[i], **_signature_fields(signed, i)}
-        try:
-            btc.finalize_input(quoted, i)
-        except btc.BadTx as e:
-            raise HTTPException(400, str(e)) from e
+    _take_signatures(quoted, signed, [i for i in range(len(quoted.tx.inputs)) if i != 2])
     raw = quoted.extract().serialize().hex()
     c = _chain()
     allowed, reason = c.test_accept(raw)
@@ -536,13 +547,14 @@ def submit(quote_id: int, req: SubmitBody, address: str = Depends(current_addres
             raise HTTPException(409, "this quote was already used")
         cur.execute(
             "update social.market_listings set status = 'sold', buyer = %s, sold_txid = %s, updated_at = now() "
-            "where id = %s and status = 'active' returning seller, bitmap_number;",
+            "where id = %s and status = 'active' returning seller, bitmap_number, inscription_id;",
             (address, quoted.tx.txid, listing_id),
         )
         sold = cur.fetchone()
         if sold is None:
             raise HTTPException(409, "this listing is no longer for sale")
         txid = c.send(raw)
+        _settle_offers(cur, sold[2])
         notify.notify(cur, sold[0], "sold", address, sold[1])
     return {"txid": txid, "listing_id": listing_id}
 
@@ -556,6 +568,204 @@ def _with_utxo(psbt, i, utxo):
 def _signature_fields(psbt, i):
     keep = (btc.IN_PARTIAL_SIG, btc.IN_TAP_KEY_SIG, btc.IN_FINAL_SCRIPTWITNESS, btc.IN_FINAL_SCRIPTSIG, btc.IN_REDEEM_SCRIPT)
     return {k: v for k, v in psbt.inputs[i].items() if k[0] in keep}
+
+
+# --- offers ---------------------------------------------------------------------------------
+# 出价: a buyer offers a price for something nobody listed. The buyer's wallet signs the whole
+# purchase as above, every input but the inscription's, with SIGHASH_ALL, paying the price to the
+# address holding the inscription. If the holder accepts, their wallet signs input 2 and it goes
+# out. The buyer's signatures hold only while every input stays unspent, so the offer ends by itself
+# when the inscription moves or the buyer spends those coins; withdrawing it here only hides it.
+
+OFFER_DAYS = 30
+OFFER_COLUMNS = (
+    "f.id, f.inscription_id, f.bitmap_number, f.tx_index, f.buyer, f.seller, f.price_sats, f.status, f.created_at, f.expires_at, "
+    "f.txid, o.outpoint = f.outpoint and o.address = f.seller as fresh"
+)
+OFFER_FROM = "from social.market_offers f left join inscription_owners o on o.inscription_id = f.inscription_id "
+
+
+def _offer_view(row):
+    oid, iid, n, tx_index, buyer, seller, price, status, created_at, expires_at, txid, fresh = row
+    if status == "active" and not fresh:
+        status = "gone"  # the inscription moved
+    elif status == "active" and expires_at < datetime.now(timezone.utc):
+        status = "expired"
+    return {"id": oid, "inscription_id": iid, "bitmap_number": n, "tx_index": tx_index, "buyer": buyer, "seller": seller,
+            "price_sats": price, "status": status, "created_at": created_at.isoformat(), "expires_at": expires_at.isoformat(), "txid": txid}
+
+
+def _offer(cur, offer_id, extra=""):
+    cur.execute(f"select {OFFER_COLUMNS}{extra} {OFFER_FROM} where f.id = %s;", (offer_id,))
+    row = cur.fetchone()
+    if row is None:
+        raise HTTPException(404, "no such offer")
+    return row
+
+
+def _settle_offers(cur, inscription_id):
+    """Once the inscription is sold, the other offers on it can no longer go through."""
+    cur.execute("update social.market_offers set status = 'expired', updated_at = now() where inscription_id = %s and status in ('active', 'unsigned');",
+                (inscription_id,))
+    cur.execute("update social.market_listings set status = 'cancelled', updated_at = now() where inscription_id = %s and status = 'active';",
+                (inscription_id,))
+
+
+class OfferBody(QuoteBody):
+    bitmap_number: int
+    tx_index: int | None = None
+    price_sats: int = Field(ge=MIN_PRICE, le=MAX_PRICE)
+
+
+@router.post("/v1/market/offers/prepare")
+def prepare_offer(req: OfferBody, address: str = Depends(current_address)):
+    """The purchase at the buyer's price, for the buyer's wallet to sign (every input but 2, SIGHASH_ALL)."""
+    net = _need_market()
+    with cursor() as cur:
+        inscription_id, owner, outpoint = _land(cur, req.bitmap_number, req.tx_index)
+        if not owner:
+            raise HTTPException(404, "nobody holds it yet")
+        if wallets.main_of(cur, owner) == wallets.main_of(cur, address):
+            raise HTTPException(400, "it's already yours")
+    value, spk = _sellable(inscription_id, outpoint)
+    seller_spk = _script(owner, net)  # the price goes to the address holding the inscription
+    txid, vout = outpoint.rsplit(":", 1)
+    psbt, sign, sums = _purchase(net, req, btc.TxIn(txid, int(vout), sequence=SEQUENCE), btc.TxOut(value, spk), btc.TxOut(req.price_sats, seller_spk))
+    psbt.set_witness_utxo(2, btc.TxOut(value, spk))  # taproot signatures cover every input's amount and script
+    with cursor() as cur:
+        cur.execute("delete from social.market_offers where status = 'unsigned' and created_at < now() - interval '1 day';")
+        cur.execute(
+            "insert into social.market_offers (inscription_id, bitmap_number, tx_index, buyer, seller, price_sats, outpoint, psbt, expires_at) "
+            "values (%s, %s, %s, %s, %s, %s, %s, %s, now() + make_interval(mins => %s)) returning id;",
+            (inscription_id, req.bitmap_number, req.tx_index, address, owner, req.price_sats, outpoint, psbt.b64(), QUOTE_MINUTES),
+        )
+        offer_id = cur.fetchone()[0]
+    return {"offer_id": offer_id, "psbt": psbt.b64(), "psbt_hex": psbt.serialize().hex(), "sign_inputs": sign, **sums}
+
+
+class SignedOffer(BaseModel):
+    psbt: str = Field(max_length=400_000)
+    days: int = Field(default=7, ge=1, le=OFFER_DAYS)
+
+
+@router.post("/v1/market/offers/{offer_id}/sign")
+def sign_offer(offer_id: int, req: SignedOffer, address: str = Depends(current_address)):
+    """Keep the buyer's signed offer and tell the holder about it."""
+    _need_market()
+    signed = _psbt(req.psbt)
+    with cursor() as cur:
+        row = _offer(cur, offer_id, ", f.psbt")
+    view, prepared = _offer_view(row[:-1]), row[-1]
+    if view["buyer"] != address:
+        raise HTTPException(404, "no such offer")
+    with cursor() as cur:
+        cur.execute("select status, expires_at > now() from social.market_offers where id = %s;", (offer_id,))
+        status, fresh = cur.fetchone()
+    if status != "unsigned" or not fresh:
+        raise HTTPException(409, "this offer was already signed, or took too long; make it again")
+    quoted = btc.Psbt.parse(prepared)
+    _take_signatures(quoted, signed, [i for i in range(len(quoted.tx.inputs)) if i != 2])
+    with cursor() as cur:
+        cur.execute(
+            "update social.market_offers set status = 'expired', updated_at = now() where buyer = %s and inscription_id = %s and status = 'active';",
+            (address, view["inscription_id"]),
+        )
+        cur.execute(
+            "update social.market_offers set status = 'active', psbt = %s, expires_at = now() + make_interval(days => %s), updated_at = now() "
+            "where id = %s and status = 'unsigned';",
+            (quoted.b64(), req.days, offer_id),
+        )
+        notify.notify(cur, view["seller"], "offer", address, view["bitmap_number"], block_height=game.top(cur))  # each new offer is told
+        return _offer_view(_offer(cur, offer_id))
+
+
+@router.get("/v1/market/offers")
+def offers(bitmap_number: int | None = None, mine: bool = False, address: str | None = Depends(optional_address)):
+    """Live offers on a district and its parcels, best first; or, with mine, the ones the viewer made or got."""
+    if network() is None:
+        return {"offers": []}
+    with cursor() as cur:
+        if mine:
+            if not address:
+                raise HTTPException(401, "connect a wallet first")
+            group = wallets.group(cur, address)
+            cur.execute(f"select {OFFER_COLUMNS} {OFFER_FROM} where f.status <> 'unsigned' and (f.buyer = any(%s) or f.seller = any(%s)) "
+                        "order by f.id desc limit 50;", (group, group))
+        else:
+            cur.execute(f"select {OFFER_COLUMNS} {OFFER_FROM} where f.status = 'active' and f.expires_at > now() "
+                        "and o.outpoint = f.outpoint and o.address = f.seller and (%(n)s::int4 is null or f.bitmap_number = %(n)s) "
+                        "order by f.price_sats desc, f.id limit 50;", {"n": bitmap_number})
+        return {"offers": [_offer_view(r) for r in cur.fetchall()]}
+
+
+@router.delete("/v1/market/offers/{offer_id}")
+def withdraw_offer(offer_id: int, address: str = Depends(current_address)):
+    """The buyer withdraws it, or the holder turns it down. Either way unimap stops showing it."""
+    with cursor() as cur:
+        view = _offer_view(_offer(cur, offer_id))
+        me = wallets.main_of(cur, address)
+        if me == wallets.main_of(cur, view["buyer"]):
+            status = "cancelled"
+        elif me == wallets.main_of(cur, view["seller"]):
+            status = "declined"
+        else:
+            raise HTTPException(403, "only the buyer or the holder can do this")
+        cur.execute("update social.market_offers set status = %s, updated_at = now() where id = %s and status = 'active';", (status, offer_id))
+        return _offer_view(_offer(cur, offer_id))
+
+
+class AcceptBody(BaseModel):
+    public_key: str | None = Field(default=None, max_length=66)  # the inscription address's key, for the wallet
+
+
+def _live_offer(cur, offer_id, address):
+    row = _offer(cur, offer_id, ", f.psbt")
+    view = _offer_view(row[:-1])
+    if wallets.main_of(cur, view["seller"]) != wallets.main_of(cur, address):
+        raise HTTPException(403, "only the holder can accept it")
+    if view["status"] != "active":
+        raise HTTPException(409, "this offer can't be accepted any more")
+    return view, btc.Psbt.parse(row[-1])
+
+
+@router.post("/v1/market/offers/{offer_id}/accept/prepare")
+def prepare_accept(offer_id: int, req: AcceptBody, address: str = Depends(current_address)):
+    """The buyer's signed purchase, for the holder's wallet to sign input 2 with SIGHASH_ALL."""
+    _need_market()
+    with cursor() as cur:
+        view, psbt = _live_offer(cur, offer_id, address)
+    if any(_chain().txout(t.outpoint) is None for t in psbt.tx.inputs):
+        with cursor() as cur:
+            cur.execute("update social.market_offers set status = 'expired', updated_at = now() where id = %s;", (offer_id,))
+        raise HTTPException(409, "the buyer's coins have moved, so this offer can't go through any more")
+    utxo = psbt.witness_utxo(2)
+    _describe_inputs(psbt, 2, utxo.script_pubkey, req.public_key)
+    return {"psbt": psbt.b64(), "psbt_hex": psbt.serialize().hex(), "sign_inputs": [2], "price_sats": view["price_sats"],
+            "postage_sats": utxo.value}
+
+
+@router.post("/v1/market/offers/{offer_id}/accept")
+def accept(offer_id: int, req: SubmitBody, address: str = Depends(current_address)):
+    """Check the holder's signature, then test and broadcast the sale."""
+    _need_market()
+    signed = _psbt(req.psbt)
+    with cursor() as cur:
+        view, offered = _live_offer(cur, offer_id, address)
+    _take_signatures(offered, signed, [2])
+    raw = offered.extract().serialize().hex()
+    c = _chain()
+    allowed, reason = c.test_accept(raw)
+    if not allowed:
+        raise HTTPException(409, f"bitcoind won't take this transaction: {reason}")
+    with cursor() as cur:
+        cur.execute("update social.market_offers set status = 'accepted', txid = %s, updated_at = now() where id = %s and status = 'active' "
+                    "returning id;", (offered.tx.txid, offer_id))
+        if cur.fetchone() is None:
+            raise HTTPException(409, "this offer can't be accepted any more")
+        txid = c.send(raw)
+        _settle_offers(cur, view["inscription_id"])
+        notify.notify(cur, view["buyer"], "offer_accepted", address, view["bitmap_number"])
+    return {"txid": txid, "offer_id": offer_id}
 
 
 # --- dummies ----------------------------------------------------------------------------------

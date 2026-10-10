@@ -186,7 +186,7 @@ CREATE TABLE IF NOT EXISTS social.holdings_checked (
 CREATE TABLE IF NOT EXISTS social.notifications (
 	id bigserial NOT NULL,
 	address text NOT NULL,
-	kind text NOT NULL, -- reply | like | post | follow | apply | tip | treasure | lucky | crown | event_win | sold | agent_draft | agent_alert
+	kind text NOT NULL, -- reply | like | post | follow | apply | tip | treasure | lucky | crown | event_win | sold | offer | offer_accepted | agent_draft | agent_alert
 	actor text NOT NULL,
 	bitmap_number int4 NOT NULL,
 	post_id int8 NULL, -- the reply, the liked post or the new post
@@ -415,6 +415,28 @@ CREATE TABLE IF NOT EXISTS social.market_quotes (
 	created_at timestamptz NOT NULL DEFAULT now(),
 	CONSTRAINT market_quotes_pk PRIMARY KEY (id)
 );
+
+-- 出价 (api/market.py): a buyer's signed purchase of something nobody listed, waiting for the holder.
+CREATE TABLE IF NOT EXISTS social.market_offers (
+	id bigserial NOT NULL,
+	inscription_id text NOT NULL,
+	bitmap_number int4 NOT NULL,
+	tx_index int4 NULL, -- a parcel; null for a district
+	buyer text NOT NULL,
+	seller text NOT NULL, -- the address holding it when the offer was made; the price goes there
+	price_sats int8 NOT NULL,
+	outpoint text NOT NULL, -- the output holding the inscription then
+	psbt text NOT NULL, -- base64; the buyer's inputs are final once signed
+	status text NOT NULL DEFAULT 'unsigned', -- unsigned | active | accepted | cancelled | declined | expired
+	txid text NULL,
+	expires_at timestamptz NOT NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	updated_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT market_offers_pk PRIMARY KEY (id)
+);
+CREATE INDEX IF NOT EXISTS market_offers_district_idx ON social.market_offers USING btree (bitmap_number) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS market_offers_buyer_idx ON social.market_offers USING btree (buyer, id);
+CREATE INDEX IF NOT EXISTS market_offers_seller_idx ON social.market_offers USING btree (seller, id);
 
 -- 街区 agent (api/agent.py): a helper the owner grants, with a wallet signature, the right to
 -- draft posts for the district and publish those the owner approves, signed with its own key.

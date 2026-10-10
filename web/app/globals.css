@@ -2801,3 +2801,24 @@ span.act.tip-btn {
 .sig p {
   overflow-wrap: anywhere;
 }
+
+/* 出价 (components/Market.tsx) */
+.offers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.offers li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.buy-dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
