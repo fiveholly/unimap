@@ -152,13 +152,14 @@ type State = {
   opened?: Record<number, string>; // treasures opened, by block height
   contests?: DemoContest[]; // 街区活动
   market?: DemoListing[]; // 站内交易
+  packed?: number[]; // parks whose districts sit in one output (园区打包卖)
   dummies?: boolean; // the visitor made the two small outputs a purchase needs
   agents?: DemoAgent[]; // 街区 agent, on the visitor's districts
   offers?: MarketOffer[]; // 出价
   agentPay?: { id: number; at: number; settled: boolean } | null;
 };
 type DemoAgent = Omit<Agent, "posted_today" | "running" | "problem"> & { n: number; message: string; revoked?: boolean; drafts: AgentDraft[] };
-type DemoListing = { id: number; n: number; seller: string; price: number; status: MarketListing["status"]; at: string; txid?: string };
+type DemoListing = { id: number; n: number; seller: string; price: number; status: MarketListing["status"]; at: string; txid?: string; park?: number; members?: number[] };
 type DemoTip = { id: number; tipper: string; recipient: string; n: number; post_id: number | null; sats: number; comment: string; status: Tip["status"]; at: number; event?: [number, number] };
 type DemoContest = { id: number; bitmap_number: number; season: number; host: string; metric: ContestMetric; prizes: number[]; note: string; created_at: string; cancelled?: boolean;
   winners?: { address: string; score: number; prize_sats: number }[]; crowd?: [string, number][] };
@@ -191,6 +192,11 @@ function seedExtras(s: State) {
   s.boot ??= Date.now();
   s.badges ??= [{ kind: "treasure", height: DEMO_TIP - 400, bitmap_number: 840001, tx_index: OWN_PARCEL.tx_index, rarity: "rare", created_at: iso(3) }];
   s.market ??= [{ id: 1, n: 840005, seller: ownerOf(840005)!, price: 9_800_000, status: "active", at: iso(0.8) }];
+  // 矿工新村's owner put the whole park up in one sale.
+  if (!s.packed) {
+    s.packed = [SEED_PARK.id];
+    s.market.push({ id: 2, n: SEED_PARK.members[0], seller: SEED_PARK.owner, price: 42_000_000, status: "active", at: iso(1.5), park: SEED_PARK.id, members: SEED_PARK.members });
+  }
   if (!s.offers) {
     const at = (d: number) => ({ created_at: iso(d), expires_at: iso(d - 7) });
     s.offers = [
@@ -327,9 +333,10 @@ function contestView(c: DemoContest): Contest {
 
 const DEMO_PSBT = "cHNidP8BAAoCAAAAAAAAAAAAAAA="; // an empty PSBT; the demo wallet hands it back as is
 let lastPrice: number | null = null; // the price the visitor last asked to list at
+let lastMove: { park: number; pack: boolean } | null = null; // the pack or unpack handed to the visitor's wallet
 function listingView(l: DemoListing): MarketListing {
   return { id: l.id, inscription_id: inscriptionId(l.n), bitmap_number: l.n, tx_index: null, seller: l.seller, price_sats: l.price, postage_sats: 546,
-    status: l.status, created_at: l.at, txid: l.txid ?? null, buyer: null };
+    status: l.status, created_at: l.at, txid: l.txid ?? null, buyer: null, park_id: l.park ?? null, members: l.members ?? null };
 }
 
 function seedNotifications(s: State): Notification[] {
@@ -500,7 +507,7 @@ function saleAt(n: number): number | null {
   return h < 0.03 ? 300_000 + Math.round((h / 0.03) * 40) * 250_000 : null;
 }
 // 站内交易 in the demo: 840005's owner listed it in unimap for less than on Magic Eden.
-const ownListing = (n: number) => (load().market ?? []).find((x) => x.n === n && x.status === "active");
+const ownListing = (n: number) => (load().market ?? []).find((x) => x.n === n && x.status === "active" && x.park == null);
 function saleOf(n: number): Sale | null {
   const own = ownListing(n);
   const price = saleAt(n);
@@ -1344,7 +1351,40 @@ function route(path: string, opts: Opts): unknown {
   if (p === "/v1/market") return { open: true, network: "testnet4", fee_bps: 0, dummy_sats: 600 };
   if (p === "/v1/market/listings" && method === "GET") {
     const n = url.searchParams.get("bitmap_number");
-    return { listings: s.market!.filter((x) => x.status === "active" && (n == null || x.n === +n)).map(listingView) };
+    return { listings: s.market!.filter((x) => x.status === "active" && (n == null || x.n === +n || x.members?.includes(+n))).map(listingView) };
+  }
+  if ((m = p.match(/^\/v1\/market\/parks\/(\d+)(\/pack|\/unpack|\/listing\/prepare|\/listing)?$/))) {
+    const id = +m[1], park = liveParks().find((x) => x.id === id) ?? fail(404, "no such park");
+    const packed = (s.packed ?? []).includes(id);
+    const listing = s.market!.find((x) => x.park === id && x.status === "active");
+    if (!m[2]) return { park_id: id, name: park.name, owner: park.owner, members: park.members, packed, listing: listing ? listingView(listing) : null };
+    if (needMe() !== park.owner) fail(403, "only the address holding the park can do this");
+    if (m[2] === "/pack" || m[2] === "/unpack") {
+      if ((m[2] === "/pack") === packed) fail(409, packed ? "the park's districts are already in one output" : "the park's districts aren't in one output");
+      const k = park.members.length;
+      lastMove = { park: id, pack: m[2] === "/pack" };
+      return { move_id: id, psbt: DEMO_PSBT, psbt_hex: "", sign_inputs: Array.from({ length: k + 1 }, (_, i) => i), own_inputs: Array.from({ length: k }, (_, i) => i),
+        network_fee_sats: 3 * (11 + 68 * (k + 1) + 31 * (lastMove.pack ? 2 : k + 1)), fee_rate: 3 };
+    }
+    if (!packed) fail(409, "put the park's districts into one output first");
+    if (m[2] === "/listing/prepare") {
+      lastPrice = Number(body.price_sats);
+      return { psbt: DEMO_PSBT, psbt_hex: "", sign_inputs: [0], sighash: 0x83, postage_sats: 546 * park.members.length, members: park.members };
+    }
+    s.market!.forEach((x) => (x.park === id || park.members.includes(x.n)) && x.status === "active" && (x.status = "replaced"));
+    const l: DemoListing = { id: Math.max(0, ...s.market!.map((x) => x.id)) + 1, n: park.members[0], seller: park.owner, price: lastPrice ?? 5_000_000,
+      status: "active", at: new Date().toISOString(), park: id, members: park.members };
+    s.market!.push(l);
+    save();
+    return listingView(l);
+  }
+  if ((m = p.match(/^\/v1\/market\/moves\/(\d+)\/submit$/))) {
+    needMe();
+    const move = lastMove ?? fail(404, "no such transaction");
+    lastMove = null;
+    s.packed = move.pack ? [...(s.packed ?? []), move.park] : (s.packed ?? []).filter((x) => x !== move.park);
+    save();
+    return { txid: sha256(`move:${move.park}:${Date.now()}`) };
   }
   if (p === "/v1/market/listings/prepare") {
     owns(Number(body.bitmap_number));

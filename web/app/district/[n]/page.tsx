@@ -13,7 +13,7 @@ import { PetsCard } from "@/components/Pets";
 import { Polls } from "@/components/Polls";
 import { Contests } from "@/components/Contests";
 import { AgentPanel } from "@/components/Agent";
-import { BuyButton, OfferButton, OffersCard, SellCard } from "@/components/Market";
+import { BuyButton, OfferButton, OffersCard, ParkSaleCard, SellCard } from "@/components/Market";
 import { PostCard, RoleBadge, type PostActions } from "@/components/PostCard";
 import { ProsperityCard } from "@/components/ProsperityCard";
 import { RecruitCard } from "@/components/Recruit";
@@ -269,6 +269,7 @@ function DistrictView() {
               />
             </div>
           )}
+          {district.park && <ParkSaleCard parkId={district.park.id} owner={district.park.owner} />}
           {district.prosperity && <ProsperityCard p={district.prosperity} zone={zone} n={n} park={district.park ?? null} look={district.profile.style ?? null} />}
           <div className="row">
             {token ? (

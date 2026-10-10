@@ -95,7 +95,13 @@ export type MarketListing = {
   created_at: string;
   txid: string | null;
   buyer: string | null;
+  park_id: number | null; // 园区打包卖: the whole park, with its districts in members
+  members: number[] | null;
 };
+/** A park sold whole: whether its districts are in one output yet, and its live listing. */
+export type ParkSale = { park_id: number; name: string; owner: string; members: number[]; packed: boolean; listing: MarketListing | null };
+/** Packing a park's districts into one output, or splitting it again: own_inputs are signed by the inscription address. */
+export type ParkMove = { move_id: number; psbt: string; psbt_hex: string; sign_inputs: number[]; own_inputs: number[]; network_fee_sats: number; fee_rate: number };
 export type Quote = {
   quote_id: number;
   psbt: string;

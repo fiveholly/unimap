@@ -1256,6 +1256,127 @@ class SocialApi(unittest.TestCase):
                     "delete from social.market_offers; delete from social.notifications where kind like 'offer%%';"
                 )
 
+    def test_park_sale(self):
+        from api import btc, market
+        from tests.test_market import FakeChain, SegwitKey, TaprootKey, txid
+
+        alice, bob, bob_tr = SegwitKey(1), SegwitKey(2), TaprootKey(24)
+        spk = lambda a: btc.address_script(a, "regtest")
+        ids = {100: "d100i0", 101: "d101i0", 108: "d108i0"}
+        fake = FakeChain()
+        outs = {100: (f"{txid(0xa100)}:0", 546), 101: (f"{txid(0xa101)}:1", 546), 108: (f"{txid(0xa108)}:0", 1_000)}
+        for n, (op, value) in outs.items():
+            fake.add(op, value, spk(ALICE.address), [ids[n]])
+        fake.offsets["d108i0"] = 400  # not every inscription sits on its output's first sat
+        fake.add(f"{txid(0xa200)}:0", 50_000, spk(ALICE.address))
+        for k, value in enumerate([600, 600, 300_000]):
+            fake.add(f"{txid(0xb200 + k)}:0", value, spk(BOB.address))
+        old_chain, market.chain = market.chain, fake
+        post = lambda w, path, body=None: self.client.post(path, json=body or {}, headers=self.h(w))
+
+        def index(outpoint, address=ALICE.address):
+            """What the indexer would write once a move or sale is mined."""
+            with self.conn.cursor() as cur:
+                cur.execute("update inscription_owners set outpoint = %s, address = %s where inscription_id = any(%s);", (outpoint, address, list(ids.values())))
+
+        def move(path):
+            prep = post(ALICE, path, {"payment_address": ALICE.address})
+            self.assertEqual(prep.status_code, 200, prep.text)
+            prep = prep.json()
+            p = btc.Psbt.parse(prep["psbt"])
+            spent = [p.witness_utxo(i) for i in range(len(p.tx.inputs))]
+            for i in prep["sign_inputs"]:
+                alice.sign(p, i, spent)
+            r = post(ALICE, f"/v1/market/moves/{prep['move_id']}/submit", {"psbt": p.b64()})
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertEqual(post(ALICE, f"/v1/market/moves/{prep['move_id']}/submit", {"psbt": p.b64()}).status_code, 409)
+            return prep, fake.sent[-1]
+
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "insert into bitmaps (inscription_id, inscription_number, bitmap_number, block_height) values "
+                "('d101i0', 10, 101, 300), ('d108i0', 11, 108, 301) on conflict do nothing;"
+                "insert into inscription_owners (inscription_id, created_height, outpoint, address, updated_height) values "
+                f"('d101i0', 300, 'e:0', '{ALICE.address}', 300), ('d108i0', 301, 'f:0', '{ALICE.address}', 301) on conflict do nothing;"
+            )
+            for n, (op, _) in outs.items():
+                cur.execute("update inscription_owners set outpoint = %s where inscription_id = %s;", (op, ids[n]))
+        park = post(ALICE, "/v1/parks", {"name": "打包园", "members": [100, 101, 108]}).json()
+        sale = f"/v1/market/parks/{park['id']}"
+        try:
+            os.environ["MARKET_NETWORK"] = "regtest"
+            self.assertFalse(self.client.get(sale).json()["packed"])
+            ask = {"price_sats": 200_000, "pay_to": ALICE.address}
+            self.assertEqual(post(ALICE, f"{sale}/listing/prepare", ask).status_code, 409)  # three outputs can't be listed as one
+            self.assertEqual(post(BOB, f"{sale}/pack", {"payment_address": BOB.address}).status_code, 403)
+
+            # Pack: the three outputs, in order, into one at Alice's address; her coin pays the miners.
+            prep, tx = move(f"{sale}/pack")
+            self.assertEqual(prep["own_inputs"], [0, 1, 2])
+            self.assertEqual([t.outpoint for t in tx.inputs[:3]], [outs[n][0] for n in (100, 101, 108)])
+            self.assertEqual((tx.outputs[0].value, tx.outputs[0].script_pubkey), (2_092, spk(ALICE.address)))
+            self.assertEqual(sorted(fake.utxos[f"{tx.txid}:0"][2]), sorted(ids.values()))
+            self.assertEqual(fake.satpoint("d108i0"), f"{tx.txid}:0:1492")
+            index(f"{tx.txid}:0")
+            self.assertTrue(self.client.get(sale).json()["packed"])
+            self.assertEqual(post(ALICE, f"{sale}/pack", {"payment_address": ALICE.address}).status_code, 409)
+            self.assertEqual(post(ALICE, "/v1/market/listings/prepare", {"bitmap_number": 100, **ask}).status_code, 409)  # not on its own any more
+
+            # Unpack: one output per district again, each starting at its district's sat.
+            _, tx = move(f"{sale}/unpack")
+            self.assertEqual([o.value for o in tx.outputs[:3]], [546, 946, 600])
+            self.assertEqual([fake.utxos[f"{tx.txid}:{k}"][2] for k in range(3)], [["d100i0"], ["d101i0"], ["d108i0"]])
+            with self.conn.cursor() as cur:
+                for k, n in enumerate((100, 101, 108)):
+                    cur.execute("update inscription_owners set outpoint = %s where inscription_id = %s;", (f"{tx.txid}:{k}", ids[n]))
+            _, tx = move(f"{sale}/pack")
+            packed = f"{tx.txid}:0"
+            index(packed)
+
+            # List the park: one signature over the one output, like a district.
+            prep = post(ALICE, f"{sale}/listing/prepare", ask).json()
+            self.assertEqual((prep["members"], prep["postage_sats"]), ([100, 101, 108], 2_092))
+            p = btc.Psbt.parse(prep["psbt"])
+            alice.sign(p, 0, [p.witness_utxo(0)], btc.SINGLE_ACP)
+            self.assertEqual(post(BOB, f"{sale}/listing", {"psbt": p.b64()}).status_code, 403)
+            r = post(ALICE, f"{sale}/listing", {"psbt": p.b64()})
+            self.assertEqual(r.status_code, 201, r.text)
+            listing = r.json()
+            self.assertEqual((listing["park_id"], listing["members"], listing["price_sats"]), (park["id"], [100, 101, 108], 200_000))
+            self.assertEqual(self.client.get(sale).json()["listing"]["id"], listing["id"])
+            self.assertEqual([l["id"] for l in self.client.get("/v1/market/listings?bitmap_number=108").json()["listings"]], [listing["id"]])
+            self.assertIsNone(self.client.get("/v1/land/100").json()["district"]["sale"])  # the district itself isn't for sale alone
+
+            # Bob buys it like any listing, and the park is his.
+            q = post(BOB, f"/v1/market/listings/{listing['id']}/quote", {"payment_address": BOB.address, "receive_address": bob_tr.address()}).json()
+            bp = btc.Psbt.parse(q["psbt"])
+            spent = [bp.witness_utxo(i) for i in range(len(bp.tx.inputs))]
+            for i in q["sign_inputs"]:
+                bob.sign(bp, i, spent)
+            r = post(BOB, f"/v1/market/quotes/{q['quote_id']}/submit", {"psbt": bp.b64()})
+            self.assertEqual(r.status_code, 200, r.text)
+            bought = fake.sent[-1]
+            self.assertEqual(fake.utxos[f"{bought.txid}:1"][1], spk(bob_tr.address()))
+            self.assertEqual(sorted(fake.utxos[f"{bought.txid}:1"][2]), sorted(ids.values()))
+            self.assertEqual(fake.utxos[f"{bought.txid}:2"][:2], [200_000, spk(ALICE.address)])
+            index(f"{bought.txid}:1", bob_tr.address())
+            now = self.client.get(f"/v1/parks/{park['id']}").json()
+            self.assertEqual((now["owner"], now["members"]), (bob_tr.address(), [100, 101, 108]))
+            self.assertIsNone(self.client.get(sale).json()["listing"])
+        finally:
+            market.chain = old_chain
+            os.environ.pop("MARKET_NETWORK", None)
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "update inscription_owners set outpoint = 'a:0', address = %s where inscription_id = 'd100i0'; "
+                    "delete from inscription_owners where inscription_id in ('d101i0', 'd108i0'); "
+                    "delete from bitmaps where inscription_id in ('d101i0', 'd108i0'); "
+                    "delete from social.park_members where park_id = %s; delete from social.parks where id = %s; "
+                    "delete from social.market_listings; delete from social.market_quotes; delete from social.market_moves; "
+                    "delete from social.notifications where kind = 'sold';",
+                    (ALICE.address, park["id"], park["id"]),
+                )
+
     def test_agent(self):
         import hashlib
 

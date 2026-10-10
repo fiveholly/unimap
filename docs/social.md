@@ -108,6 +108,10 @@ media: none
 | GET | `/v1/market/offers?bitmap_number=`、`?mine=true` | 一个街区和它的地块上还有效的出价，价高的在前；或者自己出的和收到的 |
 | DELETE | `/v1/market/offers/{id}` | 买家撤回，或持有人拒绝 |
 | POST | `/v1/market/offers/{id}/accept/prepare`、`/accept` | 持有人接受：拿到买家签好的交易，钱包用 SIGHASH_ALL 签输入 2，服务器测试通过后广播（通知买家 `offer_accepted`） |
+| GET | `/v1/market/parks/{id}` | 园区打包卖：园区的街区是不是已经在同一个输出里（`packed`），以及整个园区的在售挂单 |
+| POST | `/v1/market/parks/{id}/pack`、`/unpack` | 园区主人把街区放进同一个输出，或拆回每个街区一个输出 `{"payment_address", "payment_public_key", "public_key", "fee_rate"}`；返回要签的 PSBT，`own_inputs` 用铭文地址签 |
+| POST | `/v1/market/moves/{id}/submit` | 提交签好的打包或拆开交易；必须和给出的完全一样，测试通过后广播 |
+| POST | `/v1/market/parks/{id}/listing/prepare`、`/listing` | 整个园区挂单：和单个街区一样签 SIGHASH_SINGLE\|ANYONECANPAY；买家用普通的 quote 和 submit 买 |
 | GET | `/v1/agent` | 街区 agent 是否开放、每 30 天多少聪（0 是免费）、授权最长天数和每天最多条数 |
 | GET | `/v1/districts/{n}/agent` | 主人看自己的 agent：设置、待确认的草稿、最近处理过的草稿、等主人处理的事（入住申请、快截止的投票、没发的活动奖金） |
 | POST | `/v1/districts/{n}/agent/prepare` | 主人开通第一步 `{"posts_per_day", "days"}`，服务器给 agent 生成一把新密钥，返回要钱包签名的授权 |
@@ -274,6 +278,7 @@ Magic Eden 的接口需要 API key 才能稳定使用，在 `/etc/unimap/unimap.
 - 钱包：UniSat 和 OKX 用同一个地址付款和收铭文；Xverse 用付款地址（P2SH-P2WPKH）付款、ordinals 地址收铭文，签名按 PSBT 里写的 sighash。支持 P2TR、P2WPKH 和 P2SH-P2WPKH 输入。
 - 开关：设置 `MARKET_NETWORK`（testnet4、signet 或 regtest）才开放，这时 bitcoind 和 ord 都要在那个网络上，ord 要加 `--index-addresses`。主网要等外部安全审计通过、设置了 `MARKET_MAINNET_AUDITED=1` 才开放。手续费由 `MARKET_FEE_BPS`（基点，100 是 1%）和 `MARKET_FEE_ADDRESS` 决定，默认不收。
 - 出价：给没挂单的街区或地块出价。交易的样子和购买一样，只是反过来签：买家先用 SIGHASH_ALL 签好除了输入 2 以外的所有输入，价钱付到持有人现在的地址；持有人点接受时，钱包用 SIGHASH_ALL 签输入 2，服务器测试通过后广播。买家的签名只在这些输入都没被花掉时有效，所以铭文转走、或者买家花掉了用到的币，出价就自动失效。在 unimap 撤回后，服务器不再把它交给持有人；想万无一失就把用到的币转给自己。成交后，同一个铭文的其他出价和站内挂单一起作废。`test_offers` 用真实密钥走完出价、接受、拒绝和币被花掉后失效。
+- 园区打包卖：挂单的签名只管一个输入，所以先把园区的街区放进同一个输出（打包）。打包交易只把主人自己的铭文输出按顺序转到主人自己的地址，这些输入排在最前面，聪按顺序原样落进一个输出；付款地址的币付矿工费并收找零。打包确认后，这个输出像一个街区一样挂单和购买（表 `social.market_listings` 的 `park_id`、`members`），买家一笔交易拿到所有街区，园区的主人改成铭文去的地址。持有人随时可以拆开：每个街区一个输出，从它的铭文所在的那个聪开始切。打包后的街区不能单独挂单或接受出价，地图价签和街区在售标记也不算整园挂单。`test_park_sale` 走完打包、拆开、再打包、挂单、购买，并核对每个铭文落在哪个输出、哪个位置。
 - 测试：taproot 的签名哈希用 BIP-341 官方的测试向量核对（`tests/data/bip341_wallet_vectors.json`）。`test_market` 用真实密钥签名，走完挂单、做小额、报价、篡改报价、签名购买、地块用 taproot 钱包购买的全流程，并确认铭文落在买家的输出里、别的输出里没有铭文。
 
 ## 街区 agent

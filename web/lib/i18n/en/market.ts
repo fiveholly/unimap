@@ -53,4 +53,24 @@ export const market: Record<string, string> = {
   "准备小额 UTXO": "Make the small outputs",
   "签名购买": "Sign and buy",
   "{who} 在 unimap 买下了你的 {place}，钱已经随交易付到你的地址": "{who} bought your {place} on unimap. The money was paid to your address in the same transaction",
+  // 园区打包卖
+  "整体在售": "Whole park for sale",
+  "{n} 个街区一起卖，一笔交易全部到手，园区跟着换主人": "{n} districts sold together, all in one transaction, and the park changes hands with them",
+  "整体买下": "Buy the whole park",
+  "交易已发出。打包确认后，整个园区就是你的了。": "The transaction is out. Once it confirms, the whole park is yours.",
+  "在 unimap 下架？你签过的挂单在铭文转走之前仍然有效，想彻底作废就把园区拆开，或者把铭文转到你自己的另一个地址。":
+    "Take it down on unimap? The listing you signed stays good until the inscriptions move. To void it for sure, split the park or send the inscriptions to another address of yours.",
+  "整个园区一起卖": "Sell the whole park",
+  "打包交易已发出。确认后（大约 10 分钟）就能整体挂单。": "The packing transaction is out. Once it confirms (about 10 minutes), you can list the park.",
+  "拆开的交易已发出。确认后每个街区又各在一个输出里，可以单独卖了。": "The split is out. Once it confirms, each district is in its own output again and can be sold on its own.",
+  "你把 {n} 个街区一起挂了 {price}。买家一笔交易全部买走，园区跟着换主人。": "You listed {n} districts together for {price}. A buyer takes them all in one transaction, and the park changes hands.",
+  "一笔交易卖掉整个园区，园区跟着换主人。先把 {n} 个街区放进同一个输出：这是一笔转给你自己的交易，铭文不离开你的地址，只花一点矿工费。":
+    "Sell the whole park in one transaction, and it changes hands with its districts. First put the {n} districts into one output: a transaction to yourself, so the inscriptions never leave your address. It costs only a small network fee.",
+  "打包": "Pack",
+  "{n} 个街区已经在同一个输出里，可以整体挂单了。想单独卖其中一个，就先拆开。": "The {n} districts are in one output, ready to list together. To sell one on its own, split them first.",
+  "拆开": "Split",
+  "整体挂单": "List the park",
+  "整个园区的价格（聪）": "Price for the whole park (sats)",
+  "和单个街区挂单一样，你的钱包签一个半成品交易：装着 {n} 个街区的这个输出，换一笔付到你地址的钱。只有付够钱的交易能用这个签名。":
+    "Just like listing one district, your wallet signs a half-made transaction: this output holding {n} districts, for a payment to your address. Only a transaction that pays in full can use the signature.",
 };
