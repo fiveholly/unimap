@@ -8,6 +8,7 @@ import { Avatar } from "./Avatar";
 import { useSession } from "./Session";
 import { api, type Notification } from "@/lib/api";
 import { short, timeAgo } from "@/lib/format";
+import { t, tn } from "@/lib/i18n";
 
 // The notifications page tells the bell when it has marked things read.
 const READ_EVENT = "unimap:notifications-read";
@@ -35,7 +36,7 @@ export function Bell() {
     };
   }, [token, path]);
   return (
-    <Link href="/notifications" className={`bell${path === "/notifications" ? " active" : ""}`} aria-label={unread ? `通知，${unread} 条未读` : "通知"}>
+    <Link href="/notifications" className={`bell${path === "/notifications" ? " active" : ""}`} aria-label={unread ? t("通知，{n} 条未读", { n: unread }) : t("通知")}>
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
         <path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
         <path d="M10.3 21a1.9 1.9 0 0 0 3.4 0" />
@@ -70,23 +71,28 @@ function sentence(item: Item): [React.ReactNode, string] {
   const who = (
     <b className="mono">
       {short(item.actors[0])}
-      {item.actors.length > 1 && <span className="muted"> 等 {item.actors.length} 人</span>}
+      {item.actors.length > 1 && <span className="muted">{t(" 等 {n} 人", { n: item.actors.length })}</span>}
     </b>
   );
   const place = <span className="mono">{n.bitmap_number}.bitmap</span>;
   const post = n.post_id != null ? `/post/${n.post_id}` : `/district/${n.bitmap_number}`;
   switch (n.kind) {
     case "reply":
-      return [<>{who} 回复了你在 {place} 的帖子</>, post];
+      return [tn("{who} 回复了你在 {place} 的帖子", { who, place }), post];
     case "like":
-      return [<>{who} 赞了你在 {place} 的帖子</>, post];
+      return [tn("{who} 赞了你在 {place} 的帖子", { who, place }), post];
     case "post":
-      return [<>{who} 在你的街区 {place} 发了帖子</>, post];
+      return [tn("{who} 在你的街区 {place} 发了帖子", { who, place }), post];
     case "follow":
-      return [<>{who} 关注了你的街区 {place}</>, `/district/${n.bitmap_number}`];
+      return [tn("{who} 关注了你的街区 {place}", { who, place }), `/district/${n.bitmap_number}`];
     case "apply":
-      return [<>{who} 申请入住你的街区 {place}，去「管理街区 → 招募」看看</>, `/district/${n.bitmap_number}`];
+      return [tn("{who} 申请入住你的街区 {place}，去「管理街区 → 招募」看看", { who, place }), `/district/${n.bitmap_number}`];
   }
+}
+
+/** The page heading, here so it re-renders in the chosen language (the page itself is a server component). */
+export function NotificationsTitle() {
+  return <h1>{t("通知")}</h1>;
 }
 
 export function NotificationList() {
@@ -110,10 +116,10 @@ export function NotificationList() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
   if (!ready) return null;
-  if (!token) return <p className="muted">连接钱包后可以看到你的通知。</p>;
+  if (!token) return <p className="muted">{t("连接钱包后可以看到你的通知。")}</p>;
   if (error) return <p className="error">{error}</p>;
-  if (!list) return <p className="muted">加载中…</p>;
-  if (!list.length) return <p className="muted">还没有通知。有人回复、点赞你的帖子，关注你的街区或者申请入住时，会在这里告诉你。</p>;
+  if (!list) return <p className="muted">{t("加载中…")}</p>;
+  if (!list.length) return <p className="muted">{t("还没有通知。有人回复、点赞你的帖子，关注你的街区或者申请入住时，会在这里告诉你。")}</p>;
   return (
     <>
       <ul className="notifications">
@@ -135,7 +141,7 @@ export function NotificationList() {
       </ul>
       {more && (
         <button type="button" className="ghost" onClick={() => load(list[list.length - 1].id)}>
-          更早的通知
+          {t("更早的通知")}
         </button>
       )}
     </>

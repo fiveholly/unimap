@@ -1,6 +1,8 @@
 // Pets on the map: what an owner chose to show of their wallet's holdings (api/holdings.py).
 // Tiers start at the same amounts as there; keep the keys and tiers in step.
 
+import { lang } from "./i18n/index.ts";
+
 export type PetKey = "dog" | "cat" | "puppet" | "monkey" | "frog" | "runestone";
 export type Pet = { asset: PetKey; tier: number; amount: string };
 
@@ -28,8 +30,11 @@ export const petsKey = (tags: string[] | null | undefined) => (tags ?? []).join(
 
 export function amountText(key: PetKey, amount: string): string {
   const n = Number(amount);
+  const pet = PETS[key];
+  // English has no 万/亿 and no counter words: compact numbers, and the collection's own name as the unit.
+  if (lang() === "en") return `${n.toLocaleString("en-US", { notation: "compact", maximumFractionDigits: 2 })} ${pet.kind === "Rune" ? pet.unit : pet.asset}`;
   const s = n >= 1e8 ? `${(n / 1e8).toLocaleString("zh-CN", { maximumFractionDigits: 2 })} 亿` : n >= 1e4 ? `${(n / 1e4).toLocaleString("zh-CN", { maximumFractionDigits: 1 })} 万` : n.toLocaleString("zh-CN");
-  return `${s} ${PETS[key].unit}`;
+  return `${s} ${pet.unit}`;
 }
 
 /** What the next tier needs, or null at the top. */

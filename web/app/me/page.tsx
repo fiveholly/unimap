@@ -8,6 +8,7 @@ import { useSession } from "@/components/Session";
 import { XIcon } from "@/components/X";
 import { api, ApiError, type LinkedWallet, type Me, type XAccount } from "@/lib/api";
 import { LINK_WALLETS, type Wallet } from "@/lib/wallets";
+import { t } from "@/lib/i18n";
 
 export default function MePage() {
   const { token, ready, address } = useSession();
@@ -20,35 +21,35 @@ export default function MePage() {
       .catch((e) => setError(e.message));
   }, [token]);
   if (!ready) return null;
-  if (!token) return <p className="page muted">连接钱包后可以看到你的街区和地块。</p>;
+  if (!token) return <p className="page muted">{t("连接钱包后可以看到你的街区和地块。")}</p>;
   if (error) return <p className="page error">{error}</p>;
-  if (!me) return <p className="page muted">加载中…</p>;
+  if (!me) return <p className="page muted">{t("加载中…")}</p>;
   return (
     <div className="page narrow me">
       <section className="me-head">
         <Avatar seed={address || me.address} size={56} />
         <div>
-          <h1>我的土地</h1>
+          <h1>{t("我的土地")}</h1>
           <p className="mono muted small break">{me.address}</p>
         </div>
       </section>
       <XSection token={token} />
       {me.wallets && <WalletsSection token={token} initial={me.wallets} />}
-      <Group title="街区" count={me.districts.length} empty="这个地址没有持有街区。">
+      <Group title={t("街区")} count={me.districts.length} empty={t("这个地址没有持有街区。")}>
         {me.districts.map((n) => (
           <Link key={n} className="chip mono" href={`/district/${n}`}>
             {n}.bitmap
           </Link>
         ))}
       </Group>
-      <Group title="地块" count={me.parcels.length} empty="这个地址没有持有地块。">
+      <Group title={t("地块")} count={me.parcels.length} empty={t("这个地址没有持有地块。")}>
         {me.parcels.map((p) => (
           <Link key={`${p.bitmap_number}.${p.tx_index}`} className="chip mono" href={`/district/${p.bitmap_number}?parcel=${p.tx_index}`}>
             {p.bitmap_number}.bitmap #{p.tx_index}
           </Link>
         ))}
       </Group>
-      <Group title="关注" count={me.follows.length} empty="还没有关注街区。">
+      <Group title={t("关注#following")} count={me.follows.length} empty={t("还没有关注街区。")}>
         {me.follows.map((n) => (
           <Link key={n} className="chip mono" href={`/district/${n}`}>
             {n}.bitmap
@@ -93,7 +94,7 @@ function XSection({ token }: { token: string }) {
     }
   };
   const unlink = async () => {
-    if (!confirm("解除绑定后，街区和帖子上不再显示你的 X 账号。")) return;
+    if (!confirm(t("解除绑定后，街区和帖子上不再显示你的 X 账号。"))) return;
     setBusy(true);
     try {
       await api("/v1/x/link", { method: "DELETE", token });
@@ -107,7 +108,7 @@ function XSection({ token }: { token: string }) {
   const x = state.x;
   return (
     <section className="me-group x-link">
-      <h2 className="section-title">X 账号</h2>
+      <h2 className="section-title">{t("X 账号")}</h2>
       {x ? (
         <div className="x-card">
           {x.avatar_url ? (
@@ -125,18 +126,18 @@ function XSection({ token }: { token: string }) {
             </a>
           </div>
           <button type="button" className="ghost sm" onClick={unlink} disabled={busy}>
-            解除绑定
+            {t("解除绑定")}
           </button>
         </div>
       ) : state.available ? (
         <div className="x-card">
-          <p className="grow muted small">绑定后，你的街区和帖子旁会显示 X 账号，别人一眼知道是谁。我们只读取账号名和头像，不会替你发推。</p>
+          <p className="grow muted small">{t("绑定后，你的街区和帖子旁会显示 X 账号，别人一眼知道是谁。我们只读取账号名和头像，不会替你发推。")}</p>
           <button type="button" className="primary" onClick={link} disabled={busy}>
-            <XIcon /> 绑定 X
+            <XIcon /> {t("绑定 X")}
           </button>
         </div>
       ) : (
-        <p className="muted small">这个站点还没有开启 X 绑定。</p>
+        <p className="muted small">{t("这个站点还没有开启 X 绑定。")}</p>
       )}
       {error && <p className="error small">{error}</p>}
     </section>
@@ -157,7 +158,7 @@ function WalletsSection({ token, initial }: { token: string; initial: LinkedWall
     try {
       const address = await w.connect();
       if (wallets.some((x) => x.address === address)) {
-        throw new Error(`${w.name} 现在选中的是已经关联的地址，请在钱包里切换到另一个账户再试。`);
+        throw new Error(t("{wallet} 现在选中的是已经关联的地址，请在钱包里切换到另一个账户再试。", { wallet: w.name }));
       }
       const n = await api<{ nonce: string; message: string }>("/v1/me/wallets/nonce", { method: "POST", token, body: { address } });
       const signature = await w.sign(address, n.message);
@@ -172,7 +173,7 @@ function WalletsSection({ token, initial }: { token: string; initial: LinkedWall
     }
   };
   const unlink = async (address: string) => {
-    if (!confirm("解除关联后，这个钱包里的藏品不再算进你的街区。")) return;
+    if (!confirm(t("解除关联后，这个钱包里的藏品不再算进你的街区。"))) return;
     setBusy(address);
     setError(null);
     try {
@@ -186,21 +187,21 @@ function WalletsSection({ token, initial }: { token: string; initial: LinkedWall
   return (
     <section className="me-group linked-wallets">
       <h2 className="section-title">
-        关联钱包 <span className="mono">{wallets.length}</span>
+        {t("关联钱包")} <span className="mono">{wallets.length}</span>
       </h2>
-      <p className="muted small">土地和藏品放在不同地址？用另一个钱包签个名证明它也是你的，街区上的宠物会合计所有关联钱包的数量。发帖和管理街区仍按各自地址。</p>
+      <p className="muted small">{t("土地和藏品放在不同地址？用另一个钱包签个名证明它也是你的，街区上的宠物会合计所有关联钱包的数量。发帖和管理街区仍按各自地址。")}</p>
       <ul className="wallet-list">
         {wallets.map((w) => (
           <li key={w.address}>
             <span className="mono small" title={w.address}>
               {short(w.address)}
             </span>
-            {w.main && <span className="tag">主地址</span>}
-            {w.me && <span className="tag">当前登录</span>}
+            {w.main && <span className="tag">{t("主地址")}</span>}
+            {w.me && <span className="tag">{t("当前登录")}</span>}
             <span className="grow" />
             {!w.main && (
               <button type="button" className="ghost sm" onClick={() => unlink(w.address)} disabled={!!busy}>
-                解除
+                {t("解除")}
               </button>
             )}
           </li>
@@ -208,21 +209,21 @@ function WalletsSection({ token, initial }: { token: string; initial: LinkedWall
       </ul>
       {picking ? (
         <div className="link-picker">
-          <p className="muted small">选一个钱包，在钱包里切换到要关联的账户，再签名。签名不花钱，也不会发起交易。</p>
+          <p className="muted small">{t("选一个钱包，在钱包里切换到要关联的账户，再签名。签名不花钱，也不会发起交易。")}</p>
           <div className="chips">
             {LINK_WALLETS.map((w) => (
               <button key={w.id} type="button" className="chip" onClick={() => link(w)} disabled={!!busy || !w.available()}>
-                {busy === w.id ? "等待签名…" : w.id === "manual" ? "手动粘贴签名" : w.name}
+                {busy === w.id ? t("等待签名…") : w.id === "manual" ? t("手动粘贴签名") : w.name}
               </button>
             ))}
             <button type="button" className="link-btn small" onClick={() => setPicking(false)} disabled={!!busy}>
-              取消
+              {t("取消")}
             </button>
           </div>
         </div>
       ) : (
         <button type="button" className="ghost" onClick={() => setPicking(true)}>
-          关联另一个钱包
+          {t("关联另一个钱包")}
         </button>
       )}
       {error && <p className="error small">{error}</p>}

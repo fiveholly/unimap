@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 
 import { drawShapes, petShapes, shapesBounds } from "@/lib/iso";
+import { t } from "@/lib/i18n";
 import { amountText, PETS, type Pet, type PetKey } from "@/lib/pets";
 
 /** The pets of one asset and tier, drawn as on the map. */
@@ -23,18 +24,21 @@ export function PetPicture({ asset, tier, size = 64 }: { asset: PetKey; tier: nu
   return <canvas ref={ref} className="pet-picture" style={{ width: size, height: size }} aria-hidden />;
 }
 
+// English looks are lower case for use mid-sentence; a heading wants a capital.
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 /** 藏品: what the owner shows of their wallet, on the district page. */
 export function PetsCard({ pets }: { pets: Pet[] }) {
   if (!pets.length) return null;
   return (
-    <section className="callout pets-card" aria-label="藏品">
-      <h3 className="section-title">藏品</h3>
+    <section className="callout pets-card" aria-label={t("藏品")}>
+      <h3 className="section-title">{t("藏品")}</h3>
       <ul>
         {pets.map((p) => (
           <li key={p.asset}>
             <PetPicture asset={p.asset} tier={p.tier} />
             <span className="grow">
-              <b>{PETS[p.asset].looks[p.tier - 1]}</b>
+              <b>{capitalize(t(PETS[p.asset].looks[p.tier - 1]))}</b>
               <span className="muted small">
                 {PETS[p.asset].asset}
               </span>
@@ -43,7 +47,7 @@ export function PetsCard({ pets }: { pets: Pet[] }) {
           </li>
         ))}
       </ul>
-      <p className="dim small">主人选择展示的钱包资产，数量来自链上，几个小时更新一次。</p>
+      <p className="dim small">{t("主人选择展示的钱包资产，数量来自链上，几个小时更新一次。")}</p>
     </section>
   );
 }

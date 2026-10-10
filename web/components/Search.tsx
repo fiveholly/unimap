@@ -6,13 +6,14 @@ import { useEffect, useRef, useState } from "react";
 import { XIcon } from "./X";
 import { api, type SearchResults } from "@/lib/api";
 import { short } from "@/lib/format";
+import { t } from "@/lib/i18n";
 
 type Item = { key: string; href: string; external?: boolean; title: React.ReactNode; detail: string };
 
 function items(r: SearchResults): Item[] {
   return [
-    ...r.districts.map((n) => ({ key: `d${n}`, href: `/district/${n}`, title: <span className="mono">{n}.bitmap</span>, detail: "街区" })),
-    ...r.parks.map((p) => ({ key: `p${p.id}`, href: `/?b=${p.first}`, title: `园区「${p.name}」`, detail: `${p.members} 个街区 · 在地图上看` })),
+    ...r.districts.map((n) => ({ key: `d${n}`, href: `/district/${n}`, title: <span className="mono">{n}.bitmap</span>, detail: t("街区") })),
+    ...r.parks.map((p) => ({ key: `p${p.id}`, href: `/?b=${p.first}`, title: t("园区「{name}」", { name: p.name }), detail: t("{n} 个街区 · 在地图上看", { n: p.members }) })),
     ...r.people.map((p) => ({
       key: `a${p.address}`,
       href: p.count ? `/district/${p.districts[0]}` : p.x!.url,
@@ -28,7 +29,9 @@ function items(r: SearchResults): Item[] {
           <span className="mono">{short(p.address)}</span>
         </>
       ),
-      detail: p.count ? `${p.count} 个街区：${p.districts.slice(0, 3).join("、")}${p.count > 3 ? "…" : ""}` : "还没有街区",
+      detail: p.count
+        ? t("{n} 个街区：{list}", { n: p.count, list: p.districts.slice(0, 3).join(t("、")) + (p.count > 3 ? "…" : "") })
+        : t("还没有街区"),
     })),
   ];
 }
@@ -118,8 +121,8 @@ export function Search() {
             setActive((a) => (a + (e.key === "ArrowDown" ? 1 : list.length - 1) + (a < 0 && e.key === "ArrowUp" ? 1 : 0)) % list.length);
           }
         }}
-        placeholder="搜索街区、园区、地址或 @X"
-        aria-label="搜索街区号、园区名、地址或 X 账号"
+        placeholder={t("搜索街区、园区、地址或 @X")}
+        aria-label={t("搜索街区号、园区名、地址或 X 账号")}
         role="combobox"
         aria-expanded={shown}
         aria-controls="search-results"
@@ -131,9 +134,9 @@ export function Search() {
       {shown && (
         <div className="search-results" id="search-results" role="listbox">
           {list == null ? (
-            <p className="muted small">搜索中…</p>
+            <p className="muted small">{t("搜索中…")}</p>
           ) : list.length === 0 ? (
-            <p className="muted small">没有找到。可以搜区块号、园区名、钱包地址开头（至少 6 位）或 X 账号。</p>
+            <p className="muted small">{t("没有找到。可以搜区块号、园区名、钱包地址开头（至少 6 位）或 X 账号。")}</p>
           ) : (
             list.map((item, i) => (
               <button
