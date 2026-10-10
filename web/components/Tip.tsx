@@ -33,8 +33,11 @@ function InvoiceQr({ invoice }: { invoice: string }) {
   return <div className="tip-qr" role="img" aria-label={t("付款二维码")} dangerouslySetInnerHTML={{ __html: svg }} />;
 }
 
+/** Paying unimap rather than tipping someone (the district agent): where to ask for the invoice and what to say. */
+export type Bill = { title: string; note: string; done: string; create: string; status: (id: number) => string };
+
 /** 打赏: pick an amount, get an invoice from the recipient's wallet, pay it, and wait for the wallet to confirm. */
-export function TipDialog({ target, to, token, close, fixed }: { target: Target; to: string; token: string; close: (paidSats: number) => void; fixed?: number }) {
+export function TipDialog({ target, to, token, close, fixed, bill }: { target: Target; to: string; token: string; close: (paidSats: number) => void; fixed?: number; bill?: Bill }) {
   const [amount, setAmount] = useState<number>(fixed ?? 500);
   const [custom, setCustom] = useState("");
   const [comment, setComment] = useState("");
@@ -56,19 +59,19 @@ export function TipDialog({ target, to, token, close, fixed }: { target: Target;
   useEffect(() => {
     if (!tip || tip.status !== "pending" || !tip.verifiable) return;
     const timer = setInterval(() => {
-      api<Tip>(`/v1/tips/${tip.id}`, { token })
+      api<Tip>(bill ? bill.status(tip.id) : `/v1/tips/${tip.id}`, { token })
         .then((s) => s.status !== "pending" && setTip((old) => (old ? { ...old, status: s.status } : old)))
         .catch(() => {});
     }, POLL_MS);
     return () => clearInterval(timer);
-  }, [tip, token]);
+  }, [tip, token, bill]);
 
   const start = async () => {
     setError(null);
     if (!Number.isFinite(sats) || sats < 1 || sats > 1_000_000) return setError(t("金额是 1 到 1,000,000 聪"));
     setBusy(true);
     try {
-      const made = await api<Tip>("/v1/tips", { method: "POST", token, body: { ...target, amount_sats: sats, comment } });
+      const made = await api<Tip>(bill ? bill.create : "/v1/tips", { method: "POST", token, body: bill ? undefined : { ...target, amount_sats: sats, comment } });
       setTip(made);
       // A browser Lightning wallet (WebLN, e.g. Alby) pays in one click; otherwise the QR code does.
       const webln = (window as unknown as { webln?: WebLN }).webln;
@@ -91,11 +94,11 @@ export function TipDialog({ target, to, token, close, fixed }: { target: Target;
     <div className="dialog-backdrop" role="dialog" aria-modal="true" aria-labelledby="tip-title" onClick={(e) => e.target === e.currentTarget && !busy && done()}>
       <div className="dialog tip-dialog">
         <h2 id="tip-title">
-          <Bolt size={18} /> {"post_id" in target ? t("打赏这条帖子") : "event_id" in target ? t("发放活动奖金") : t("打赏街区主人")}
+          <Bolt size={18} /> {bill ? bill.title : "post_id" in target ? t("打赏这条帖子") : "event_id" in target ? t("发放活动奖金") : t("打赏街区主人")}
         </h2>
         {!tip ? (
           <>
-            <p className="muted small">{t("聪会通过闪电网络直接到 {to} 的钱包，unimap 不经手。", { to })}</p>
+            <p className="muted small">{bill ? bill.note : t("聪会通过闪电网络直接到 {to} 的钱包，unimap 不经手。", { to })}</p>
             {fixed != null ? (
               <p className="tip-fixed">
                 <span className="mono">{fixed.toLocaleString("en-US")}</span> {t("聪")}
@@ -117,21 +120,21 @@ export function TipDialog({ target, to, token, close, fixed }: { target: Target;
               />
             </div>
             )}
-            <input id="tip-comment" value={comment} onChange={(e) => setComment(e.target.value)} maxLength={200} placeholder={t("留一句话（可选）")} />
+            {!bill && <input id="tip-comment" value={comment} onChange={(e) => setComment(e.target.value)} maxLength={200} placeholder={t("留一句话（可选）")} />}
             {error && <p className="error small">{error}</p>}
             <div className="row end">
               <button type="button" className="ghost" onClick={done} disabled={busy}>
                 {t("取消")}
               </button>
               <button type="button" className="primary" onClick={start} disabled={busy}>
-                {busy ? t("正在生成发票…") : t(fixed != null ? "发 {n} 聪" : "打赏 {n} 聪", { n: Number.isFinite(sats) ? sats.toLocaleString("en-US") : "—" })}
+                {busy ? t("正在生成发票…") : t(bill ? "付 {n} 聪" : fixed != null ? "发 {n} 聪" : "打赏 {n} 聪", { n: Number.isFinite(sats) ? sats.toLocaleString("en-US") : "—" })}
               </button>
             </div>
           </>
         ) : paid ? (
           <div className="tip-done">
             <p>
-              <b>{t("打赏成功，{n} 聪已经到账。", { n: (tip.amount_sats ?? sats).toLocaleString("en-US") })}</b>
+              <b>{bill ? bill.done : t("打赏成功，{n} 聪已经到账。", { n: (tip.amount_sats ?? sats).toLocaleString("en-US") })}</b>
             </p>
             <div className="row end">
               <button type="button" className="primary" onClick={done}>

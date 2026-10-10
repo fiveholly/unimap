@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
+import { AgentGrantNote } from "./Agent";
 import { Avatar } from "./Avatar";
 import { Composer } from "./Composer";
 import { ReportDialog } from "./Report";
@@ -130,6 +131,11 @@ export function PostCard({
           )}
           {a.x && <XHandle username={a.x} />}
           <span className={`badge ${a.role}`}>{a.role === "owner" ? t("街区主人") : a.role === "resident" ? t("居民#one") : t("访客")}</span>
+          {post.agent && (
+            <span className="badge agent" title={t("主人授权的街区 agent 写的，主人确认后发出")}>
+              {t("agent 代发")}
+            </span>
+          )}
           <button type="button" className="signed" onClick={() => setShowSig(!showSig)} aria-expanded={showSig} title={t("这条帖子由作者的比特币钱包签名，点击查看")}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
               <path d="M20 6 9 17l-5-5" />
@@ -192,7 +198,11 @@ export function PostCard({
         </div>
         {showSig && (
           <div className="sig">
-            <p className="muted small">{t("签名地址 {address}", { address: post.author.address })}</p>
+            {post.agent ? (
+              <AgentGrantNote grantId={post.agent.grant_id} agentKey={post.agent.key} />
+            ) : (
+              <p className="muted small">{t("签名地址 {address}", { address: post.author.address })}</p>
+            )}
             <pre className="message">{post.signed_message}</pre>
             <code className="small break">{post.signature}</code>
           </div>

@@ -138,6 +138,7 @@ export type Post = {
   reply_count: number;
   liked_by_me: boolean;
   tips_sats?: number; // confirmed Lightning tips, in sats
+  agent?: { grant_id: number; key: string } | null; // published by the district's agent, signed with its key
 };
 
 export type District = {
@@ -252,7 +253,7 @@ export type FeedItem = { type: "post"; time: number; post: Post } | { type: "eve
 /** The owner's view of what their wallet holds and what the district shows. */
 export type Showcase = { chosen: PetKey[]; held: Pet[]; wallets?: number; checked_at: string | null; error: string | null; shown: Pet[] };
 
-export type NotificationKind = "reply" | "like" | "post" | "follow" | "apply" | "tip" | "treasure" | "lucky" | "crown" | "event_win" | "sold";
+export type NotificationKind = "reply" | "like" | "post" | "follow" | "apply" | "tip" | "treasure" | "lucky" | "crown" | "event_win" | "sold" | "agent_draft" | "agent_alert";
 export type Notification = {
   id: number;
   kind: NotificationKind;
@@ -321,3 +322,42 @@ export type Season = {
   pool_sats: number;
   pool_split: number[];
 };
+
+/** 街区 agent (api/agent.py). */
+export type AgentTask = "welcome" | "digest" | "answers";
+export type AgentInfo = { open: boolean; price_sats: number; days: number; max_days: number; max_per_day: number; tasks: AgentTask[] };
+export type AgentProblem = "expired" | "owner_changed" | "unpaid" | "banned";
+export type Agent = {
+  id: number;
+  key: string;
+  posts_per_day: number;
+  posted_today: number;
+  expires_at: string;
+  granted_at: string;
+  paid_until: string | null;
+  persona: string;
+  tasks: AgentTask[];
+  watch: { radius?: number; max_price_sats?: number };
+  memory: string[];
+  problem: AgentProblem | null;
+  last_run_at: string | null;
+  running: boolean;
+  last: { at: string; drafts: number; error: string | null } | null;
+};
+export type AgentDraft = {
+  id: number;
+  reply_to: number | null;
+  body: string;
+  why: string;
+  task: AgentTask;
+  status: "pending" | "posted" | "discarded" | "expired";
+  post_id: number | null;
+  created_at: string;
+  decided_at: string | null;
+};
+export type AgentBriefing =
+  | { kind: "applications"; count: number }
+  | { kind: "poll_closing"; poll_id: number; question: string; closes_at: string }
+  | { kind: "prizes_unpaid"; event_id: number; season: number; count: number };
+export type AgentView = { agent: Agent | null; drafts: AgentDraft[]; recent: AgentDraft[]; briefing: AgentBriefing[] };
+export type AgentGrant = { id: number; bitmap_number: number; owner: string; agent_key: string; message: string; signature: string; granted_at: string; expires_at: string; revoked_at: string | null };

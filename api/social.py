@@ -54,7 +54,8 @@ POST_COLUMNS = (
     "as tips_sats, "
     "exists(select 1 from social.lightning_addresses a where a.address = coalesce("
     "(select w.main_address from social.wallet_links w where w.address = p.author_address), p.author_address)) "
-    "as author_tippable "
+    "as author_tippable, "
+    "p.agent_id, (select a.agent_key from social.agents a where a.id = p.agent_id) as agent_key "
 )
 
 
@@ -82,6 +83,8 @@ def _post(row):
         "reply_count": row["reply_count"],
         "liked_by_me": row["liked_by_me"],
         "tips_sats": int(row["tips_sats"]),  # confirmed Lightning tips
+        # Published by the district's agent (api/agent.py), signed with its key under this grant.
+        "agent": {"grant_id": row["agent_id"], "key": row["agent_key"]} if row["agent_id"] is not None else None,
     }
 
 

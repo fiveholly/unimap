@@ -103,6 +103,17 @@ media: none
 | POST | `/v1/market/listings/{id}/quote` | 买家要报价 `{"payment_address", "payment_public_key", "receive_address", "fee_rate"}`，返回拼好的 PSBT 和要签的输入；付款地址还没有两笔小额 UTXO 时是 409 `need_dummies` |
 | POST | `/v1/market/quotes/{id}/submit` | 买家提交签好的 PSBT；交易必须和报价完全一样、签名都是 SIGHASH_ALL，bitcoind 测试通过后广播，返回 `txid` |
 | POST | `/v1/market/dummies`、`/v1/market/dummies/broadcast` | 给买家做两笔 600 聪小额 UTXO 的交易，签好后广播；只能转给自己 |
+| GET | `/v1/agent` | 街区 agent 是否开放、每 30 天多少聪（0 是免费）、授权最长天数和每天最多条数 |
+| GET | `/v1/districts/{n}/agent` | 主人看自己的 agent：设置、待确认的草稿、最近处理过的草稿、等主人处理的事（入住申请、快截止的投票、没发的活动奖金） |
+| POST | `/v1/districts/{n}/agent/prepare` | 主人开通第一步 `{"posts_per_day", "days"}`，服务器给 agent 生成一把新密钥，返回要钱包签名的授权 |
+| POST | `/v1/districts/{n}/agent` | 提交签好的授权 `{"id", "signature"}`；替换这个街区之前的 agent，同一个主人重签时保留设置和笔记 |
+| PUT | `/v1/districts/{n}/agent/settings` | `{"persona", "tasks", "watch": {"radius", "max_price_sats"}, "memory"}` |
+| DELETE | `/v1/districts/{n}/agent` | 撤销授权；待确认的草稿作废，已经发出的帖子保留 |
+| POST | `/v1/districts/{n}/agent/run` | 让 agent 现在看一次（10 分钟最多一次） |
+| POST | `/v1/districts/{n}/agent/pay`、GET `/v1/agent/payments/{id}` | 用闪电续 30 天，和打赏一样靠 LUD-21 确认到账 |
+| POST | `/v1/agent/drafts/{id}/publish` | 主人确认发出一条草稿，可以带改过的 `body`；受授权里的每天条数限制 |
+| DELETE | `/v1/agent/drafts/{id}` | 丢掉一条草稿 |
+| GET | `/v1/agent/grants/{id}` | 公开的授权原文和主人的签名，用来核对 agent 发的帖子 |
 
 ## 繁荣度
 
@@ -204,7 +215,7 @@ expires: …
 
 ## 通知
 
-有人回复你的帖子、赞你的帖子、在你的街区发新帖、关注你的街区，申请入住你的街区，打赏你，或者区块给你送来宝箱、抽中你的街区做幸运街区时，会给你记一条通知（`api/notify.py`，表 `social.notifications`）。自己做的事不通知自己；同一个人对同一条帖子取消再点赞、取消再关注，只通知一次。
+有人回复你的帖子、赞你的帖子、在你的街区发新帖、关注你的街区，申请入住你的街区，打赏你，或者区块给你送来宝箱、抽中你的街区做幸运街区，或者你的街区 agent 写好了草稿、发现附近有便宜的挂单时，会给你记一条通知（`api/notify.py`，表 `social.notifications`）。自己做的事不通知自己；同一个人对同一条帖子取消再点赞、取消再关注，只通知一次。
 
 - 顶栏的铃铛显示未读数，每分钟和每次换页时检查一次。通知页 `/notifications` 打开后把列表里的都标成已读，同一条帖子的点赞、同一个街区的关注合成一行。
 - 接口：`GET /v1/notifications?before=`（每页 30 条，带帖子摘要和未读数）、`GET /v1/notifications/unread`、`POST /v1/notifications/read`（`up_to` 不填就是全部）。
@@ -258,6 +269,20 @@ Magic Eden 的接口需要 API key 才能稳定使用，在 `/etc/unimap/unimap.
 - 钱包：UniSat 和 OKX 用同一个地址付款和收铭文；Xverse 用付款地址（P2SH-P2WPKH）付款、ordinals 地址收铭文，签名按 PSBT 里写的 sighash。支持 P2TR、P2WPKH 和 P2SH-P2WPKH 输入。
 - 开关：设置 `MARKET_NETWORK`（testnet4、signet 或 regtest）才开放，这时 bitcoind 和 ord 都要在那个网络上，ord 要加 `--index-addresses`。主网要等外部安全审计通过、设置了 `MARKET_MAINNET_AUDITED=1` 才开放。手续费由 `MARKET_FEE_BPS`（基点，100 是 1%）和 `MARKET_FEE_ADDRESS` 决定，默认不收。
 - 测试：taproot 的签名哈希用 BIP-341 官方的测试向量核对（`tests/data/bip341_wallet_vectors.json`）。`test_market` 用真实密钥签名，走完挂单、做小额、报价、篡改报价、签名购买、地块用 taproot 钱包购买的全流程，并确认铭文落在买家的输出里、别的输出里没有铭文。
+
+## 街区 agent
+
+街区主人可以开通一个 agent 帮忙打理街区（`api/agent.py`，表 `social.agents`、`social.agent_drafts`、`social.agent_payments`）。第一版只写草稿，每一条都要主人点确认才发出去。
+
+- 授权：主人的钱包签一段授权原文，写明哪个街区、agent 的公钥、能做什么（起草帖子和回复，发主人确认过的）、每天最多几条、什么时候到期。agent 的密钥由服务器生成，只能用来签帖子，动不了任何资产。授权到期、主人撤销、街区换了主人，都会让它立刻停下。
+- 帖子：确认后的帖子作者仍是主人，带 `agent: {grant_id, key}`，页面上标「agent 代发」。签名是 agent 的密钥对 `agent_post_message(...)` 的 SHA-256 做的 BIP-340 签名，原文里有授权编号和普通帖子的签名原文。任何人都可以拿 `GET /v1/agent/grants/{id}` 的授权原文和主人签名，核对这个密钥确实是主人授权的。主人被封禁时 agent 也发不了帖。
+- 它做什么：欢迎新居民（地块认领或转入），每 7 天写一份街区周报，回答别人在主人帖子下面、或者居民发帖里问的问题。三件事都可以单独关掉。主人可以写一段「人设」告诉它怎么说话，agent 自己也会记下最多 20 条笔记，主人可以删。
+- 怎么写：用大模型（Anthropic API，`AGENT_MODEL`，默认 claude-sonnet-5-5），工具就是 unimap 自己的只读接口：最近的帖子、某个帖子的回复、街区数据（繁荣度、居民、打赏、活动、投票、招募）、附近的挂单、全城在招募的街区。别人写的帖子只当信息，不当指令。每次最多写 3 条草稿，待确认的草稿满 10 条就停下等主人处理，7 天没人管的草稿自动作废。
+- 什么时候跑：`unimap-agent` 服务每 5 分钟转一圈，每个街区最多一小时看一次，而且只有出现新居民、新的帖子或回复、或者该写周报时才调用模型。主人也可以点「现在看一下」。
+- 提醒：主人可以设一个范围和价格，附近有街区挂单不高于这个价时，发一条通知（`agent_alert`），每个街区只提醒一次。等主人处理的事（入住申请、两天内截止的投票、没发的活动奖金）直接从数据库算出来，不用模型。
+- 收费：设了 `AGENT_PRICE_SATS` 和 `AGENT_LIGHTNING_ADDRESS` 后，主人每 30 天用闪电付一次；付款地址的钱包要支持 LUD-21，才能确认到账。没设就免费。没设 `ANTHROPIC_API_KEY` 时整个功能不开放。
+- 测试：`test_agent` 用一个按脚本调用工具的假模型，走完授权、起草、拒掉多余的草稿、确认发出（验 agent 签名和主人授权签名）、每天条数限制、挂单提醒、付费续期、换主人和撤销。
+- 以后：放开在限额内自己发帖、地块主人也能开通、店铺（先卖数字商品）。
 
 ## 闪电打赏
 
