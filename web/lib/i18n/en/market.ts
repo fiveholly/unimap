@@ -73,4 +73,18 @@ export const market: Record<string, string> = {
   "整个园区的价格（聪）": "Price for the whole park (sats)",
   "和单个街区挂单一样，你的钱包签一个半成品交易：装着 {n} 个街区的这个输出，换一笔付到你地址的钱。只有付够钱的交易能用这个签名。":
     "Just like listing one district, your wallet signs a half-made transaction: this output holding {n} districts, for a payment to your address. Only a transaction that pays in full can use the signature.",
+  // 地块交易
+  "出售地块 #{n}": "Sell parcel #{n}",
+  "挂在 unimap，想搬进这条街的人在招募页和这里都看得到，买下就成了这里的居民。钱和铭文都不经过 unimap。":
+    "List it on unimap. People looking to move onto this street see it here and on the recruiting page, and whoever buys it becomes a resident. Neither the money nor the inscription passes through unimap.",
+  "买下入住": "Buy and move in",
+  "交易已发出。确认后这块地就是你的了，你也就成了这里的居民。": "The transaction is out. Once it confirms, the parcel is yours and you're a resident here.",
+  "也可以直接买这里在售的地块，买下就是居民：": "Or buy a parcel here that's for sale and become a resident right away:",
+  "{n} 块地在售": "Parcels for sale: {n}",
+  "在售地块：买下就是居民": "Parcels for sale: buy one and move in",
+  "这些地块的持有人在 unimap 挂了单。买下后地块直接到你的地址，你就成了那条街的居民，不用等街区主人。在招募的街区排在前面。":
+    "Their holders listed these parcels on unimap. Buy one and it goes straight to your address, making you a resident of that street without waiting for the owner. Districts that are recruiting come first.",
+  "这些地块在 unimap 挂了单，买下就是这里的居民：": "These parcels are listed on unimap. Buy one to become a resident here:",
+  "{n} 位居民": "Residents: {n}",
+  "在招募": "Recruiting",
 };

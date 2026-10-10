@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { ParcelsOnSale } from "./Market";
 import { api, type Recruit } from "@/lib/api";
 import { t } from "@/lib/i18n";
 
@@ -43,6 +44,7 @@ export function RecruitCard({
           ))}
         </div>
       )}
+      <ParcelsOnSale items={recruit.for_sale ?? []} intro={t("也可以直接买这里在售的地块，买下就是居民：")} onPick={onPick} />
       {canApply &&
         (recruit.applied ? (
           <div className="row between small">

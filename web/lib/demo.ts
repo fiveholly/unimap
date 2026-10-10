@@ -159,7 +159,7 @@ type State = {
   agentPay?: { id: number; at: number; settled: boolean } | null;
 };
 type DemoAgent = Omit<Agent, "posted_today" | "running" | "problem"> & { n: number; message: string; revoked?: boolean; drafts: AgentDraft[] };
-type DemoListing = { id: number; n: number; seller: string; price: number; status: MarketListing["status"]; at: string; txid?: string; park?: number; members?: number[] };
+type DemoListing = { id: number; n: number; seller: string; price: number; status: MarketListing["status"]; at: string; txid?: string; park?: number; members?: number[]; tx?: number };
 type DemoTip = { id: number; tipper: string; recipient: string; n: number; post_id: number | null; sats: number; comment: string; status: Tip["status"]; at: number; event?: [number, number] };
 type DemoContest = { id: number; bitmap_number: number; season: number; host: string; metric: ContestMetric; prizes: number[]; note: string; created_at: string; cancelled?: boolean;
   winners?: { address: string; score: number; prize_sats: number }[]; crowd?: [string, number][] };
@@ -192,10 +192,19 @@ function seedExtras(s: State) {
   s.boot ??= Date.now();
   s.badges ??= [{ kind: "treasure", height: DEMO_TIP - 400, bitmap_number: 840001, tx_index: OWN_PARCEL.tx_index, rarity: "rare", created_at: iso(3) }];
   s.market ??= [{ id: 1, n: 840005, seller: ownerOf(840005)!, price: 9_800_000, status: "active", at: iso(0.8) }];
+  // Residents selling their parcels (地块交易), two of them in a district that is recruiting.
+  if (!s.market.some((x) => x.tx != null)) {
+    const picks: [number, number, number][] = [[840002, 0, 180_000], [840002, 1, 260_000], [839941, 0, 95_000], [840001, 2, 420_000]];
+    for (const [n, k, price] of picks) {
+      const i = parcelIndexes(n).filter((x) => parcelOwner(n, x) !== DEMO_ADDRESS)[k];
+      if (i == null) continue;
+      s.market.push({ id: Math.max(0, ...s.market.map((x) => x.id)) + 1, n, tx: i, seller: parcelOwner(n, i), price, status: "active", at: iso(0.3 + k) });
+    }
+  }
   // 矿工新村's owner put the whole park up in one sale.
   if (!s.packed) {
     s.packed = [SEED_PARK.id];
-    s.market.push({ id: 2, n: SEED_PARK.members[0], seller: SEED_PARK.owner, price: 42_000_000, status: "active", at: iso(1.5), park: SEED_PARK.id, members: SEED_PARK.members });
+    s.market.push({ id: Math.max(0, ...s.market.map((x) => x.id)) + 1, n: SEED_PARK.members[0], seller: SEED_PARK.owner, price: 42_000_000, status: "active", at: iso(1.5), park: SEED_PARK.id, members: SEED_PARK.members });
   }
   if (!s.offers) {
     const at = (d: number) => ({ created_at: iso(d), expires_at: iso(d - 7) });
@@ -335,7 +344,7 @@ const DEMO_PSBT = "cHNidP8BAAoCAAAAAAAAAAAAAAA="; // an empty PSBT; the demo wal
 let lastPrice: number | null = null; // the price the visitor last asked to list at
 let lastMove: { park: number; pack: boolean } | null = null; // the pack or unpack handed to the visitor's wallet
 function listingView(l: DemoListing): MarketListing {
-  return { id: l.id, inscription_id: inscriptionId(l.n), bitmap_number: l.n, tx_index: null, seller: l.seller, price_sats: l.price, postage_sats: 546,
+  return { id: l.id, inscription_id: inscriptionId(l.tx == null ? l.n : l.n * 1000 + l.tx), bitmap_number: l.n, tx_index: l.tx ?? null, seller: l.seller, price_sats: l.price, postage_sats: 546,
     status: l.status, created_at: l.at, txid: l.txid ?? null, buyer: null, park_id: l.park ?? null, members: l.members ?? null };
 }
 
@@ -507,7 +516,7 @@ function saleAt(n: number): number | null {
   return h < 0.03 ? 300_000 + Math.round((h / 0.03) * 40) * 250_000 : null;
 }
 // 站内交易 in the demo: 840005's owner listed it in unimap for less than on Magic Eden.
-const ownListing = (n: number) => (load().market ?? []).find((x) => x.n === n && x.status === "active" && x.park == null);
+const ownListing = (n: number) => (load().market ?? []).find((x) => x.n === n && x.status === "active" && x.park == null && x.tx == null);
 function saleOf(n: number): Sale | null {
   const own = ownListing(n);
   const price = saleAt(n);
@@ -675,7 +684,15 @@ function recruitAt(n: number, me: string | null) {
   if (!r || ownerOf(n) !== r.by) return null;
   const taken = new Set(parcelIndexes(n));
   const apps = s.applications?.[n] ?? [];
-  return { message: r.message, parcels: r.parcels.filter((i) => !taken.has(i)), updated_at: r.updated_at, applications: apps.length, applied: !!me && apps.some((a) => a.address === me) };
+  return { message: r.message, parcels: r.parcels.filter((i) => !taken.has(i)), updated_at: r.updated_at, applications: apps.length, applied: !!me && apps.some((a) => a.address === me),
+    for_sale: parcelsListed(n) };
+}
+/** The district's parcels listed in unimap, cheapest first. */
+function parcelsListed(n: number) {
+  return (load().market ?? [])
+    .filter((x) => x.n === n && x.tx != null && x.status === "active")
+    .sort((a, b) => a.price - b.price)
+    .map((x) => ({ listing_id: x.id, tx_index: x.tx!, price_sats: x.price, seller: x.seller }));
 }
 function pollView(p: DemoPoll, me: string | null): Poll {
   const counts = p.options.map((_, i) => Object.values(p.votes).filter((v) => v === i).length);
@@ -992,7 +1009,7 @@ function route(path: string, opts: Opts): unknown {
       .map(Number)
       .flatMap((n) => {
         const r = recruitAt(n, me), o = ownerOf(n);
-        return r && o ? [{ bitmap_number: n, name: `${n}.bitmap`, zone: zoneOf(n), owner: o, level: levelAt(n), message: r.message, parcels: r.parcels, updated_at: r.updated_at }] : [];
+        return r && o ? [{ bitmap_number: n, name: `${n}.bitmap`, zone: zoneOf(n), owner: o, level: levelAt(n), message: r.message, parcels: r.parcels, updated_at: r.updated_at, for_sale: r.for_sale }] : [];
       })
       .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
     return { districts: out };
@@ -1386,15 +1403,27 @@ function route(path: string, opts: Opts): unknown {
     save();
     return { txid: sha256(`move:${move.park}:${Date.now()}`) };
   }
+  const holds = (n: number, tx: number | null) => {
+    if (tx == null) return owns(n);
+    const a = needMe();
+    if (parcelOwner(n, tx) !== a || !parcelIndexes(n).includes(tx)) fail(403, "only the address holding it can sell it");
+    return a;
+  };
+  if (p === "/v1/market/parcels") {
+    const rows = s.market!.filter((x) => x.status === "active" && x.tx != null).map((x) => ({
+      ...listingView(x), level: levelAt(x.n), residents: new Set(parcelIndexes(x.n).map((i) => parcelOwner(x.n, i))).size, recruiting: !!recruitAt(x.n, me), zone: zoneOf(x.n),
+    }));
+    return { parcels: rows.sort((a, b) => Number(b.recruiting) - Number(a.recruiting) || b.level - a.level || a.price_sats - b.price_sats) };
+  }
   if (p === "/v1/market/listings/prepare") {
-    owns(Number(body.bitmap_number));
+    holds(Number(body.bitmap_number), body.tx_index == null ? null : Number(body.tx_index));
     lastPrice = Number(body.price_sats);
     return { psbt: DEMO_PSBT, psbt_hex: "", sign_inputs: [0], sighash: 0x83, inscription_id: inscriptionId(Number(body.bitmap_number)), postage_sats: 546 };
   }
   if (p === "/v1/market/listings" && method === "POST") {
-    const n = Number(body.bitmap_number), a = owns(n);
-    s.market!.forEach((x) => x.n === n && x.status === "active" && (x.status = "replaced"));
-    const l: DemoListing = { id: Math.max(0, ...s.market!.map((x) => x.id)) + 1, n, seller: a, price: lastPrice ?? 1_000_000, status: "active", at: new Date().toISOString() };
+    const n = Number(body.bitmap_number), tx = body.tx_index == null ? undefined : Number(body.tx_index), a = holds(n, tx ?? null);
+    s.market!.forEach((x) => x.n === n && x.tx === tx && x.park == null && x.status === "active" && (x.status = "replaced"));
+    const l: DemoListing = { id: Math.max(0, ...s.market!.map((x) => x.id)) + 1, n, tx, seller: a, price: lastPrice ?? 1_000_000, status: "active", at: new Date().toISOString() };
     s.market!.push(l);
     save();
     return listingView(l);

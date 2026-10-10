@@ -62,7 +62,7 @@ media: none
 | POST | `/v1/districts/{n}/checkin` | 签到，每个地址每个街区每天（UTC）一次，重复返回 409 |
 | GET | `/v1/rankings` | 繁荣榜：繁荣度最高的 50 个已认领街区，地标除外，缓存 5 分钟 |
 | PUT / DELETE | `/v1/districts/{n}/recruit` | 街区主人发布或结束招募 `{"message", "parcels"}` |
-| GET | `/v1/recruiting` | 正在招募的街区，新的在前 |
+| GET | `/v1/recruiting` | 正在招募的街区，新的在前；`for_sale` 是这个街区在 unimap 挂单的地块 |
 | PUT / DELETE | `/v1/districts/{n}/application` | 访客申请入住 `{"note"}` / 撤回 |
 | GET | `/v1/districts/{n}/applications` | 街区主人查看申请 |
 | GET / POST | `/v1/districts/{n}/polls` | 投票列表 / 街区主人发起 `{"question", "options", "days"}` |
@@ -100,6 +100,7 @@ media: none
 | POST | `/v1/market/listings` | 提交钱包签好的挂单 `{"psbt", "bitmap_number", "tx_index"}`；签名不对、不是 0x83、价格被改过都是 400 |
 | GET | `/v1/market/listings?bitmap_number=` | 在售的站内挂单，便宜的在前；铭文已经转走的不算 |
 | GET / DELETE | `/v1/market/listings/{id}` | 一条挂单；卖家下架 |
+| GET | `/v1/market/parcels` | 全城在 unimap 挂单的地块，带街区等级、居民数、是否在招募；在招募的在前，然后是等级高的、便宜的 |
 | POST | `/v1/market/listings/{id}/quote` | 买家要报价 `{"payment_address", "payment_public_key", "receive_address", "fee_rate"}`，返回拼好的 PSBT 和要签的输入；付款地址还没有两笔小额 UTXO 时是 409 `need_dummies` |
 | POST | `/v1/market/quotes/{id}/submit` | 买家提交签好的 PSBT；交易必须和报价完全一样、签名都是 SIGHASH_ALL，bitcoind 测试通过后广播，返回 `txid` |
 | POST | `/v1/market/dummies`、`/v1/market/dummies/broadcast` | 给买家做两笔 600 聪小额 UTXO 的交易，签好后广播；只能转给自己 |
@@ -150,6 +151,8 @@ media: none
 ## 招募居民
 
 街区主人写一段招募说明，可以列出开放的地块编号（只能列还没被认领的）。登录的访客可以带一句留言申请入住，主人在管理面板里看到申请列表。地块的交接仍然在链上完成：主人把地块铭刻成街区的子铭文转给对方，索引器看到后对方就是居民。街区转手后，旧主人的招募自动失效；新主人重新发布时，旧的申请会清掉。
+
+另一条入住的路是买地块：居民可以在街区页的地块列表里把自己的地块挂到 unimap（站内交易），招募说明下面和招募页的「在售地块」里都会列出来，买下后地块到买家的地址，买家就成了这里的居民，不用等主人铭刻。
 
 ## 街区投票
 

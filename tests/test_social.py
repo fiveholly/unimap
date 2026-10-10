@@ -1126,6 +1126,18 @@ class SocialApi(unittest.TestCase):
             p = btc.Psbt.parse(prep["psbt"])
             buyer.sign(p, 0, [p.witness_utxo(0)], btc.SINGLE_ACP)
             parcel = post(BOB, "/v1/market/listings", {"psbt": p.b64(), "bitmap_number": 100, "tx_index": 1}).json()
+            # Someone looking for a place to live finds it city-wide, and on the district's call for residents.
+            found = self.client.get("/v1/market/parcels").json()["parcels"]
+            self.assertEqual([(x["id"], x["tx_index"], x["recruiting"]) for x in found], [(parcel["id"], 1, False)])
+            self.assertIn("level", found[0])
+            self.assertIn("residents", found[0])
+            self.assertEqual(self.client.put("/v1/districts/100/recruit", json={"message": "来住"}, headers=self.h(ALICE)).status_code, 200)
+            try:
+                self.assertTrue(self.client.get("/v1/market/parcels").json()["parcels"][0]["recruiting"])
+                self.assertEqual(self.client.get("/v1/districts/100").json()["recruit"]["for_sale"], [{"listing_id": parcel["id"], "tx_index": 1, "price_sats": 20_000, "seller": BOB.address}])
+                self.assertEqual(self.client.get("/v1/recruiting").json()["districts"][0]["for_sale"][0]["listing_id"], parcel["id"])
+            finally:
+                self.client.delete("/v1/districts/100/recruit", headers=self.h(ALICE))
             tr_spk = btc.address_script(parcel_buyer.address(), "regtest")
             for k, v in enumerate((700, 800, 90_000)):
                 fake.add(f"{txid(0xca0 + k)}:0", v, tr_spk)

@@ -194,7 +194,9 @@ export type TipTop = {
 };
 
 export type Park = { id: number; name: string; owner: string; members: number[]; score: number; level: number };
-export type Recruit = { message: string; parcels: number[]; updated_at: string; applications: number; applied: boolean };
+/** A parcel someone listed in unimap: buying it is the other way to move in. */
+export type ParcelListed = { listing_id: number; tx_index: number; price_sats: number; seller: string };
+export type Recruit = { message: string; parcels: number[]; updated_at: string; applications: number; applied: boolean; for_sale?: ParcelListed[] };
 export type Recruiting = {
   bitmap_number: number;
   name: string;
@@ -204,7 +206,10 @@ export type Recruiting = {
   message: string;
   parcels: number[];
   updated_at: string;
+  for_sale?: ParcelListed[];
 };
+/** A parcel for sale city-wide, with what its district is like. */
+export type ParcelForSale = MarketListing & { level: number; residents: number; recruiting: boolean; zone: string | null };
 export type Application = { address: string; note: string; created_at: string };
 export type Poll = {
   id: number;
