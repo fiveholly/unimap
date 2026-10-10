@@ -14,7 +14,7 @@ import psycopg2.extras
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import bip322, holdings, moderation, notify, parks, prosperity, recruit, roles, style, tips, wallets, xlink
+from api import bip322, game, holdings, moderation, notify, parks, prosperity, recruit, roles, style, tips, wallets, xlink
 from api.auth import current_address, normalize_address, optional_address
 from api.db import cursor
 from api.land import EVENT_SELECT, _event
@@ -159,6 +159,7 @@ def person(address: str, before_id: int | None = None, limit: int = 20, viewer: 
         post_count, reply_count, first_post = cur.fetchone()
         cur.execute("select count(*) from social.follows where address = %s;", (address,))
         follows = cur.fetchone()[0]
+        badges = game.badges_of(cur, address)
         # Score held districts a run at a time, so two far-apart districts don't score everything between.
         levels, park_of, run = {}, {}, []
         for n in districts + [None]:
@@ -178,6 +179,7 @@ def person(address: str, before_id: int | None = None, limit: int = 20, viewer: 
         "reply_count": reply_count,
         "follows": follows,
         "first_post_at": first_post.isoformat() if first_post else None,
+        "badges": badges,
         "posts": posts,
     }
 
@@ -213,6 +215,7 @@ def district(bitmap_number: int, tasks: BackgroundTasks, viewer: str | None = De
         pets = holdings.shown(cur, bitmap_number, owner)
         owner_x = xlink.of(cur, owner)
         tipped = tips.district_tips(cur, bitmap_number)
+        beat = game.district_view(cur, bitmap_number, viewer)
         owner_tippable = tips.lightning_of(cur, owner) is not None
         # Pets on show keep their owner's balances fresh; the page doesn't wait for it.
         if holdings.chosen(cur, bitmap_number, owner) and holdings.stale_group(cur, owner):
@@ -235,6 +238,7 @@ def district(bitmap_number: int, tasks: BackgroundTasks, viewer: str | None = De
         "pets": pets,
         "tips": tipped,  # confirmed Lightning tips on the district and its posts, last 30 days
         "owner_tippable": owner_tippable,
+        "game": beat,  # lucky round and open treasures here (api/game.py)
         "viewer": None
         if viewer is None
         else {
@@ -269,7 +273,8 @@ def checkin(bitmap_number: int, address: str = Depends(current_address)):
         )
         if cur.rowcount == 0:
             raise HTTPException(409, "already checked in today")
-    return {"ok": True}
+        badges = game.on_checkin(cur, address, bitmap_number)
+    return {"ok": True, "badges": badges}
 
 
 @router.get("/v1/districts/{bitmap_number}/posts")

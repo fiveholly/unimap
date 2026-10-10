@@ -1,6 +1,7 @@
 // Typed client for the unimap API (api/ in this repo).
 
 import { DEMO, demoApi } from "./demo";
+import type { BadgeKind, Rarity } from "./game";
 import type { Pet, PetKey } from "./pets";
 import type { Prosperity } from "./prosperity";
 import type { DistrictStyle } from "./style";
@@ -73,6 +74,8 @@ export type Tile = {
   park?: number | null;
   pets?: string[]; // "dog:2": what the owner shows of their wallet, see lib/pets.ts
   sale?: number | null; // asking price in sats while listed on a marketplace (api/listings.py)
+  lucky?: boolean; // the lucky district this round (api/game.py)
+  treasure?: Rarity | null; // the rarest open treasure on its parcels
 };
 
 /** A district's listing on a marketplace (在售): its price and where to buy. */
@@ -128,6 +131,7 @@ export type District = {
   pets?: Pet[];
   tips?: { sats30: number; tippers30: number };
   owner_tippable?: boolean; // the owner has a Lightning address for tips
+  game?: DistrictGame;
 };
 
 /** POST /v1/tips and GET /v1/tips/{id}: an invoice from the recipient's wallet and whether it was paid. */
@@ -202,6 +206,7 @@ export type Person = {
   follows: number;
   first_post_at: string | null;
   posts: Post[];
+  badges?: Badge[];
 };
 
 /** GET /v1/search: a district number, parks by name, people by address or X handle. */
@@ -219,7 +224,7 @@ export type FeedItem = { type: "post"; time: number; post: Post } | { type: "eve
 /** The owner's view of what their wallet holds and what the district shows. */
 export type Showcase = { chosen: PetKey[]; held: Pet[]; wallets?: number; checked_at: string | null; error: string | null; shown: Pet[] };
 
-export type NotificationKind = "reply" | "like" | "post" | "follow" | "apply" | "tip";
+export type NotificationKind = "reply" | "like" | "post" | "follow" | "apply" | "tip" | "treasure" | "lucky";
 export type Notification = {
   id: number;
   kind: NotificationKind;
@@ -231,4 +236,25 @@ export type Notification = {
   snippet: string | null;
   amount_sats?: number; // tips
   comment?: string;
+  block_height?: number; // treasure, lucky: the block that drew it
+  tx_index?: number; // treasure: the parcel
+  rarity?: Rarity;
 };
+
+/** 区块节拍 (api/game.py). */
+export type Badge = { kind: BadgeKind; height: number; bitmap_number: number; tx_index: number | null; rarity: Rarity; created_at: string };
+export type OpenTreasure = { height: number; block_hash: string; tx_index: number; rarity: Rarity; closes_at: number; claimable: boolean };
+export type DistrictGame = { lucky: { since: number; until: number; visited: boolean } | null; treasures: OpenTreasure[] };
+export type Draw = {
+  height: number;
+  block_hash: string;
+  bitmap_number: number | null;
+  tx_index: number | null;
+  candidates: number;
+  index: number | null;
+  rarity: Rarity;
+  opened_by: string | null;
+  open: boolean;
+};
+export type LuckyRound = { since: number; until: number; block_hash: string; candidates: number; index: number | null; bitmap_number: number | null; owner: string | null };
+export type Game = { tip: number | null; round: LuckyRound | null; draws: Draw[]; badges: Badge[] | null; rules: { round: number; claim_blocks: number } };

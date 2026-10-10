@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
+import { BadgeList } from "@/components/Badge";
 import { PostCard } from "@/components/PostCard";
 import { useSession } from "@/components/Session";
 import { ShareMenu } from "@/components/ShareMenu";
@@ -127,6 +128,14 @@ export default function AddressPage() {
               </Link>
             ))}
           </div>
+        </section>
+      )}
+      {!!person.badges?.length && (
+        <section className="me-group">
+          <h2 className="section-title">
+            {t("徽章")} <span className="mono">{person.badges.length}</span>
+          </h2>
+          <BadgeList badges={person.badges} />
         </section>
       )}
 

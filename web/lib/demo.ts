@@ -3,7 +3,8 @@
 // here from deterministic fake data; what the visitor does (posts, likes, follows, profile
 // edits) is kept in localStorage, and "重置演示数据" clears it.
 
-import type { Application, District, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
+import type { Application, Badge, District, DistrictGame, Draw, Game, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
+import { CLAIM_BLOCKS, pick, rarityOf, ROUND, roundOf, sha256, type Rarity } from "./game";
 import { connected } from "./parks";
 import { MAX_SHOWN, PET_KEYS, PETS, type Pet, type PetKey } from "./pets";
 import { prosperity, THRESHOLDS, type ProsperityParts } from "./prosperity";
@@ -55,7 +56,9 @@ const fakeAddress = (seed: number) => {
 // A park someone else already runs, a quarter before the halving block and across the street from it.
 const SEED_PARK = { id: 1, name: "矿工新村", members: [838459, 838460, 839940, 839941, 839948, 839949, 839950], owner: "" };
 const ownerOf = (n: number): string | null =>
-  OWNED.includes(n)
+  n > DEMO_TIP
+    ? null // mined since the demo began: nobody has inscribed it yet
+    : OWNED.includes(n)
     ? DEMO_ADDRESS
     : SEED_PARK.members.includes(n)
       ? fakeAddress(77)
@@ -144,6 +147,9 @@ type State = {
   bans?: Ban[];
   lightning?: string | null; // the visitor's Lightning address for tips
   tips?: DemoTip[];
+  boot?: number; // when this demo began: a new block is "mined" every DEMO_BLOCK_MS after it
+  badges?: Badge[]; // the visitor's
+  opened?: Record<number, string>; // treasures opened, by block height
 };
 type DemoTip = { id: number; tipper: string; recipient: string; n: number; post_id: number | null; sats: number; comment: string; status: Tip["status"]; at: number };
 type DemoPoll = { id: number; n: number; question: string; options: string[]; by: string; created_at: string; closes_at: string; closed_at: string | null; votes: Record<string, number> };
@@ -172,6 +178,9 @@ function seedExtras(s: State) {
   s.lightning === undefined && (s.lightning = "bitmapper@walletofsatoshi.com");
   s.tips ??= seedTips(s);
   s.bans ??= [{ address: fakeAddress(705), reason: "scam", banned_by: DEMO_ADDRESS, created_at: iso(2), expires_at: iso(-28) }];
+  s.boot ??= Date.now();
+  s.badges ??= [{ kind: "treasure", height: DEMO_TIP - 400, bitmap_number: 840001, tx_index: OWN_PARCEL.tx_index, rarity: "rare", created_at: iso(3) }];
+  s.opened ??= Object.fromEntries(Array.from({ length: 12 }, (_, i) => [DEMO_TIP - 3 - i * 9, fakeAddress(900 + i)]));
   return s;
 }
 
@@ -248,6 +257,7 @@ function seedNotifications(s: State): Notification[] {
   add({ kind: "apply", actor: fakeAddress(613), bitmap_number: 840000, post_id: null, created_at: at(0.2) });
   if (mine[0]) add({ kind: "tip", actor: fakeAddress(800 + mine[0].id * 5), bitmap_number: mine[0].bitmap_number, post_id: mine[0].id, created_at: at(0.6), amount_sats: 2100, comment: "写得好，请你喝杯咖啡" });
   add({ kind: "follow", actor: fakeAddress(614), bitmap_number: 812345, post_id: null, created_at: at(80) }, true);
+  add({ kind: "treasure", actor: "", bitmap_number: OWN_PARCEL.bitmap_number, post_id: null, created_at: at(0.1), block_height: DEMO_TIP, tx_index: OWN_PARCEL.tx_index, rarity: "epic" });
   return out
     .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
     .map((n, i, all) => ({ ...n, id: all.length - i, read: n.read || Date.parse(n.created_at) < (NOW - 3 * DAY) * 1000 }));
@@ -338,6 +348,7 @@ function parts(n: number): ProsperityParts {
     checkins30: fake(3, 120) + mine,
     neighbors30: Math.floor(hash(n * 7 + 4) * 150 * h * h) + near,
     tippers30: fake(5, 8) + new Set((s.tips ?? []).filter((x) => x.status === "settled" && x.n === n && x.at / 1000 > since).map((x) => x.tipper)).size,
+    lucky: luckyNow()?.n === n ? 1 : 0,
   };
 }
 // The visitor's wallet holds 2.5 million DOG, a Quantum Cat, three Bitcoin Puppets, seven
@@ -413,6 +424,90 @@ function tile(n: number): Tile {
     park: parkOf(n)?.id ?? null,
     pets: petsAt(n).map((x) => `${x.asset}:${x.tier}`),
     sale: saleAt(n),
+    lucky: luckyNow()?.n === n,
+    treasure: openTreasures().get(n) ?? null,
+  };
+}
+// ---- 区块节拍 -------------------------------------------------------------------
+// The demo "mines" a block every DEMO_BLOCK_MS, and draws with the same formula as the API (lib/game.ts),
+// from smaller candidate lists: the districts and parcels around the halving. Two blocks are mined to
+// tell a story: the round's draw picks 840001, where the visitor lives, and the newest block at the
+// start puts an epic treasure on the visitor's parcel.
+const DEMO_BLOCK_MS = 75_000;
+export const demoTip = () => DEMO_TIP + Math.min(500, Math.floor((Date.now() - (load().boot ?? Date.now())) / DEMO_BLOCK_MS));
+let luckyPool: number[] | undefined, treasurePool: [number, number][] | undefined;
+const districtPool = () => (luckyPool ??= Array.from({ length: 2001 }, (_, i) => 839_000 + i).filter((n) => ownerOf(n)));
+const parcelPool = () => (treasurePool ??= Array.from({ length: 401 }, (_, i) => 839_800 + i).flatMap((n) => parcelIndexes(n).map((i) => [n, i] as [number, number])));
+const blockHashes = new Map<number, string>();
+function blockHash(h: number): string {
+  let hit = blockHashes.get(h);
+  if (hit) return hit;
+  const make = (nonce: number, tail = "") => {
+    const body = sha256(`demo block ${h} ${nonce}`);
+    return "0000000000000000000" + body.slice(19, 64 - tail.length) + tail;
+  };
+  const [since] = roundOf(DEMO_TIP);
+  if (h === since) {
+    const want = districtPool().indexOf(OWN_PARCEL.bitmap_number);
+    for (let k = 0; !hit; k++) if (pick(make(k), "lucky", districtPool().length) === want) hit = make(k);
+  } else if (h === DEMO_TIP) {
+    const want = parcelPool().findIndex(([n, i]) => n === OWN_PARCEL.bitmap_number && i === OWN_PARCEL.tx_index);
+    for (let k = 0; !hit; k++) {
+      const c = make(k, "00");
+      if (c[61] !== "0" && pick(c, "treasure", parcelPool().length) === want) hit = c;
+    }
+  } else hit = make(0);
+  blockHashes.set(h, hit);
+  return hit;
+}
+function drawAt(h: number): Draw {
+  const block_hash = blockHash(h), pool = parcelPool();
+  const index = pick(block_hash, "treasure", pool.length);
+  const [n, i] = index == null ? [null, null] : pool[index];
+  const opened_by = load().opened?.[h] ?? null;
+  return { height: h, block_hash, bitmap_number: n, tx_index: i, candidates: pool.length, index, rarity: rarityOf(block_hash), opened_by, open: !opened_by && h > demoTip() - CLAIM_BLOCKS };
+}
+function luckyNow(): { n: number; since: number; block_hash: string; index: number; candidates: number } | null {
+  const [since] = roundOf(demoTip());
+  const block_hash = blockHash(since), pool = districtPool();
+  const index = pick(block_hash, "lucky", pool.length);
+  return index == null ? null : { n: pool[index], since, block_hash, index, candidates: pool.length };
+}
+let openCache: { key: string; map: Map<number, Rarity> } | undefined;
+/** The rarest open treasure in each district. */
+function openTreasures(): Map<number, Rarity> {
+  const tip = demoTip(), key = `${tip}:${Object.keys(load().opened ?? {}).length}`;
+  if (openCache?.key === key) return openCache.map;
+  const map = new Map<number, Rarity>();
+  const order: Rarity[] = ["common", "rare", "epic", "legendary"];
+  for (let h = tip - CLAIM_BLOCKS + 1; h <= tip; h++) {
+    const d = drawAt(h);
+    if (d.open && d.bitmap_number != null && (!map.has(d.bitmap_number) || order.indexOf(d.rarity) > order.indexOf(map.get(d.bitmap_number)!)))
+      map.set(d.bitmap_number, d.rarity);
+  }
+  openCache = { key, map };
+  return map;
+}
+function districtGame(n: number, me: string | null): DistrictGame {
+  const tip = demoTip(), lucky = luckyNow();
+  const treasures = [];
+  for (let h = tip; h > tip - CLAIM_BLOCKS; h--) {
+    const d = drawAt(h);
+    if (d.open && d.bitmap_number === n)
+      treasures.push({ height: h, block_hash: d.block_hash, tx_index: d.tx_index!, rarity: d.rarity, closes_at: h + CLAIM_BLOCKS - 1,
+        claimable: me === DEMO_ADDRESS && n === OWN_PARCEL.bitmap_number && d.tx_index === OWN_PARCEL.tx_index });
+  }
+  const visited = !!me && (load().badges ?? []).some((b) => b.kind === "lucky_visit" && b.height === lucky?.since);
+  return { lucky: lucky?.n === n ? { since: lucky.since, until: lucky.since + ROUND - 1, visited } : null, treasures };
+}
+function gameView(me: string | null): Game {
+  const tip = demoTip(), lucky = luckyNow();
+  return {
+    tip,
+    round: lucky && { since: lucky.since, until: lucky.since + ROUND - 1, block_hash: lucky.block_hash, candidates: lucky.candidates, index: lucky.index, bitmap_number: lucky.n, owner: ownerOf(lucky.n) },
+    draws: Array.from({ length: 20 }, (_, i) => drawAt(tip - i)),
+    badges: me ? load().badges ?? [] : null,
+    rules: { round: ROUND, claim_blocks: CLAIM_BLOCKS },
   };
 }
 const ownScore = (n: number) => prosperity(parts(n));
@@ -478,7 +573,7 @@ function rankings(): Ranking[] {
   return out.sort((a, b) => b.score - a.score).slice(0, 50);
 }
 function land(n: number): Land {
-  if (n < 0 || n > DEMO_TIP) fail(404, "no such block yet");
+  if (n < 0 || n > demoTip()) fail(404, "no such block yet");
   const o = ownerOf(n);
   const base = { name: `${n}.bitmap`, bitmap_number: n, zone: zoneOf(n), tx_count: txCount(n) };
   if (!o) return { ...base, claimed: false, district: null, parcels: [] };
@@ -549,6 +644,7 @@ function district(n: number, me: string | null): District {
     pets: petsAt(n),
     tips: districtTips(n),
     owner_tippable: tippable(ownerOf(n)),
+    game: districtGame(n, me),
   };
 }
 
@@ -595,6 +691,7 @@ function personDemo(a: string, me: string | null, before: number | null): Person
     follows: a === DEMO_ADDRESS ? load().follows.length : 0,
     first_post_at: first,
     posts,
+    badges: a === DEMO_ADDRESS ? load().badges ?? [] : a === ownerOf(840001) ? [{ kind: "lucky", height: roundOf(DEMO_TIP)[0], bitmap_number: 840001, tx_index: null, rarity: "rare", created_at: iso(0.3) }] : [],
   };
 }
 
@@ -633,15 +730,32 @@ function route(path: string, opts: Opts): unknown {
   const needMe = () => me ?? fail(401, "请先连接钱包");
   let m: RegExpMatchArray | null;
 
-  if (p === "/v1/status") return { indexed_height: { bitmap: DEMO_TIP, parcel: DEMO_TIP, owner: DEMO_TIP } };
+  if (p === "/v1/status") {
+    const tip = demoTip();
+    return { indexed_height: { bitmap: tip, parcel: tip, owner: tip } };
+  }
+  if (p === "/v1/game") return gameView(me);
+  if ((m = p.match(/^\/v1\/game\/treasures\/(\d+)\/open$/)) && method === "POST") {
+    const a = needMe(), h = +m[1], d = drawAt(h);
+    if (h > demoTip() || d.bitmap_number == null) fail(404, "no treasure at this block");
+    if (h <= demoTip() - CLAIM_BLOCKS) fail(410, "this treasure has closed");
+    if (!(d.bitmap_number === OWN_PARCEL.bitmap_number && d.tx_index === OWN_PARCEL.tx_index)) fail(403, "only the parcel's owner can open it");
+    if (d.opened_by) fail(409, "already opened");
+    (s.opened ??= {})[h] = a;
+    const badge: Badge = { kind: "treasure", height: h, bitmap_number: d.bitmap_number!, tx_index: d.tx_index, rarity: d.rarity, created_at: new Date().toISOString() };
+    (s.badges ??= []).unshift(badge);
+    save();
+    return { kind: "treasure", height: h, bitmap_number: d.bitmap_number, tx_index: d.tx_index, rarity: d.rarity };
+  }
   if (p === "/v1/auth/nonce") return { nonce: "demo", message: "unimap login (demo)" };
   if (p === "/v1/auth/login") return { token: "demo-token", address: DEMO_ADDRESS };
   if (p === "/v1/auth/logout") return { ok: true };
   if (p === "/v1/land") {
-    const start = Math.max(0, Number(url.searchParams.get("start"))), end = Math.min(DEMO_TIP, Number(url.searchParams.get("end")));
+    const tip = demoTip();
+    const start = Math.max(0, Number(url.searchParams.get("start"))), end = Math.min(tip, Number(url.searchParams.get("end")));
     const tiles: Tile[] = [];
     for (let n = start; n <= end; n++) tiles.push(tile(n));
-    return { tip: DEMO_TIP, tiles };
+    return { tip, tiles };
   }
   if ((m = p.match(/^\/v1\/land\/(\d+)$/))) return land(+m[1]);
   if ((m = p.match(/^\/v1\/land\/(\d+)\/txs$/))) return { bitmap_number: +m[1], tx_values: txValues(+m[1]) };
@@ -842,8 +956,13 @@ function route(path: string, opts: Opts): unknown {
     const days = ((s.checkins ??= {})[+m[1]] ??= []);
     if (days.includes(today())) fail(409, "今天已经签到过了");
     days.push(today());
+    const lucky = luckyNow(), badges: Omit<Badge, "tx_index" | "created_at">[] = [];
+    if (lucky?.n === +m[1] && !(s.badges ?? []).some((b) => b.kind === "lucky_visit" && b.height === lucky.since)) {
+      badges.push({ kind: "lucky_visit", height: lucky.since, bitmap_number: lucky.n, rarity: "common" });
+      (s.badges ??= []).unshift({ ...badges[0], tx_index: null, created_at: new Date().toISOString() });
+    }
     save();
-    return { ok: true };
+    return { ok: true, badges };
   }
   if ((m = p.match(/^\/v1\/districts\/(\d+)\/neighbors$/))) {
     const n = +m[1];

@@ -828,6 +828,71 @@ class SocialApi(unittest.TestCase):
             with self.conn.cursor() as cur:
                 cur.execute("delete from social.tips; delete from social.lightning_addresses; delete from social.notifications where kind = 'tip';")
 
+    def test_game(self):
+        import hashlib
+
+        from api import game
+
+        dave = Wallet(9)
+        self.tokens[dave.address] = self.login(dave)
+        # A round starts at block 864 (a multiple of 144); choose its hash so district 100 (Alice's) is drawn.
+        start = 864
+        lucky_hash = next(f"{i:064x}" for i in range(1, 99) if int(hashlib.sha256(f"{i:064x}:lucky".encode()).hexdigest(), 16) % 2 == 0)
+        hashes = {h: f"{h:061x}abc" for h in range(858, 1002)}
+        hashes[start] = lucky_hash
+        hashes[1001] = "00000000000000000001" + "7" * 41 + "000"  # three trailing zeros: legendary
+        with self.conn.cursor() as cur:
+            cur.execute("insert into parcel_block_hashes (block_height, block_hash) select * from unnest(%s::int[], %s::text[]);", (list(hashes), list(hashes.values())))
+        try:
+            g = self.client.get("/v1/game").json()
+            self.assertEqual(g["tip"], 1001)  # the district index is at 1000, so draws stop at 1001
+            r = g["round"]
+            self.assertEqual((r["since"], r["until"], r["bitmap_number"], r["candidates"], r["index"], r["owner"]), (864, 1007, 100, 2, 0, ALICE.address))
+            d = g["draws"][0]
+            self.assertEqual((d["height"], d["bitmap_number"], d["tx_index"], d["candidates"], d["rarity"], d["open"]), (1001, 100, 1, 1, "legendary", True))
+            self.assertEqual(game.rarity("ab0"), "rare")
+            self.assertEqual(game.rarity("a" + "0" * 9), "legendary")
+            # The lucky district's owner gets a badge and a notification; the treasure's owner a notification.
+            self.assertIn({"kind": "lucky", "height": 864, "bitmap_number": 100}, [{k: b[k] for k in ("kind", "height", "bitmap_number")} for b in self.client.get(f"/v1/people/{ALICE.address}").json()["badges"]])
+            n = self.client.get("/v1/notifications", headers=self.h(BOB)).json()["notifications"][0]
+            self.assertEqual((n["kind"], n["bitmap_number"], n["block_height"], n["tx_index"], n["rarity"]), ("treasure", 100, 1001, 1, "legendary"))
+            n = next(x for x in self.client.get("/v1/notifications", headers=self.h(ALICE)).json()["notifications"] if x["kind"] == "lucky")
+            self.assertEqual(n["block_height"], 864)
+            # On the map and the district page.
+            tiles = {t["bitmap_number"]: t for t in self.client.get("/v1/land?start=100&end=105").json()["tiles"]}
+            self.assertEqual((tiles[100]["lucky"], tiles[100]["treasure"], tiles[105]["lucky"], tiles[105]["treasure"]), (True, "legendary", False, None))
+            page = self.client.get("/v1/districts/100", headers=self.h(BOB)).json()["game"]
+            self.assertEqual((page["lucky"]["since"], page["treasures"][0]["height"], page["treasures"][0]["claimable"]), (864, 1001, True))
+            self.assertFalse(self.client.get("/v1/districts/100", headers=self.h(CAROL)).json()["game"]["treasures"][0]["claimable"])
+            self.assertEqual(self.client.get("/v1/districts/100").json()["prosperity"]["parts"]["lucky"], 1)
+            # Only the parcel's owner opens it, once, while it is open.
+            opened = lambda w, h: self.client.post(f"/v1/game/treasures/{h}/open", headers=self.h(w))
+            self.assertEqual(opened(CAROL, 1001).status_code, 403)
+            self.assertEqual(opened(BOB, 1001).json()["rarity"], "legendary")
+            self.assertEqual(opened(BOB, 1001).status_code, 409)
+            self.assertEqual(opened(BOB, 700).status_code, 404)
+            with self.conn.cursor() as cur:
+                cur.execute("insert into social.block_draws (height, block_hash, treasure_bitmap, treasure_tx, treasure_of, rarity) values (850, 'x', 100, 1, 1, 'common');")
+            self.assertEqual(opened(BOB, 850).status_code, 410)
+            self.assertEqual(self.client.get("/v1/game").json()["draws"][0]["opened_by"], BOB.address)
+            # Anyone who checks in at the lucky district during its round gets the visitor badge; elsewhere, nothing.
+            self.assertEqual(self.client.post(f"/v1/districts/{OTHER}/checkin", headers=self.h(dave)).json()["badges"], [])
+            won = self.client.post("/v1/districts/100/checkin", headers=self.h(dave)).json()["badges"]
+            self.assertEqual(won, [{"kind": "lucky_visit", "height": 864, "bitmap_number": 100, "rarity": "common"}])
+            self.assertTrue(self.client.get("/v1/districts/100", headers=self.h(dave)).json()["game"]["lucky"]["visited"])
+            # A reorg that replaces a block redraws it.
+            with self.conn.cursor() as cur:
+                cur.execute("update parcel_block_hashes set block_hash = %s where block_height = 1000;", ("f" * 64,))
+            self.assertEqual(next(x for x in self.client.get("/v1/game").json()["draws"] if x["height"] == 1000)["block_hash"], "f" * 64)
+        finally:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "delete from parcel_block_hashes; delete from social.block_draws; delete from social.badges; "
+                    "delete from social.notifications where kind in ('treasure', 'lucky'); delete from social.checkins where address = %s;",
+                    (dave.address,),
+                )
+
+
     def test_lnurl_checks(self):
         from api import tips
 

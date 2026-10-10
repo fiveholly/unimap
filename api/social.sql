@@ -186,7 +186,7 @@ CREATE TABLE IF NOT EXISTS social.holdings_checked (
 CREATE TABLE IF NOT EXISTS social.notifications (
 	id bigserial NOT NULL,
 	address text NOT NULL,
-	kind text NOT NULL, -- reply | like | post | follow | apply | tip
+	kind text NOT NULL, -- reply | like | post | follow | apply | tip | treasure | lucky
 	actor text NOT NULL,
 	bitmap_number int4 NOT NULL,
 	post_id int8 NULL, -- the reply, the liked post or the new post
@@ -305,5 +305,48 @@ BEGIN
 		ALTER TABLE social.notifications DROP CONSTRAINT IF EXISTS notifications_once;
 		ALTER TABLE social.notifications ADD CONSTRAINT notifications_once
 			UNIQUE NULLS NOT DISTINCT (address, kind, actor, bitmap_number, post_id, tip_id);
+	END IF;
+END $$;
+
+-- 区块节拍 (api/game.py): what each new block draws. Every block picks a treasure parcel; every
+-- ROUND-th block also picks the lucky district for the next ROUND blocks. Recomputed if a reorg
+-- replaces the block.
+CREATE TABLE IF NOT EXISTS social.block_draws (
+	height int4 NOT NULL,
+	block_hash text NOT NULL,
+	treasure_bitmap int4 NULL, -- null when no parcel was claimed before this block
+	treasure_tx int4 NULL,
+	treasure_of int4 NOT NULL, -- how many parcels it was drawn from
+	rarity text NOT NULL, -- common | rare | epic | legendary, from the block hash
+	lucky_bitmap int4 NULL, -- only on round starts
+	lucky_of int4 NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT block_draws_pk PRIMARY KEY (height)
+);
+CREATE INDEX IF NOT EXISTS block_draws_lucky_idx ON social.block_draws USING btree (height) WHERE lucky_bitmap IS NOT NULL;
+-- Badges won in the game: a treasure opened, a lucky round as its district's owner, a visit to the lucky district.
+CREATE TABLE IF NOT EXISTS social.badges (
+	id bigserial NOT NULL,
+	address text NOT NULL,
+	kind text NOT NULL, -- treasure | lucky | lucky_visit
+	height int4 NOT NULL, -- the block that drew it
+	bitmap_number int4 NOT NULL,
+	tx_index int4 NULL, -- treasure: the parcel
+	rarity text NOT NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT badges_pk PRIMARY KEY (id),
+	CONSTRAINT badges_once UNIQUE (kind, height, address)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS badges_one_treasure ON social.badges USING btree (height) WHERE kind = 'treasure';
+CREATE INDEX IF NOT EXISTS badges_address_idx ON social.badges USING btree (address, id);
+-- Game notifications carry the block that drew them, so each treasure or lucky round is told.
+DO $$
+BEGIN
+	IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'social' AND table_name = 'notifications' AND column_name = 'block_height') THEN
+		ALTER TABLE social.notifications ADD COLUMN block_height int4 NULL;
+		ALTER TABLE social.notifications DROP CONSTRAINT IF EXISTS notifications_once;
+		ALTER TABLE social.notifications ADD CONSTRAINT notifications_once
+			UNIQUE NULLS NOT DISTINCT (address, kind, actor, bitmap_number, post_id, tip_id, block_height);
 	END IF;
 END $$;

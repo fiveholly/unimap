@@ -5,9 +5,11 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { Avatar } from "./Avatar";
+import { BadgeIcon } from "./Badge";
 import { useSession } from "./Session";
 import { api, type Notification } from "@/lib/api";
 import { short, timeAgo } from "@/lib/format";
+import { CLAIM_BLOCKS, RARITY_COLORS, RARITY_NAMES } from "@/lib/game";
 import { t, tn } from "@/lib/i18n";
 
 // The notifications page tells the bell when it has marked things read.
@@ -93,6 +95,25 @@ function sentence(item: Item): [React.ReactNode, string] {
         ? [tn("{who} 打赏了你在 {place} 的帖子 {sats} 聪", { who, place, sats }), post]
         : [tn("{who} 打赏了你的街区 {place} {sats} 聪", { who, place, sats }), `/district/${n.bitmap_number}`];
     }
+    case "treasure": {
+      const rarity = n.rarity ?? "common";
+      const box = <b style={{ color: RARITY_COLORS[rarity] }}>{t(RARITY_NAMES[rarity])}</b>;
+      return [
+        tn("区块 {h} 把一个{rarity}宝箱放在了你在 {place} 的地块 #{i}，{n} 个区块内去打开它", {
+          h: <span className="mono">{(n.block_height ?? 0).toLocaleString("en-US")}</span>,
+          rarity: box,
+          place,
+          i: n.tx_index ?? 0,
+          n: CLAIM_BLOCKS,
+        }),
+        `/district/${n.bitmap_number}`,
+      ];
+    }
+    case "lucky":
+      return [
+        tn("区块 {h} 抽中你的街区 {place} 做今日幸运街区，你得到一枚徽章", { h: <span className="mono">{(n.block_height ?? 0).toLocaleString("en-US")}</span>, place }),
+        `/district/${n.bitmap_number}`,
+      ];
   }
 }
 
@@ -125,7 +146,7 @@ export function NotificationList() {
   if (!token) return <p className="muted">{t("连接钱包后可以看到你的通知。")}</p>;
   if (error) return <p className="error">{error}</p>;
   if (!list) return <p className="muted">{t("加载中…")}</p>;
-  if (!list.length) return <p className="muted">{t("还没有通知。有人回复、点赞、打赏你的帖子，关注你的街区或者申请入住时，会在这里告诉你。")}</p>;
+  if (!list.length) return <p className="muted">{t("还没有通知。有人回复、点赞、打赏你的帖子，关注你的街区或者申请入住，或者区块给你送来宝箱时，会在这里告诉你。")}</p>;
   return (
     <>
       <ul className="notifications">
@@ -134,7 +155,11 @@ export function NotificationList() {
           return (
             <li key={item.key} className={item.read ? "" : "unread"}>
               <Link href={href}>
-                <Avatar seed={item.first.actor} size={32} />
+                {item.first.kind === "treasure" || item.first.kind === "lucky" ? (
+                  <BadgeIcon kind={item.first.kind} rarity={item.first.kind === "lucky" ? "rare" : (item.first.rarity ?? "common")} />
+                ) : (
+                  <Avatar seed={item.first.actor} size={32} />
+                )}
                 <span className="grow">
                   <span>{text}</span>
                   {item.first.kind === "tip" && item.first.comment ? (

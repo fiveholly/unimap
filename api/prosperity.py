@@ -8,6 +8,7 @@ district that goes quiet falls back. Landmarks are always at the top level.
 import math
 import time
 
+from api import game
 from parcel_index.zones import LANDMARKS
 
 WEIGHTS = {
@@ -18,6 +19,7 @@ WEIGHTS = {
     "checkins30": 1,
     "neighbors30": 0.3,
     "tippers30": 2,
+    "lucky": 30,  # 1 while it is the lucky district (api/game.py)
 }
 THRESHOLDS = (0, 25, 80, 200, 450)
 TOP = len(THRESHOLDS)
@@ -82,6 +84,9 @@ def parts_for(cur, lo, hi):
         (WINDOW_DAYS, lo, hi),
     )
     add(cur.fetchall(), "tippers30")
+    lucky, _ = game.lucky_now(cur)
+    if lucky is not None:
+        add([(lucky, 1)], "lucky")
     cur.execute(
         "select bitmap_number, count(*) filter (where reply_to is null), count(*) filter (where reply_to is not null) "
         "from social.posts where removed_at is null and created_at > now() - make_interval(days => %s) "
