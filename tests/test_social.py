@@ -1441,7 +1441,7 @@ class SocialApi(unittest.TestCase):
             r = post(ALICE, f"/v1/districts/{DISTRICT}/agent", {"id": g["id"], "signature": ALICE.sign(g["message"])})
             self.assertEqual(r.status_code, 200, r.text)
             me = r.json()["agent"]
-            self.assertEqual((me["posts_per_day"], me["problem"], me["tasks"]), (2, None, ["welcome", "digest", "answers"]))
+            self.assertEqual((me["posts_per_day"], me["problem"], me["tasks"]), (2, None, ["welcome", "digest", "answers", "shop"]))
             self.assertEqual(view(BOB).status_code, 403)
             r = self.client.put(f"/v1/districts/{DISTRICT}/agent/settings", json={"persona": "叫我们的街「百号街」。", "tasks": ["welcome", "answers", "digest"]},
                                 headers=self.h(ALICE))
@@ -1611,7 +1611,7 @@ class SocialApi(unittest.TestCase):
             gp = post(BOB, pp("/prepare"), {"may_publish": True}).json()
             self.assertIn("parcel: #1", gp["message"])
             v = post(BOB, pp(), {"id": gp["id"], "signature": BOB.sign(gp["message"])}).json()
-            self.assertEqual((v["agent"]["parcel"], v["agent"]["tasks"], v["agent"]["auto_tasks"]), (1, ["answers"], ["answers"]))
+            self.assertEqual((v["agent"]["parcel"], v["agent"]["tasks"], v["agent"]["auto_tasks"]), (1, ["answers", "shop"], ["answers"]))
             self.assertEqual(self.client.put(pp("/settings"), json={"tasks": ["welcome"]}, headers=self.h(BOB)).status_code, 400)
             self.assertIsNone(view().json()["agent"])  # the district's own agent is a different one
             # It only answers people under Bob's own posts, and posts as the parcel's resident.
@@ -1653,6 +1653,127 @@ class SocialApi(unittest.TestCase):
             with self.conn.cursor() as cur:
                 cur.execute("delete from social.listings; delete from social.listings_checked; delete from land_events where inscription_id = 'p9i0'; "
                             "delete from social.notifications where kind like 'agent%%';")
+
+    def test_shop(self):
+        from api import agent, tips
+
+        class Lnurl:
+            paid, verify, asked = set(), True, None
+
+            @staticmethod
+            def pay_request(a):
+                return {"callback": "https://wallet.test/cb", "minSendable": 1000, "maxSendable": 10**11}
+
+            @staticmethod
+            def ask_invoice(a, sats, comment):
+                Lnurl.asked = (a, sats, comment)
+                return f"lnbc{sats * 10}n1shop", f"https://wallet.test/shop/{sats}" if Lnurl.verify else None
+
+            @staticmethod
+            def settled(url):
+                return url in Lnurl.paid
+
+        class FakeModel:
+            def __init__(self, script):
+                self.script, self.seen = list(script), []
+
+            def __call__(self, system, messages, tools):
+                self.seen.append((system, list(messages)))
+                calls = self.script.pop(0) if self.script else []
+                content = [{"type": "tool_use", "id": f"s{len(self.seen)}{i}", "name": name, "input": args} for i, (name, args) in enumerate(calls)]
+                return {"content": content or [{"type": "text", "text": "done"}], "stop_reason": "tool_use" if calls else "end_turn"}
+
+        post = lambda w, path, body=None: self.client.post(path, json=body, headers=self.h(w))
+        put = lambda w, path, body: self.client.put(path, json=body, headers=self.h(w))
+        get = lambda w, path: self.client.get(path, headers=self.h(w) if w else {})
+        shop = lambda w=None: get(w, f"/v1/districts/{DISTRICT}/shop").json()["items"]
+        with self.conn.cursor() as cur:
+            cur.execute("select address, lightning_address from social.lightning_addresses;")
+            kept = cur.fetchall()
+        old_lnurl, old_model = tips.lnurl, agent.model
+        tips.lnurl = Lnurl
+        try:
+            item = {"title": "街区壁纸包", "description": "四张 840 系列壁纸", "price_sats": 2100, "content": "https://files.test/wall.zip", "stock": 1}
+            # Only the district's owner sells as the district, a resident only for their own parcel, and only with a Lightning address.
+            self.assertEqual(post(BOB, f"/v1/districts/{DISTRICT}/shop", item).status_code, 403)
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.lightning_addresses;")
+            self.assertEqual(post(ALICE, f"/v1/districts/{DISTRICT}/shop", item).status_code, 409)
+            put(ALICE, "/v1/me/lightning", {"lightning_address": "alice@wallet.test"})
+            r = post(ALICE, f"/v1/districts/{DISTRICT}/shop", item)
+            self.assertEqual(r.status_code, 201, r.text)
+            mine = r.json()
+            self.assertEqual((mine["content"], mine["left"], mine["on_sale"]), (item["content"], 1, True))
+            put(BOB, "/v1/me/lightning", {"lightning_address": "bob@wallet.test"})
+            self.assertEqual(post(BOB, f"/v1/districts/{DISTRICT}/shop", {**item, "parcel": 2}).status_code, 403)
+            card = post(BOB, f"/v1/districts/{DISTRICT}/shop", {**item, "parcel": 1, "title": "#1 号地块明信片", "stock": None, "price_sats": 500}).json()
+            # Anyone sees what is on sale, but not what buyers get.
+            items = shop()
+            self.assertEqual([(i["title"], i["tx_index"]) for i in items], [("街区壁纸包", None), ("#1 号地块明信片", 1)])
+            self.assertNotIn("content", items[0])
+
+            # Buying: an invoice from the seller's own wallet; what was bought shows once the payment is confirmed.
+            self.assertEqual(post(ALICE, f"/v1/shop/items/{mine['id']}/buy").status_code, 400)
+            order = post(CAROL, f"/v1/shop/items/{mine['id']}/buy").json()
+            self.assertEqual((order["amount_sats"], Lnurl.asked[:2]), (2100, ("alice@wallet.test", 2100)))
+            self.assertEqual(get(BOB, f"/v1/shop/orders/{order['id']}").status_code, 404)
+            st = get(CAROL, f"/v1/shop/orders/{order['id']}").json()
+            self.assertEqual(st["status"], "pending")
+            self.assertNotIn("content", st)
+            Lnurl.paid.add("https://wallet.test/shop/2100")
+            with self.conn.cursor() as cur:
+                cur.execute("update social.shop_orders set checked_at = null;")
+            st = get(CAROL, f"/v1/shop/orders/{order['id']}").json()
+            self.assertEqual((st["status"], st["content"]), ("settled", item["content"]))
+            self.assertEqual([i["title"] for i in shop(CAROL)], ["#1 号地块明信片"])  # the last one is gone
+            self.assertEqual(post(BOB, f"/v1/shop/items/{mine['id']}/buy").status_code, 409)
+            seller_view = {i["id"]: i for i in shop(ALICE)}[mine["id"]]
+            self.assertEqual((seller_view["left"], seller_view["sold"], seller_view["on_sale"]), (0, 1, False))
+            n = self.client.get("/v1/notifications", headers=self.h(ALICE)).json()["notifications"][0]
+            self.assertEqual((n["kind"], n["actor"], n["title"], n["amount_sats"]), ("shop_sold", CAROL.address, "街区壁纸包", 2100))
+            mine_shop = get(CAROL, "/v1/me/shop").json()
+            self.assertEqual([(b["title"], b["content"]) for b in mine_shop["bought"]], [("街区壁纸包", item["content"])])
+            self.assertEqual([x["buyer"] for x in get(ALICE, "/v1/me/shop").json()["sold"]], [CAROL.address])
+            # A seller whose wallet can't confirm payments can't deliver, so nothing is sold.
+            Lnurl.verify = False
+            self.assertEqual(post(CAROL, f"/v1/shop/items/{card['id']}/buy").status_code, 502)
+            Lnurl.verify = True
+
+            # Its seller edits it; nobody else can. Selling the parcel takes its items down.
+            self.assertEqual(put(BOB, f"/v1/shop/items/{card['id']}", {"price_sats": 600}).json()["price_sats"], 600)
+            self.assertEqual(put(ALICE, f"/v1/shop/items/{card['id']}", {"price_sats": 1}).status_code, 404)
+            with self.conn.cursor() as cur:
+                cur.execute("update inscription_owners set address = %s where inscription_id = 'p1i0';", (CAROL.address,))
+            self.assertEqual(shop(), [])
+            self.assertEqual(post(ALICE, f"/v1/shop/items/{card['id']}/buy").status_code, 409)
+            with self.conn.cursor() as cur:
+                cur.execute("update inscription_owners set address = %s where inscription_id = 'p1i0';", (BOB.address,))
+            self.assertEqual(self.client.delete(f"/v1/shop/items/{card['id']}", headers=self.h(BOB)).status_code, 200)
+            self.assertEqual(shop(), [])
+
+            # The district's agent tells people about a new item, and can look the shop up to answer questions.
+            os.environ["ANTHROPIC_API_KEY"] = "test"
+            g = post(ALICE, f"/v1/districts/{DISTRICT}/agent/prepare", {}).json()
+            a = post(ALICE, f"/v1/districts/{DISTRICT}/agent", {"id": g["id"], "signature": ALICE.sign(g["message"])}).json()["agent"]
+            self.client.put(f"/v1/districts/{DISTRICT}/agent/settings", json={"tasks": ["shop"]}, headers=self.h(ALICE))
+            post(ALICE, f"/v1/districts/{DISTRICT}/shop", {**item, "title": "街区地图海报", "stock": None})
+            agent.model = fake = FakeModel([[("shop_items", {})], [("draft_post", {"task": "shop", "body": "新上架：街区地图海报，2100 聪。", "why": "new item"})]])
+            self.assertEqual(agent.run(a["id"])["drafts"], 1)
+            self.assertIn("[shop]", fake.seen[0][1][0]["content"])
+            self.assertIn("街区地图海报", fake.seen[0][1][0]["content"])
+            self.assertNotIn("街区壁纸包", fake.seen[0][1][0]["content"])  # listed before it was switched on
+            listed = json.loads(fake.seen[1][1][-1]["content"][0]["content"])
+            self.assertEqual([(x["title"], x["seller"]) for x in listed], [("街区地图海报", "owner")])
+            self.client.delete(f"/v1/districts/{DISTRICT}/agent", headers=self.h(ALICE))
+        finally:
+            tips.lnurl, agent.model = old_lnurl, old_model
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.shop_orders; delete from social.shop_items; delete from social.lightning_addresses; "
+                            "delete from social.notifications where kind in ('shop_sold', 'agent_draft'); delete from social.agent_drafts; "
+                            "delete from social.posts where agent_id is not null; delete from social.agents;")
+                for row in kept:
+                    cur.execute("insert into social.lightning_addresses (address, lightning_address) values (%s, %s);", tuple(row))
 
     def test_lnurl_checks(self):
         from api import tips

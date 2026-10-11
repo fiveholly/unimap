@@ -517,3 +517,50 @@ CREATE TABLE IF NOT EXISTS social.agent_payments (
 );
 ALTER TABLE social.posts ADD COLUMN IF NOT EXISTS agent_id int8 NULL; -- published by this agent
 CREATE INDEX IF NOT EXISTS posts_agent_idx ON social.posts USING btree (agent_id, created_at) WHERE agent_id IS NOT NULL;
+
+-- 店铺 (api/shop.py): digital goods a district's owner, or a resident for their parcel, sells there.
+-- Paid over Lightning straight to the seller's wallet; content is shown to the buyer once confirmed.
+CREATE TABLE IF NOT EXISTS social.shop_items (
+	id bigserial NOT NULL,
+	bitmap_number int4 NOT NULL,
+	tx_index int4 NULL, -- the parcel it is sold from; null for the district's owner
+	seller text NOT NULL, -- who held the place when listing; it is on sale only while they still do
+	title text NOT NULL,
+	description text NOT NULL DEFAULT '',
+	price_sats int8 NOT NULL,
+	content text NOT NULL, -- what the buyer gets: a link, a code, a text
+	stock int4 NULL, -- null: no limit
+	active bool NOT NULL DEFAULT true,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	updated_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT shop_items_pk PRIMARY KEY (id)
+);
+CREATE INDEX IF NOT EXISTS shop_items_district_idx ON social.shop_items USING btree (bitmap_number, id);
+CREATE TABLE IF NOT EXISTS social.shop_orders (
+	id bigserial NOT NULL,
+	item_id int8 NOT NULL,
+	buyer text NOT NULL,
+	seller text NOT NULL,
+	amount_sats int8 NOT NULL,
+	invoice text NOT NULL,
+	verify_url text NOT NULL, -- LUD-21; a shop only sells through wallets that can confirm
+	status text NOT NULL DEFAULT 'pending', -- pending | settled | expired
+	checked_at timestamptz NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	settled_at timestamptz NULL,
+	CONSTRAINT shop_orders_pk PRIMARY KEY (id)
+);
+CREATE INDEX IF NOT EXISTS shop_orders_item_idx ON social.shop_orders USING btree (item_id) WHERE status = 'settled';
+CREATE INDEX IF NOT EXISTS shop_orders_buyer_idx ON social.shop_orders USING btree (buyer, created_at);
+CREATE INDEX IF NOT EXISTS shop_orders_seller_idx ON social.shop_orders USING btree (seller, id) WHERE status = 'settled';
+-- Sale notifications carry the order, so each sale is told even from the same buyer.
+DO $$
+BEGIN
+	IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'social' AND table_name = 'notifications' AND column_name = 'order_id') THEN
+		ALTER TABLE social.notifications ADD COLUMN order_id int8 NULL;
+		ALTER TABLE social.notifications DROP CONSTRAINT IF EXISTS notifications_once;
+		ALTER TABLE social.notifications ADD CONSTRAINT notifications_once
+			UNIQUE NULLS NOT DISTINCT (address, kind, actor, bitmap_number, post_id, tip_id, block_height, order_id);
+	END IF;
+END $$;

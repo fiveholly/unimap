@@ -13,6 +13,7 @@ import { PetsCard } from "@/components/Pets";
 import { Polls } from "@/components/Polls";
 import { Contests } from "@/components/Contests";
 import { AgentPanel } from "@/components/Agent";
+import { Shop } from "@/components/Shop";
 import { BuyButton, OfferButton, OffersCard, ParcelsOnSale, ParkSaleCard, SellCard, useMarket } from "@/components/Market";
 import { PostCard, RoleBadge, type PostActions } from "@/components/PostCard";
 import { ProsperityCard } from "@/components/ProsperityCard";
@@ -38,7 +39,7 @@ export default function DistrictPage() {
   );
 }
 
-type Tab = "posts" | "polls" | "contests" | "agent" | "parcels" | "history";
+type Tab = "posts" | "polls" | "contests" | "shop" | "agent" | "parcels" | "history";
 
 function DistrictView() {
   const params = useParams<{ n: string }>();
@@ -59,7 +60,7 @@ function DistrictView() {
   const [won, setWon] = useState<string | null>(null); // a badge the last check-in earned
   const { tip } = useTip();
   const [selected, setSelected] = useState<number | null>(search.get("parcel") ? Number(search.get("parcel")) : null);
-  const [tab, setTab] = useState<Tab>((["contests", "agent", "parcels"] as const).find((k) => k === search.get("tab")) ?? "posts");
+  const [tab, setTab] = useState<Tab>((["contests", "shop", "agent", "parcels"] as const).find((k) => k === search.get("tab")) ?? "posts");
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -386,6 +387,7 @@ function DistrictView() {
             ["posts", t("动态")],
             ["polls", t("投票")],
             ["contests", t("活动")],
+            ["shop", t("店铺")],
             ...(isOwner || viewer?.role === "resident" ? [["agent", t("助手")]] : []),
             ["parcels", t("地块")],
             ["history", t("历史")],
@@ -425,6 +427,9 @@ function DistrictView() {
           )}
           {tab === "polls" && <Polls n={n} token={token} canVote={!!viewer && viewer.role !== "visitor"} isOwner={isOwner} />}
           {tab === "contests" && <Contests n={n} token={token} me={viewer?.address ?? null} isOwner={isOwner} />}
+          {tab === "shop" && (
+            <Shop n={n} token={token} seller={isOwner ? { parcel: null } : viewer?.role === "resident" && viewer.parcel != null && !viewer.muted ? { parcel: viewer.parcel } : null} />
+          )}
           {tab === "agent" && token && (isOwner ? <AgentPanel n={n} token={token} /> : viewer?.role === "resident" && viewer.parcel != null && <AgentPanel n={n} token={token} parcel={viewer.parcel} />)}
           {tab === "parcels" && <ParcelList land={land} txValues={txValues} own={own} token={token} onPick={(i) => setSelected(i)} />}
           {tab === "history" && (

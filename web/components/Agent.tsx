@@ -12,11 +12,12 @@ import { locale, t, tn } from "@/lib/i18n";
 
 const POLL_MS = 3000;
 const DAYS = [7, 30, 90];
-export const TASK_NAMES: Record<AgentTask, string> = { welcome: "欢迎新居民", digest: "每周街区周报", answers: "回答大家的问题" };
+export const TASK_NAMES: Record<AgentTask, string> = { welcome: "欢迎新居民", digest: "每周街区周报", answers: "回答大家的问题", shop: "介绍店里的新商品" };
 const TASK_HINTS: Record<AgentTask, string> = {
   welcome: "有人认领或搬进这里的地块时，写一条欢迎帖。",
   digest: "每 7 天总结一次这里发生了什么。",
   answers: "有人在你的帖子下面或者居民发帖时提问，起草一条回复。",
+  shop: "你在店铺里上了新商品时，写一条帖子介绍它。",
 };
 const PARCEL_HINTS: Partial<Record<AgentTask, string>> = { answers: "有人在你的帖子下面提问时，起草一条回复。" };
 const PROBLEMS: Record<AgentProblem, string> = {
@@ -29,7 +30,7 @@ const PROBLEMS: Record<AgentProblem, string> = {
 const problemText = (p: AgentProblem, parcel: number | null) => (p === "owner_changed" && parcel != null ? "你已经不持有这个地块，授权失效了。" : PROBLEMS[p]);
 /** Where an agent's routes live: the district's own, or a resident's for one parcel. */
 const agentPath = (n: number, parcel: number | null, sub = "") => `/v1/districts/${n}/agent${sub}${parcel != null ? `?parcel=${parcel}` : ""}`;
-const tasksOf = (parcel: number | null): AgentTask[] => (parcel != null ? ["answers"] : (Object.keys(TASK_NAMES) as AgentTask[]));
+const tasksOf = (parcel: number | null): AgentTask[] => (parcel != null ? ["answers", "shop"] : (Object.keys(TASK_NAMES) as AgentTask[]));
 const date = (iso: string) => new Date(iso).toLocaleDateString(locale(), { month: "short", day: "numeric" });
 
 let info: Promise<AgentInfo> | null = null;
