@@ -43,6 +43,7 @@ export const parcels: Record<string, string> = {
   "连续 {n} 天": "{n} days in a row",
   "{h}后可以再喂": "Feed again in {h}",
   "喂食": "Feed",
+  "换一个样子": "Pick its look",
   "{n} 小时": "{n} h",
   "{n} 分钟": "{n} min",
 };

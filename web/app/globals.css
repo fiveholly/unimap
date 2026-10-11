@@ -3208,6 +3208,28 @@ span.act.tip-btn {
 .pet-card.mood-starving .pet-stage {
   filter: saturate(0.6);
 }
+.pet-face {
+  border-radius: 10px;
+  object-fit: cover;
+  image-rendering: pixelated;
+  background: var(--surface-2);
+}
+.pet-faces {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.pet-faces button {
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: none;
+  line-height: 0;
+}
+.pet-faces button.on {
+  border-color: var(--accent-text);
+}
+.pet-card.mood-full .pet-stage > .pet-face,
 .pet-card.mood-full .pet-picture {
   animation: pet-bob 2.4s ease-in-out infinite;
 }
@@ -3236,6 +3258,7 @@ span.act.tip-btn {
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  .pet-card.mood-full .pet-stage > .pet-face,
   .pet-card.mood-full .pet-picture,
   .pet-hearts {
     animation: none;

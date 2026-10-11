@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { PetPicture } from "./Pets";
 import { api, type CaredPet } from "@/lib/api";
 import { t } from "@/lib/i18n";
-import { amountText, PET_KEYS, PETS } from "@/lib/pets";
+import { amountText, inscriptionImage, PET_KEYS, PETS, type PetKey } from "@/lib/pets";
 
 const MOODS: Record<CaredPet["mood"], string> = { full: "吃饱了", ok: "心情不错", hungry: "饿了", starving: "饿坏了" };
 
@@ -73,6 +73,13 @@ function PetCard({ pet, token, onChange }: { pet: CaredPet; token: string; onCha
       setBusy(false);
     }
   };
+  const setFace = async (face: string) => {
+    try {
+      onChange(await api<CaredPet>(`/v1/me/pets/${pet.asset}`, { method: "PUT", token, body: { face } }));
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
   const saveName = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -85,7 +92,7 @@ function PetCard({ pet, token, onChange }: { pet: CaredPet; token: string; onCha
   return (
     <li className={`pet-card mood-${pet.mood}`}>
       <div className="pet-stage">
-        <PetPicture asset={pet.asset} tier={pet.tier} size={104} />
+        <PetFace asset={pet.asset} tier={pet.tier} face={pet.face} size={104} />
         {hearts > 0 && (
           <span key={hearts} className="pet-hearts" aria-hidden>
             ♥ ♥ ♥
@@ -134,6 +141,15 @@ function PetCard({ pet, token, onChange }: { pet: CaredPet; token: string; onCha
             {t("喂食")}
           </button>
         )}
+        {pet.items.length > 1 && (
+          <div className="pet-faces" role="group" aria-label={t("换一个样子")}>
+            {pet.items.map((id) => (
+              <button key={id} type="button" className={id === pet.face ? "on" : ""} aria-pressed={id === pet.face} aria-label={id} onClick={() => setFace(id)}>
+                <PetFace asset={pet.asset} tier={pet.tier} face={id} size={36} />
+              </button>
+            ))}
+          </div>
+        )}
         {error && <p className="error small">{error}</p>}
       </div>
     </li>
@@ -143,4 +159,15 @@ function PetCard({ pet, token, onChange }: { pet: CaredPet; token: string; onCha
 function hoursText(ms: number) {
   const min = Math.ceil(ms / 60_000);
   return min >= 60 ? t("{n} 小时", { n: Math.ceil(min / 60) }) : t("{n} 分钟", { n: min });
+}
+
+/** The pet's own inscription when it has one, else the drawing used on the map (also when the
+ * picture won't load, or isn't an image). */
+function PetFace({ asset, tier, face, size }: { asset: PetKey; tier: number; face: string | null; size: number }) {
+  const [failed, setFailed] = useState<string | null>(null);
+  if (!face || failed === face) return <PetPicture asset={asset} tier={tier} size={size} />;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img className="pet-face" src={inscriptionImage(face)} alt="" width={size} height={size} loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(face)} />
+  );
 }

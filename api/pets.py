@@ -1,6 +1,8 @@
 """养宠物: the pets a wallet holds (api/holdings.py) live on 我的土地, and their owner can feed
 them and give them names.
 
+A collection's pet looks like one of the inscriptions the wallet holds (its "face", the first
+one unless the owner picks another); a rune's pet, which has no picture of its own, is drawn.
 A pet is there while the wallet group holds its asset (tier above 0); its care is kept under the
 group's main address, so linking or unlinking a wallet doesn't reset it, and selling the asset
 and buying it back finds the pet as it was. Feeding is free and only for fun: once every
@@ -40,12 +42,12 @@ def mood(fed_at, now):
 
 
 def _care(cur, main):
-    cur.execute("select asset, name, affection, fed_at, streak, last_day from social.pet_care where address = %s;", (main,))
+    cur.execute("select asset, name, affection, fed_at, streak, last_day, face from social.pet_care where address = %s;", (main,))
     return {r[0]: r[1:] for r in cur.fetchall()}
 
 
-def _view(asset, amount, care, now):
-    name, affection, fed_at, streak, last_day = care or (None, 0, None, 0, None)
+def _view(asset, amount, care, items, now):
+    name, affection, fed_at, streak, last_day, face = care or (None, 0, None, 0, None, None)
     lvl = level(affection)
     # A streak only lasts while the next feed comes the next day at the latest.
     if last_day is not None and last_day < now.date() - timedelta(days=1):
@@ -60,6 +62,8 @@ def _view(asset, amount, care, now):
         "fed_at": fed_at.isoformat() if fed_at else None,
         "can_feed_at": (fed_at + timedelta(hours=FEED_HOURS)).isoformat() if fed_at else None,
         "mood": mood(fed_at, now),
+        "items": items,
+        "face": face if face in items else (items[0] if items else None),
     }
 
 
@@ -68,7 +72,8 @@ def pets(cur, address, now=None):
     now = now or datetime.now(timezone.utc)
     held = holdings._amounts(cur, [address]).get(address, {})
     care = _care(cur, wallets.main_of(cur, address))
-    return [_view(a, held[a], care.get(a), now) for a in holdings.ASSETS if holdings.tier(a, held.get(a, 0)) > 0]
+    items = holdings.held_items(cur, address)
+    return [_view(a, held[a], care.get(a), items.get(a, []), now) for a in holdings.ASSETS if holdings.tier(a, held.get(a, 0)) > 0]
 
 
 def _refresh_unchecked(address):
@@ -124,18 +129,23 @@ def feed(asset: str, address: str = Depends(current_address)):
         return _pet(cur, address, asset)
 
 
-class NameBody(BaseModel):
+class PetBody(BaseModel):
     name: str | None = Field(default=None, max_length=20)  # empty or null: no name
+    face: str | None = None  # one of the pet's items
 
 
 @router.put("/v1/me/pets/{asset}")
-def rename(asset: str, req: NameBody, address: str = Depends(current_address)):
-    name = (req.name or "").strip() or None
+def update(asset: str, req: PetBody, address: str = Depends(current_address)):
+    """Name the pet, or pick which of its inscriptions it looks like; fields left out stay."""
     with cursor() as cur:
-        _pet(cur, address, asset)
-        cur.execute(
-            "insert into social.pet_care (address, asset, name) values (%s, %s, %s) "
-            "on conflict (address, asset) do update set name = excluded.name;",
-            (wallets.main_of(cur, address), asset, name),
-        )
+        pet = _pet(cur, address, asset)
+        main = wallets.main_of(cur, address)
+        cur.execute("insert into social.pet_care (address, asset) values (%s, %s) on conflict do nothing;", (main, asset))
+        if "name" in req.model_fields_set:
+            name = (req.name or "").strip() or None
+            cur.execute("update social.pet_care set name = %s where address = %s and asset = %s;", (name, main, asset))
+        if "face" in req.model_fields_set:
+            if req.face not in pet["items"]:
+                raise HTTPException(400, "pick one of the inscriptions this pet has")
+            cur.execute("update social.pet_care set face = %s where address = %s and asset = %s;", (req.face, main, asset))
         return _pet(cur, address, asset)

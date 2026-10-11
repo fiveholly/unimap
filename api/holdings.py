@@ -45,6 +45,7 @@ MAX_SHOWN = 3  # pets one district can show at once; the tile has room for three
 REFRESH_HOURS = 6
 MIN_REFRESH_MINUTES = 10  # an owner's 刷新 can't ask the provider more often than this
 COLLECTIONS_DIR = Path(os.getenv("HOLDINGS_COLLECTIONS_DIR") or Path(__file__).parent / "collections")
+ITEMS = 12  # inscriptions kept per asset and address, for the pet's picture (api/pets.py)
 PAGE = 60
 MAX_PAGES = 20  # inscriptions looked at per address: PAGE * MAX_PAGES
 
@@ -116,9 +117,10 @@ def _provider():
 
 
 def fetch(address):
-    """{asset: amount} the address holds now, asking the provider."""
+    """({asset: amount}, {asset: [inscription id]}) the address holds now, asking the provider.
+    The ids are the first ITEMS of each collection held."""
     p = _provider()
-    out = {}
+    out, items = {}, {}
     runes = [a for a, spec in ASSETS.items() if spec["kind"] == "rune"]
     if runes:
         balances = p.rune_balances(address)
@@ -131,8 +133,10 @@ def fetch(address):
             for a in collections:
                 if inscription_id in collection(ASSETS[a]["collection"]):
                     counts[a] += 1
+                    if counts[a] <= ITEMS:
+                        items.setdefault(a, []).append(inscription_id)
         out.update(counts)
-    return out
+    return out, items
 
 
 def refresh(address, min_age_minutes=0):
@@ -147,11 +151,11 @@ def refresh(address, min_age_minutes=0):
         if min_age_minutes and row and row[0]:
             return False
     try:
-        amounts = fetch(address)
+        amounts, items = fetch(address)
         error = None
     except Exception as e:  # the provider is outside our control; keep serving the old cache
         log.warning("holdings for %s: %s", address, e)
-        amounts, error = None, str(e)[:300]
+        amounts, items, error = None, {}, str(e)[:300]
     with cursor() as cur:
         if amounts is not None:
             cur.execute("delete from social.holdings where address = %s;", (address,))
@@ -160,6 +164,14 @@ def refresh(address, min_age_minutes=0):
                     cur.execute(
                         "insert into social.holdings (address, asset, amount) values (%s, %s, %s);",
                         (address, asset, amount),
+                    )
+            cur.execute("delete from social.holding_items where address = %s;", (address,))
+            for asset, ids in items.items():
+                for i, inscription_id in enumerate(ids):
+                    cur.execute(
+                        "insert into social.holding_items (address, asset, inscription_id, position) values (%s, %s, %s, %s) "
+                        "on conflict do nothing;",
+                        (address, asset, inscription_id, i),
                     )
         cur.execute(
             "insert into social.holdings_checked (address, checked_at, error) values (%s, now(), %s) "
@@ -191,6 +203,20 @@ def _amounts(cur, owners):
         for owner in by_address[address]:
             held = out.setdefault(owner, {})
             held[asset] = held.get(asset, 0) + amount
+    return out
+
+
+def held_items(cur, owner):
+    """{asset: [inscription id]} held across owner's linked wallets, main address first."""
+    addresses = wallets.group(cur, owner)
+    cur.execute(
+        "select asset, inscription_id from social.holding_items where address = any(%s) "
+        "order by array_position(%s, address), position;",
+        (addresses, addresses),
+    )
+    out = {}
+    for asset, inscription_id in cur.fetchall():
+        out.setdefault(asset, []).append(inscription_id)
     return out
 
 

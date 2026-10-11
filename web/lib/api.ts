@@ -240,6 +240,8 @@ export type CaredPet = {
   fed_at: string | null;
   can_feed_at: string | null;
   mood: "full" | "ok" | "hungry" | "starving";
+  items: string[]; // the wallet's own inscriptions of this collection, a few at most; none for a rune
+  face: string | null; // the one the pet looks like
 };
 
 export type Ranking = { bitmap_number: number; name: string; zone: string | null; owner: string | null; score: number; level: number };

@@ -498,7 +498,20 @@ function holdingsOf(address: string | null, n: number): Partial<Record<PetKey, n
   };
 }
 // 我的宠物, as api/pets.py: the dog has been looked after for a few days, the others are new.
-type DemoCare = { name: string | null; affection: number; fed_at: number | null; streak: number; last_day: string | null };
+type DemoCare = { name: string | null; affection: number; fed_at: number | null; streak: number; last_day: string | null; face?: string | null };
+// The demo frogs are real Bitcoin Frogs (their pictures load from ordinals.com); the other
+// collections have no made-up inscriptions, so their pets are drawn.
+const DEMO_ITEMS: Partial<Record<PetKey, string[]>> = {
+  frog: [
+    "6f7db76f94fdfbba79be9af20befc936d7fcc53cc5b0911739b9ff377e793ba9i0",
+    "7fcdcc1d3957390a2976e6dafa01ebb0b01ba8b0ffbc119b8f1911e18591321fi0",
+    "79e4567ff1ef86d80a3156393fa730c00a56d3d70548029aa82d3d8b63a87a81i0",
+    "ebe961f34d2ccf9d08b478db174a990beff3ad0ced56527168f25cd9ef4ad605i0",
+    "4709d556f22f35ec203a3b7d9ca35d68e4314b4ccd4bea27445c784a74a22d11i0",
+    "18262584040e850500cbad95b025c007e01e08bda42e4746ec00dfe4179cfc28i0",
+    "938b88de10dbdfa91d71103c72a515fe7d5271214a02ba0903373cba02565017i0",
+  ],
+};
 const FEED_HOURS = 6, HOUR = 3_600_000;
 const dayOf = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 function careOf(k: PetKey): DemoCare {
@@ -516,6 +529,8 @@ function caredPet(k: PetKey): CaredPet {
     streak: c.last_day && c.last_day >= dayOf(now - DAY * 1000) ? c.streak : 0,
     fed_at: c.fed_at == null ? null : new Date(c.fed_at).toISOString(),
     can_feed_at: c.fed_at == null ? null : new Date(c.fed_at + FEED_HOURS * HOUR).toISOString(),
+    items: DEMO_ITEMS[k] ?? [],
+    face: c.face && DEMO_ITEMS[k]?.includes(c.face) ? c.face : (DEMO_ITEMS[k]?.[0] ?? null),
     mood: c.fed_at == null || (hours >= 24 && hours < 72) ? "hungry" : hours < FEED_HOURS ? "full" : hours < 24 ? "ok" : "starving",
   };
 }
@@ -1331,9 +1346,15 @@ function route(path: string, opts: Opts): unknown {
       c.fed_at = now;
       c.last_day = today;
     } else {
-      const name = String(body.name ?? "").trim();
-      if (name.length > 20) fail(422, "a name is at most 20 characters");
-      c.name = name || null;
+      if ("name" in body) {
+        const name = String(body.name ?? "").trim();
+        if (name.length > 20) fail(422, "a name is at most 20 characters");
+        c.name = name || null;
+      }
+      if ("face" in body) {
+        if (!DEMO_ITEMS[k]?.includes(String(body.face))) fail(400, "pick one of the inscriptions this pet has");
+        c.face = String(body.face);
+      }
     }
     s.petCare = { ...s.petCare, [k]: c };
     save();

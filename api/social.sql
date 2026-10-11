@@ -587,6 +587,15 @@ CREATE TABLE IF NOT EXISTS social.parcel_showcase (
 	CONSTRAINT parcel_showcase_pk PRIMARY KEY (bitmap_number, tx_index)
 );
 
+-- The inscriptions behind each collection holding, a few per address, for pets' pictures.
+CREATE TABLE IF NOT EXISTS social.holding_items (
+	address text NOT NULL,
+	asset text NOT NULL,
+	inscription_id text NOT NULL,
+	position int4 NOT NULL,
+	CONSTRAINT holding_items_pk PRIMARY KEY (address, inscription_id)
+);
+
 -- 养宠物 (api/pets.py): a wallet group's care for each pet it holds, under its main address.
 CREATE TABLE IF NOT EXISTS social.pet_care (
 	address text NOT NULL,
@@ -596,5 +605,6 @@ CREATE TABLE IF NOT EXISTS social.pet_care (
 	fed_at timestamptz NULL,
 	streak int4 NOT NULL DEFAULT 0,
 	last_day date NULL,
+	face text NULL, -- the inscription its picture shows, one of the group's own
 	CONSTRAINT pet_care_pk PRIMARY KEY (address, asset)
 );

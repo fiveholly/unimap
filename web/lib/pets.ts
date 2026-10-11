@@ -41,3 +41,7 @@ export function amountText(key: PetKey, amount: string): string {
 export function nextTier(key: PetKey, tier: number): number | null {
   return tier < 3 ? PETS[key].tiers[tier] : null;
 }
+
+/** An inscription's own picture, served by an ord server (ordinals.com unless set). */
+const ORD = (process.env.NEXT_PUBLIC_ORD_CONTENT_URL || "https://ordinals.com").replace(/\/$/, "");
+export const inscriptionImage = (id: string) => `${ORD}/content/${encodeURIComponent(id)}`;

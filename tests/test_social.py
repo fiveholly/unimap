@@ -627,10 +627,31 @@ class SocialApi(unittest.TestCase):
                 return {"DOGGOTOTHEMOON": Decimal(600000)} if address == BOB.address else {}
 
             def inscription_ids(self, address):
-                return iter([])
+                return iter(["f1i0", "zzi0", "f2i0"] if address == BOB.address else [])
 
+        import json
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        (holdings.Path(d) / "bitcoin-frogs.json").write_text(json.dumps(["f1i0", "f2i0"]))
+        old_dir, holdings.COLLECTIONS_DIR = holdings.COLLECTIONS_DIR, holdings.Path(d)
+        holdings.collection.cache_clear()
         holdings.provider = Fake()
         try:
+            # A collection's pet looks like one of the wallet's own inscriptions, the first by default.
+            frog = next(p for p in self.client.get("/v1/me/pets", headers=self.h(BOB)).json()["pets"] if p["asset"] == "frog")
+            self.assertEqual((frog["items"], frog["face"]), (["f1i0", "f2i0"], "f1i0"))
+            self.assertEqual(self.client.put("/v1/me/pets/frog", json={"face": "zzi0"}, headers=self.h(BOB)).status_code, 400)
+            frog = self.client.put("/v1/me/pets/frog", json={"face": "f2i0"}, headers=self.h(BOB)).json()
+            self.assertEqual(frog["face"], "f2i0")
+            # Naming leaves the face as it is.
+            self.assertEqual(self.client.put("/v1/me/pets/frog", json={"name": "呱呱"}, headers=self.h(BOB)).json()["face"], "f2i0")
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.pet_care;")
+            holdings.collection.cache_clear()
+            holdings.COLLECTIONS_DIR = old_dir
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.holdings; delete from social.holdings_checked; delete from social.holding_items;")
             # Only what the wallet holds is a pet; a new one is hungry and level 1.
             self.assertEqual(self.client.get("/v1/me/pets", headers=self.h(ALICE)).json()["pets"], [])
             [dog] = self.client.get("/v1/me/pets", headers=self.h(BOB)).json()["pets"]
@@ -657,8 +678,11 @@ class SocialApi(unittest.TestCase):
             self.assertEqual([pets.mood(now - timedelta(hours=h), now) for h in (1, 10, 30, 100)], ["full", "ok", "hungry", "starving"])
         finally:
             holdings.provider = None
+            holdings.COLLECTIONS_DIR = old_dir
+            holdings.collection.cache_clear()
             with self.conn.cursor() as cur:
-                cur.execute("delete from social.pet_care; delete from social.holdings; delete from social.holdings_checked;")
+                cur.execute("delete from social.pet_care; delete from social.holdings; delete from social.holdings_checked; "
+                            "delete from social.holding_items;")
 
     def test_search(self):
         with self.conn.cursor() as cur:
