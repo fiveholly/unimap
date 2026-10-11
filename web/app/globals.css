@@ -3179,3 +3179,106 @@ span.act.tip-btn {
   color: var(--accent);
   font-weight: 600;
 }
+
+/* ---------- 我的宠物 (components/PetCare.tsx) ---------- */
+.pet-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 12px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.pet-card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.pet-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  padding: 14px 0 6px;
+  background: radial-gradient(circle at 50% 70%, rgba(143, 163, 94, 0.28), transparent 70%);
+}
+.pet-card.mood-hungry .pet-stage,
+.pet-card.mood-starving .pet-stage {
+  filter: saturate(0.6);
+}
+.pet-card.mood-full .pet-picture {
+  animation: pet-bob 2.4s ease-in-out infinite;
+}
+@keyframes pet-bob {
+  50% {
+    transform: translateY(-4px);
+  }
+}
+.pet-hearts {
+  position: absolute;
+  top: 34%;
+  color: #f07b8f;
+  font-size: 18px;
+  letter-spacing: 6px;
+  pointer-events: none;
+  animation: pet-hearts 1.4s ease-out forwards;
+}
+@keyframes pet-hearts {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(0.8);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-42px) scale(1.2);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pet-card.mood-full .pet-picture,
+  .pet-hearts {
+    animation: none;
+  }
+}
+.pet-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px 14px;
+}
+.pet-body form input {
+  flex: 1;
+  min-width: 0;
+}
+.pet-rename {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-text);
+}
+.pet-level {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pet-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.pet-bar i {
+  display: block;
+  height: 100%;
+  background: #f07b8f;
+}
+.pet-mood.full,
+.pet-mood.ok {
+  color: var(--fg-2);
+}
+.pet-mood.hungry,
+.pet-mood.starving {
+  color: #f2b544;
+}

@@ -586,3 +586,15 @@ CREATE TABLE IF NOT EXISTS social.parcel_showcase (
 	updated_at timestamptz NOT NULL DEFAULT now(),
 	CONSTRAINT parcel_showcase_pk PRIMARY KEY (bitmap_number, tx_index)
 );
+
+-- 养宠物 (api/pets.py): a wallet group's care for each pet it holds, under its main address.
+CREATE TABLE IF NOT EXISTS social.pet_care (
+	address text NOT NULL,
+	asset text NOT NULL,
+	name text NULL,
+	affection int4 NOT NULL DEFAULT 0,
+	fed_at timestamptz NULL,
+	streak int4 NOT NULL DEFAULT 0,
+	last_day date NULL,
+	CONSTRAINT pet_care_pk PRIMARY KEY (address, asset)
+);

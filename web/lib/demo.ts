@@ -3,7 +3,7 @@
 // here from deterministic fake data; what the visitor does (posts, likes, follows, profile
 // edits) is kept in localStorage, and "重置演示数据" clears it.
 
-import type { MarketOffer, OfferQuote, Agent, AgentDraft, AgentGrant, AgentInfo, AgentTask, AgentView, Application, Badge, Contest, MarketListing, ContestMetric, District, DistrictGame, Draw, Game, Season, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Metrics, ShopBought, ShopItem, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
+import type { MarketOffer, OfferQuote, Agent, AgentDraft, AgentGrant, AgentInfo, AgentTask, AgentView, Application, Badge, CaredPet, Contest, MarketListing, ContestMetric, District, DistrictGame, Draw, Game, Season, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Metrics, ShopBought, ShopItem, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
 import { CLAIM_BLOCKS, pick, rarityOf, ROUND, roundOf, SEASON, seasonOf, sha256, type Rarity } from "./game";
 import { connected } from "./parks";
 import { MAX_SHOWN, PET_KEYS, PETS, type Pet, type PetKey } from "./pets";
@@ -147,6 +147,7 @@ type State = {
   reports?: { post_id: number; reporter: string; reason: string; note: string; created_at: string; resolved?: boolean }[];
   bans?: Ban[];
   lightning?: string | null; // the visitor's Lightning address for tips
+  petCare?: Partial<Record<PetKey, DemoCare>>; // 我的宠物: feeding and names (api/pets.py)
   nostr?: string | null; // the visitor's linked Nostr key
   parcelPet?: PetKey | null; // the pet the visitor shows on their parcel
   tips?: DemoTip[];
@@ -496,6 +497,29 @@ function holdingsOf(address: string | null, n: number): Partial<Record<PetKey, n
     ...(hash(n + 66) < 0.3 ? { [extra]: 1 + Math.floor(hash(n + 67) * 12) } : {}),
   };
 }
+// 我的宠物, as api/pets.py: the dog has been looked after for a few days, the others are new.
+type DemoCare = { name: string | null; affection: number; fed_at: number | null; streak: number; last_day: string | null };
+const FEED_HOURS = 6, HOUR = 3_600_000;
+const dayOf = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+function careOf(k: PetKey): DemoCare {
+  const c = load().petCare?.[k];
+  if (c) return c;
+  return k === "dog" ? { name: null, affection: 140, fed_at: Date.now() - 8 * HOUR, streak: 4, last_day: dayOf(Date.now() - DAY * 1000) } : { name: null, affection: 0, fed_at: null, streak: 0, last_day: null };
+}
+function caredPet(k: PetKey): CaredPet {
+  const held = holdingsOf(DEMO_ADDRESS, 0)[k] ?? 0, c = careOf(k), now = Date.now();
+  const level = Math.min(10, 1 + Math.floor(Math.sqrt(Math.floor(c.affection / 30))));
+  const hours = c.fed_at == null ? Infinity : (now - c.fed_at) / HOUR;
+  return {
+    asset: k, tier: petTier(k, held), amount: String(held), name: c.name, affection: c.affection, level,
+    next_level_at: level < 10 ? 30 * level ** 2 : null,
+    streak: c.last_day && c.last_day >= dayOf(now - DAY * 1000) ? c.streak : 0,
+    fed_at: c.fed_at == null ? null : new Date(c.fed_at).toISOString(),
+    can_feed_at: c.fed_at == null ? null : new Date(c.fed_at + FEED_HOURS * HOUR).toISOString(),
+    mood: c.fed_at == null || (hours >= 24 && hours < 72) ? "hungry" : hours < FEED_HOURS ? "full" : hours < 24 ? "ok" : "starving",
+  };
+}
+const myPets = () => PET_KEYS.filter((k) => petTier(k, holdingsOf(DEMO_ADDRESS, 0)[k] ?? 0) > 0);
 const petTier = (k: PetKey, amount: number) => PETS[k].tiers.filter((t) => amount >= t).length;
 function petsAt(n: number): Pet[] {
   const owner = ownerOf(n);
@@ -1292,6 +1316,28 @@ function route(path: string, opts: Opts): unknown {
     const who = post ? post.author.address : ownerOf(Number(url.searchParams.get("bitmap_number")));
     if (!who || strHash(who) % 3 !== 0 || !tippable(who)) return { zap: null };
     return { zap: { pubkey: (strHash(who).toString(16).padStart(8, "0")).repeat(8), event_id: post?.nostr_event_id ?? null } };
+  }
+  if (p === "/v1/me/pets") return needMe() && { pets: myPets().map(caredPet), feed_hours: FEED_HOURS };
+  if ((m = p.match(/^\/v1\/me\/pets\/(\w+)(\/feed)?$/))) {
+    needMe();
+    const k = m[1] as PetKey;
+    if (!myPets().includes(k)) fail(404, "your wallets don't hold this pet");
+    const c = { ...careOf(k) }, now = Date.now();
+    if (m[2]) {
+      if (c.fed_at != null && now < c.fed_at + FEED_HOURS * HOUR) fail(409, "it's still full; feed it again later");
+      const today = dayOf(now);
+      c.streak = c.last_day === today ? c.streak : c.last_day === dayOf(now - DAY * 1000) ? c.streak + 1 : 1;
+      c.affection += 10 + Math.min(c.streak - 1, 7);
+      c.fed_at = now;
+      c.last_day = today;
+    } else {
+      const name = String(body.name ?? "").trim();
+      if (name.length > 20) fail(422, "a name is at most 20 characters");
+      c.name = name || null;
+    }
+    s.petCare = { ...s.petCare, [k]: c };
+    save();
+    return caredPet(k);
   }
   if (p === "/v1/me/lightning") {
     needMe();

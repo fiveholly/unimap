@@ -227,6 +227,21 @@ export type Poll = {
   closed: boolean;
 };
 
+/** GET /v1/me/pets: a pet the wallet holds, with its care (api/pets.py). */
+export type CaredPet = {
+  asset: PetKey;
+  tier: number;
+  amount: string;
+  name: string | null;
+  affection: number;
+  level: number;
+  next_level_at: number | null;
+  streak: number;
+  fed_at: string | null;
+  can_feed_at: string | null;
+  mood: "full" | "ok" | "hungry" | "starving";
+};
+
 export type Ranking = { bitmap_number: number; name: string; zone: string | null; owner: string | null; score: number; level: number };
 
 export type Me = {

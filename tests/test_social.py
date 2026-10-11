@@ -616,6 +616,50 @@ class SocialApi(unittest.TestCase):
                 cur.execute(f"update inscription_owners set address = '{BOB.address}' where inscription_id = 'p1i0'; "
                             "delete from social.parcel_showcase; delete from social.holdings; delete from social.holdings_checked;")
 
+    def test_pet_care(self):
+        from datetime import datetime, timedelta, timezone
+        from decimal import Decimal
+
+        from api import holdings, pets
+
+        class Fake:
+            def rune_balances(self, address):
+                return {"DOGGOTOTHEMOON": Decimal(600000)} if address == BOB.address else {}
+
+            def inscription_ids(self, address):
+                return iter([])
+
+        holdings.provider = Fake()
+        try:
+            # Only what the wallet holds is a pet; a new one is hungry and level 1.
+            self.assertEqual(self.client.get("/v1/me/pets", headers=self.h(ALICE)).json()["pets"], [])
+            [dog] = self.client.get("/v1/me/pets", headers=self.h(BOB)).json()["pets"]
+            self.assertEqual((dog["asset"], dog["tier"], dog["level"], dog["affection"], dog["mood"]), ("dog", 1, 1, 0, "hungry"))
+            self.assertEqual(self.client.post("/v1/me/pets/cat/feed", headers=self.h(BOB)).status_code, 404)
+            self.assertEqual(self.client.post("/v1/me/pets/dog/feed", headers=self.h(ALICE)).status_code, 404)
+            # A feed fills it up until FEED_HOURS have passed.
+            dog = self.client.post("/v1/me/pets/dog/feed", headers=self.h(BOB)).json()
+            self.assertEqual((dog["affection"], dog["streak"], dog["mood"]), (pets.AFFECTION, 1, "full"))
+            self.assertEqual(self.client.post("/v1/me/pets/dog/feed", headers=self.h(BOB)).status_code, 409)
+            # Fed yesterday, it comes back hungry, and today's feed keeps the streak going.
+            with self.conn.cursor() as cur:
+                cur.execute("update social.pet_care set fed_at = now() - interval '30 hours', last_day = current_date - 1;")
+            self.assertEqual(self.client.get("/v1/me/pets", headers=self.h(BOB)).json()["pets"][0]["mood"], "hungry")
+            dog = self.client.post("/v1/me/pets/dog/feed", headers=self.h(BOB)).json()
+            self.assertEqual((dog["affection"], dog["streak"]), (2 * pets.AFFECTION + 1, 2))
+            # Names are trimmed and can be cleared.
+            self.assertEqual(self.client.put("/v1/me/pets/dog", json={"name": "  旺财 "}, headers=self.h(BOB)).json()["name"], "旺财")
+            self.assertEqual(self.client.put("/v1/me/pets/dog", json={"name": "x" * 21}, headers=self.h(BOB)).status_code, 422)
+            self.assertIsNone(self.client.put("/v1/me/pets/dog", json={"name": ""}, headers=self.h(BOB)).json()["name"])
+            # Levels and moods.
+            self.assertEqual([pets.level(a) for a in (0, 29, 30, 119, 120, 10**6)], [1, 1, 2, 2, 3, pets.MAX_LEVEL])
+            now = datetime.now(timezone.utc)
+            self.assertEqual([pets.mood(now - timedelta(hours=h), now) for h in (1, 10, 30, 100)], ["full", "ok", "hungry", "starving"])
+        finally:
+            holdings.provider = None
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.pet_care; delete from social.holdings; delete from social.holdings_checked;")
+
     def test_search(self):
         with self.conn.cursor() as cur:
             cur.execute(
