@@ -148,6 +148,7 @@ type State = {
   bans?: Ban[];
   lightning?: string | null; // the visitor's Lightning address for tips
   nostr?: string | null; // the visitor's linked Nostr key
+  parcelPet?: PetKey | null; // the pet the visitor shows on their parcel
   tips?: DemoTip[];
   boot?: number; // when this demo began: a new block is "mined" every DEMO_BLOCK_MS after it
   badges?: Badge[]; // the visitor's
@@ -502,6 +503,24 @@ function petsAt(n: number): Pet[] {
   const chosen = owner === DEMO_ADDRESS ? load().showcase?.[n] ?? [] : (Object.keys(held) as PetKey[]);
   return chosen.flatMap((k) => (petTier(k, held[k] ?? 0) ? [{ asset: k, tier: petTier(k, held[k]!), amount: String(held[k]) }] : []));
 }
+/** {tx_index: "dog:2"}: residents' pets on their parcels; a made-up quarter of them show one. */
+function parcelPetsAt(n: number): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const i of parcelIndexes(n)) {
+    if (n === OWN_PARCEL.bitmap_number && i === OWN_PARCEL.tx_index) {
+      const k = load().parcelPet;
+      const tier = k ? petTier(k, holdingsOf(DEMO_ADDRESS, n)[k] ?? 0) : 0;
+      if (k && tier) out[i] = `${k}:${tier}`;
+    } else if (hash(n * 7 + i) < 0.25) {
+      out[i] = `${PET_KEYS[Math.floor(hash(n * 11 + i) * PET_KEYS.length)]}:${1 + Math.floor(hash(n * 13 + i) * 3)}`;
+    }
+  }
+  return out;
+}
+function parcelShowcaseView(n: number, i: number) {
+  const held = holdingsOf(DEMO_ADDRESS, n);
+  return { chosen: load().parcelPet ?? null, held: PET_KEYS.map((k) => ({ asset: k, tier: petTier(k, held[k] ?? 0), amount: String(held[k] ?? 0) })), shown: parcelPetsAt(n)[i] ?? null };
+}
 function showcaseView(n: number): Showcase {
   const held = holdingsOf(DEMO_ADDRESS, n);
   return {
@@ -796,6 +815,7 @@ function district(n: number, me: string | null): District {
     park: parkOf(n),
     recruit: recruitAt(n, me),
     pets: petsAt(n),
+    parcel_pets: parcelPetsAt(n),
     tips: districtTips(n),
     owner_tippable: tippable(ownerOf(n)),
     game: districtGame(n, me),
@@ -1149,6 +1169,18 @@ function route(path: string, opts: Opts): unknown {
       return { notifications: list.filter((n) => n.id < before).slice(0, 30), unread };
     }
     return { unread };
+  }
+  if ((m = p.match(/^\/v1\/districts\/(\d+)\/parcels\/(\d+)\/showcase$/))) {
+    needMe();
+    const [n, i] = [+m[1], +m[2]];
+    if (n !== OWN_PARCEL.bitmap_number || i !== OWN_PARCEL.tx_index) fail(403, `only the holder of parcel #${i} can do this`);
+    if (method === "PUT") {
+      const k = (body.asset ?? null) as PetKey | null;
+      if (k !== null && !(k in PETS)) fail(400, "没有这种藏品");
+      s.parcelPet = k;
+      save();
+    }
+    return parcelShowcaseView(n, i);
   }
   if ((m = p.match(/^\/v1\/districts\/(\d+)\/showcase(\/refresh)?$/))) {
     const n = +m[1];

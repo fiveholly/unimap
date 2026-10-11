@@ -9,6 +9,7 @@ import { Composer } from "@/components/Composer";
 import { EventItem } from "@/components/EventItem";
 import { Mondrian } from "@/components/Mondrian";
 import { OwnerTools } from "@/components/OwnerTools";
+import { ParcelPanel } from "@/components/ParcelPanel";
 import { PetsCard } from "@/components/Pets";
 import { Polls } from "@/components/Polls";
 import { Contests } from "@/components/Contests";
@@ -312,6 +313,7 @@ function DistrictView() {
               own={own}
               selected={selected}
               onSelect={setSelected}
+              pets={district.parcel_pets}
               card={(i) => (
                 <>
                   <div className="row between">
@@ -329,6 +331,7 @@ function DistrictView() {
                       <span className="mono">{short(parcelOwner(i))}</span>
                     </div>
                   )}
+                  {i !== selected && <div className="dim small">{t("点一下看看能做什么")}</div>}
                 </>
               )}
             />
@@ -353,6 +356,32 @@ function DistrictView() {
             <span className="grow" />
             <span>{t("方块大小 = 交易金额")}</span>
           </div>
+          {selected != null && txValues && selected < txValues.length && (
+            <ParcelPanel
+              key={selected}
+              n={n}
+              i={selected}
+              value={txValues[selected]}
+              holder={parcelOwner(selected) ?? null}
+              mine={own.has(selected)}
+              role={viewer?.role ?? null}
+              token={token}
+              recruit={district.recruit ?? null}
+              following={!!viewer?.following}
+              onClose={() => setSelected(null)}
+              onApply={() => {
+                const card = document.getElementById("recruit");
+                card?.scrollIntoView({ behavior: "smooth", block: "center" });
+                card?.querySelector("textarea")?.focus({ preventScroll: true });
+              }}
+              onFollow={() => act(`/v1/districts/${n}/follow`, "PUT")}
+              onTrade={() => {
+                setTab("parcels");
+                document.querySelector(".tabs")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+              onPetChanged={loadDistrict}
+            />
+          )}
         </div>
       </section>
 
@@ -371,13 +400,25 @@ function DistrictView() {
       )}
 
       {around.length > 1 && (
-        <section className="neighbors" aria-label={t("相邻街区")}>
-          {around.map((t) => (
-            <Link key={t.bitmap_number} href={`/district/${t.bitmap_number}`} className={`neighbor${t.bitmap_number === n ? " current" : ""}`} aria-current={t.bitmap_number === n ? "page" : undefined}>
-              <TileThumb zone={zoneOf(t.zone)} n={t.bitmap_number} width={88} />
-              <span className="mono small">{t.bitmap_number.toLocaleString("en-US")}</span>
-            </Link>
-          ))}
+        <section className="neighbors-wrap" aria-label={t("相邻街区")}>
+          <div className="row between">
+            <h2 className="section-title">{t("相邻街区")}</h2>
+            <span className="muted small">{t("前后挨着挖出来的区块，点开去串门")}</span>
+          </div>
+          <div className="neighbors">
+            {around.map((a) => {
+              const z = zoneOf(a.zone);
+              return (
+                <Link key={a.bitmap_number} href={`/district/${a.bitmap_number}`} className={`neighbor${a.bitmap_number === n ? " current" : ""}`} aria-current={a.bitmap_number === n ? "page" : undefined}>
+                  <TileThumb zone={z} n={a.bitmap_number} width={88} />
+                  <span className="mono small">{a.bitmap_number.toLocaleString("en-US")}</span>
+                  <span className="neighbor-meta small">
+                    {a.bitmap_number === n ? t("你在这里") : `${z ? t(ZONES[z].name) : t("地段计算中")} · ${a.claimed ? (a.sale ? t("在售") : t("有主人")) : t("无人认领")}`}
+                  </span>
+                </Link>
+              );
+            })}
+          </div>
         </section>
       )}
 

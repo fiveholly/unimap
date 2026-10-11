@@ -576,3 +576,13 @@ CREATE TABLE IF NOT EXISTS social.nostr_keys (
 );
 ALTER TABLE social.posts ADD COLUMN IF NOT EXISTS nostr_event_id text NULL;
 ALTER TABLE social.tips ADD COLUMN IF NOT EXISTS zap bool NOT NULL DEFAULT false;
+
+-- A resident's pet on their parcel (api/holdings.py): one per parcel, shown while they hold it.
+CREATE TABLE IF NOT EXISTS social.parcel_showcase (
+	bitmap_number int4 NOT NULL,
+	tx_index int4 NOT NULL,
+	asset text NOT NULL,
+	updated_by text NOT NULL,
+	updated_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT parcel_showcase_pk PRIMARY KEY (bitmap_number, tx_index)
+);

@@ -29,7 +29,7 @@ export function RecruitCard({
       .then(onChanged)
       .catch((e) => setError(e.message));
   return (
-    <section className="callout recruit" aria-label={t("招募居民")}>
+    <section id="recruit" className="callout recruit" aria-label={t("招募居民")}>
       <div className="row between">
         <b>{t("招募居民")}</b>
         <span className="muted small">{t("{n} 人申请", { n: recruit.applications })}</span>

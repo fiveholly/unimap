@@ -180,6 +180,7 @@ export type District = {
   park?: Park | null;
   recruit?: Recruit | null;
   pets?: Pet[];
+  parcel_pets?: Record<string, string>; // {tx_index: "dog:2"}: the pet each resident shows on their parcel
   tips?: { sats30: number; tippers30: number };
   owner_tippable?: boolean; // the owner has a Lightning address for tips
   game?: DistrictGame;

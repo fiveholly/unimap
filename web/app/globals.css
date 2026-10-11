@@ -975,6 +975,36 @@ kbd {
 .mondrian .tx.shown {
   fill: var(--fg);
 }
+.mondrian .glyph {
+  pointer-events: none;
+}
+.mondrian .glyph.grass path {
+  fill: none;
+  stroke: #6f8a55;
+  stroke-linecap: round;
+  opacity: 0.55;
+}
+.mondrian .glyph.house path {
+  fill: #3b3227;
+  opacity: 0.55;
+}
+.mondrian .glyph.house.own path {
+  fill: #1c1a16;
+  opacity: 0.7;
+}
+.mondrian .glyph.hall path {
+  fill: #8a8577;
+  opacity: 0.7;
+}
+.parcel-pet {
+  position: absolute;
+  pointer-events: none;
+  aspect-ratio: 1 / 1;
+}
+.parcel-pet canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
 .parcel-card {
   position: absolute;
   z-index: 5;
@@ -1029,6 +1059,52 @@ kbd {
   border-radius: 10px;
   background: var(--surface);
   color: var(--fg-3);
+}
+.neighbors-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.neighbors-wrap .section-title {
+  margin: 0;
+}
+.neighbor-meta {
+  color: var(--fg-3);
+  text-align: center;
+  line-height: 1.3;
+}
+.parcel-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.parcel-panel p {
+  margin: 0;
+}
+.parcel-inscribe {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.parcel-inscribe code {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.pet-chooser {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pet-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.pet-chip.on {
+  border-color: var(--fg);
+  color: var(--fg);
 }
 .neighbor.current {
   border-color: var(--fg-3);

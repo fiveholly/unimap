@@ -223,6 +223,9 @@ def district(bitmap_number: int, tasks: BackgroundTasks, viewer: str | None = De
         levels, park_of = parks.scored(cur, bitmap_number, bitmap_number)
         notice = recruit.get(cur, bitmap_number, viewer)
         pets = holdings.shown(cur, bitmap_number, owner)
+        parcel_pets = holdings.parcel_pets(cur, bitmap_number)
+        for resident in holdings.stale_parcel_holders(cur, bitmap_number)[:5]:
+            tasks.add_task(holdings.refresh_group, resident, 0, True)
         owner_x = xlink.of(cur, owner)
         tipped = tips.district_tips(cur, bitmap_number)
         beat = game.district_view(cur, bitmap_number, viewer)
@@ -248,6 +251,7 @@ def district(bitmap_number: int, tasks: BackgroundTasks, viewer: str | None = De
         "park": park_of.get(bitmap_number),
         "recruit": notice,
         "pets": pets,
+        "parcel_pets": parcel_pets,  # {tx_index: "dog:2"}: the pet each resident shows on their parcel
         "tips": tipped,  # confirmed Lightning tips on the district and its posts, last 30 days
         "owner_tippable": owner_tippable,
         "game": {**beat, "crown": crown and {"rank": crown, "season": tip // seasons.SEASON - 1}},  # api/game.py, api/seasons.py

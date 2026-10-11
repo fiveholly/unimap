@@ -311,3 +311,85 @@ def refresh_showcase(bitmap_number: int, address: str = Depends(current_address)
     refresh_group(address, MIN_REFRESH_MINUTES)
     with cursor() as cur:
         return _owner_view(cur, bitmap_number, address)
+
+
+# --- a resident's pet on their parcel ----------------------------------------------------------
+# The parcel map draws one pet on a parcel when the resident who holds it chose one and still
+# holds enough of it. Like a district's showcase, a choice lapses when the parcel changes hands.
+
+
+def parcel_pets(cur, n):
+    """{tx_index: "dog:2"} for the district's parcels whose holder shows a pet."""
+    cur.execute("select tx_index, asset, updated_by from social.parcel_showcase where bitmap_number = %s;", (n,))
+    chosen_ = cur.fetchall()
+    if not chosen_:
+        return {}
+    holders = roles.parcel_holders(cur, n)
+    picks = {tx: (asset, by) for tx, asset, by in chosen_ if asset in ASSETS and holders.get(tx) == by}
+    amounts = _amounts(cur, {by for _, by in picks.values()})
+    out = {}
+    for tx, (asset, by) in picks.items():
+        level = tier(asset, amounts.get(by, {}).get(asset, 0))
+        if level > 0:
+            out[tx] = f"{asset}:{level}"
+    return out
+
+
+def stale_parcel_holders(cur, n):
+    """Holders showing a pet in district n whose balances want a refresh."""
+    cur.execute("select tx_index, updated_by from social.parcel_showcase where bitmap_number = %s;", (n,))
+    holders = roles.parcel_holders(cur, n)
+    return [by for tx, by in cur.fetchall() if holders.get(tx) == by and stale_group(cur, by)]
+
+
+def _parcel_view(cur, n, tx, address):
+    held = _amounts(cur, [address]).get(address, {})
+    cur.execute("select asset, updated_by from social.parcel_showcase where bitmap_number = %s and tx_index = %s;", (n, tx))
+    row = cur.fetchone()
+    return {
+        "chosen": row[0] if row and row[1] == address else None,
+        "held": [_view(a, held.get(a, 0)) for a in ASSETS],
+        "shown": parcel_pets(cur, n).get(tx),
+    }
+
+
+def _require_parcel(cur, n, tx, address):
+    if roles.parcel_holder(cur, n, tx) != address:
+        raise HTTPException(403, f"only the holder of parcel #{tx} can do this")
+
+
+@router.get("/v1/districts/{bitmap_number}/parcels/{tx_index}/showcase")
+def parcel_showcase(bitmap_number: int, tx_index: int, address: str = Depends(current_address)):
+    """The resident's view: what their wallet holds and the pet they show on the parcel."""
+    with cursor() as cur:
+        _require_parcel(cur, bitmap_number, tx_index, address)
+        addresses = wallets.group(cur, address)
+        cur.execute("select address from social.holdings_checked where address = any(%s);", (addresses,))
+        checked = {r[0] for r in cur.fetchall()}
+    for a in addresses:
+        if a not in checked:
+            refresh(a)
+    with cursor() as cur:
+        return _parcel_view(cur, bitmap_number, tx_index, address)
+
+
+class ParcelShowcaseBody(BaseModel):
+    asset: str | None = None  # null: show none
+
+
+@router.put("/v1/districts/{bitmap_number}/parcels/{tx_index}/showcase")
+def set_parcel_showcase(bitmap_number: int, tx_index: int, req: ParcelShowcaseBody, address: str = Depends(current_address)):
+    if req.asset is not None and req.asset not in ASSETS:
+        raise HTTPException(400, f"asset is one of {', '.join(ASSETS)}")
+    with cursor() as cur:
+        _require_parcel(cur, bitmap_number, tx_index, address)
+        if req.asset is None:
+            cur.execute("delete from social.parcel_showcase where bitmap_number = %s and tx_index = %s;", (bitmap_number, tx_index))
+        else:
+            cur.execute(
+                "insert into social.parcel_showcase (bitmap_number, tx_index, asset, updated_by) values (%s, %s, %s, %s) "
+                "on conflict (bitmap_number, tx_index) do update set asset = excluded.asset, updated_by = excluded.updated_by, "
+                "updated_at = now();",
+                (bitmap_number, tx_index, req.asset, address),
+            )
+        return _parcel_view(cur, bitmap_number, tx_index, address)

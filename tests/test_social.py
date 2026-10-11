@@ -577,6 +577,45 @@ class SocialApi(unittest.TestCase):
                     "delete from social.holdings_checked;"
                 )
 
+    def test_parcel_pets(self):
+        from decimal import Decimal
+
+        from api import holdings
+
+        class Fake:
+            def rune_balances(self, address):
+                return {"DOGGOTOTHEMOON": Decimal(600000)} if address == BOB.address else {}
+
+            def inscription_ids(self, address):
+                return iter([])
+
+        holdings.provider = Fake()
+        url = f"/v1/districts/{DISTRICT}/parcels/1/showcase"
+        try:
+            # Only the parcel's holder picks its pet, and only from what they hold.
+            self.assertEqual(self.client.get(url, headers=self.h(ALICE)).status_code, 403)
+            self.assertEqual(self.client.put(url, json={"asset": "dog"}, headers=self.h(ALICE)).status_code, 403)
+            view = self.client.get(url, headers=self.h(BOB)).json()
+            self.assertEqual(({h["asset"]: h["tier"] for h in view["held"]}["dog"], view["chosen"], view["shown"]), (1, None, None))
+            self.assertEqual(self.client.put(url, json={"asset": "unicorn"}, headers=self.h(BOB)).status_code, 400)
+            self.assertEqual(self.client.put(url, json={"asset": "dog"}, headers=self.h(BOB)).json()["shown"], "dog:1")
+            self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}").json()["parcel_pets"], {"1": "dog:1"})
+            # A pet they don't hold isn't drawn; a parcel that changes hands drops the choice.
+            self.client.put(url, json={"asset": "cat"}, headers=self.h(BOB))
+            self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}").json()["parcel_pets"], {})
+            self.client.put(url, json={"asset": "dog"}, headers=self.h(BOB))
+            with self.conn.cursor() as cur:
+                cur.execute(f"update inscription_owners set address = '{CAROL.address}' where inscription_id = 'p1i0';")
+            self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}").json()["parcel_pets"], {})
+            with self.conn.cursor() as cur:
+                cur.execute(f"update inscription_owners set address = '{BOB.address}' where inscription_id = 'p1i0';")
+            self.assertEqual(self.client.put(url, json={"asset": None}, headers=self.h(BOB)).json()["shown"], None)
+        finally:
+            holdings.provider = None
+            with self.conn.cursor() as cur:
+                cur.execute(f"update inscription_owners set address = '{BOB.address}' where inscription_id = 'p1i0'; "
+                            "delete from social.parcel_showcase; delete from social.holdings; delete from social.holdings_checked;")
+
     def test_search(self):
         with self.conn.cursor() as cur:
             cur.execute(
