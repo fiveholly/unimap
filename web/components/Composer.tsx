@@ -1,11 +1,29 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useSession } from "./Session";
 import { api, type Post } from "@/lib/api";
 import { postMessage } from "@/lib/messages";
+import { nostrExtension, now, publish, writeRelays } from "@/lib/nostr";
+import { SITE_URL } from "@/lib/share";
 import { t } from "@/lib/i18n";
+
+const NOSTR_PREF = "unimap.toNostr";
+
+/** Sign the post as a Nostr note with the extension, send it to relays, and tell unimap its id. */
+async function sendToNostr(post: Post, text: string, media: string[], pubkey: string, token: string) {
+  const ext = nostrExtension();
+  if (!ext) throw new Error(t("没有找到 Nostr 插件"));
+  const link = `${SITE_URL}/post/${post.id}`;
+  const content = [text, ...media, link].join("\n\n");
+  const ev = await ext.signEvent({ kind: 1, created_at: now(), tags: [["r", link], ["t", "bitmap"]], content });
+  if (ev.pubkey !== pubkey) throw new Error(t("插件里的 Nostr 账号不是你绑定的那个"));
+  const sent = await publish(ev, await writeRelays(ext));
+  if (!sent) throw new Error(t("没有中继收下这条帖子"));
+  await api(`/v1/posts/${post.id}/nostr`, { method: "POST", token, body: { event: ev } });
+  return ev.id;
+}
 
 export function Composer({
   district,
@@ -28,6 +46,28 @@ export function Composer({
   const [asBitmap, setAsBitmap] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 同步到 Nostr: offered on new posts when this browser has a Nostr extension and the address linked a key.
+  const [nostrKey, setNostrKey] = useState<string | null>(null);
+  const [toNostr, setToNostr] = useState(false);
+  useEffect(() => {
+    if (replyTo || !token || !nostrExtension()) return;
+    api<{ pubkey: string | null }>("/v1/me/nostr", { token })
+      .then((r) => {
+        setNostrKey(r.pubkey);
+        try {
+          setToNostr(!!r.pubkey && localStorage.getItem(NOSTR_PREF) !== "0");
+        } catch {
+          setToNostr(!!r.pubkey);
+        }
+      })
+      .catch(() => {});
+  }, [replyTo, token]);
+  const pickNostr = (on: boolean) => {
+    setToNostr(on);
+    try {
+      localStorage.setItem(NOSTR_PREF, on ? "1" : "0");
+    } catch {}
+  };
 
   const submit = async () => {
     const text = body.trim();
@@ -43,10 +83,18 @@ export function Composer({
         token,
         body: { body: text, media: urls, reply_to: replyTo, as_bitmap: asBitmap, signed_at: signedAt, signature },
       });
+      let posted = post;
+      if (toNostr && nostrKey) {
+        try {
+          posted = { ...post, nostr_event_id: await sendToNostr(post, text, urls, nostrKey, token!) };
+        } catch (e) {
+          setError(t("帖子已经发出，但没能同步到 Nostr：{why}", { why: e instanceof Error ? e.message : String(e) }));
+        }
+      }
       setBody("");
       setMedia("");
       setShowMedia(false);
-      onPosted(post);
+      onPosted(posted);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg !== "cancelled") setError(msg);
@@ -98,6 +146,12 @@ export function Composer({
           )
         )}
         <span className="grow" />
+        {nostrKey && (
+          <label className="nostr-toggle small" title={t("用你的 Nostr 插件签名，同时发到 Nostr")}>
+            <input type="checkbox" checked={toNostr} onChange={(e) => pickNostr(e.target.checked)} />
+            {t("同步到 Nostr")}
+          </label>
+        )}
         {!replyTo && (
           <button type="button" className="icon-btn bare" aria-label={t("添加图片")} aria-pressed={showMedia} onClick={() => setShowMedia(!showMedia)}>
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>

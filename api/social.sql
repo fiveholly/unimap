@@ -564,3 +564,15 @@ BEGIN
 			UNIQUE NULLS NOT DISTINCT (address, kind, actor, bitmap_number, post_id, tip_id, block_height, order_id);
 	END IF;
 END $$;
+
+-- Nostr (api/nostr.py): one linked key per wallet group, the note a post was published as, and
+-- whether a tip went out as a zap.
+CREATE TABLE IF NOT EXISTS social.nostr_keys (
+	address text NOT NULL, -- the wallet group's main address
+	pubkey text NOT NULL, -- hex, 32 bytes
+	linked_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT nostr_keys_pk PRIMARY KEY (address),
+	CONSTRAINT nostr_keys_pubkey UNIQUE (pubkey)
+);
+ALTER TABLE social.posts ADD COLUMN IF NOT EXISTS nostr_event_id text NULL;
+ALTER TABLE social.tips ADD COLUMN IF NOT EXISTS zap bool NOT NULL DEFAULT false;

@@ -147,7 +147,7 @@ export type Role = "owner" | "resident" | "visitor";
 export type Post = {
   id: number;
   bitmap_number: number;
-  author: { address: string; role: Role; parcel: number | null; as_bitmap: number | null; x?: string | null; tippable?: boolean };
+  author: { address: string; role: Role; parcel: number | null; as_bitmap: number | null; x?: string | null; tippable?: boolean; nostr?: string | null };
   reply_to: number | null;
   body: string | null;
   media: string[];
@@ -159,6 +159,7 @@ export type Post = {
   reply_count: number;
   liked_by_me: boolean;
   tips_sats?: number; // confirmed Lightning tips, in sats
+  nostr_event_id?: string | null; // the Nostr note its author also published it as
   agent?: { grant_id: number; key: string } | null; // published by the district's agent, signed with its key
 };
 
@@ -185,7 +186,7 @@ export type District = {
 };
 
 /** POST /v1/tips and GET /v1/tips/{id}: an invoice from the recipient's wallet and whether it was paid. */
-export type Tip = { id: number; invoice?: string; amount_sats?: number; verifiable: boolean; status: "pending" | "settled" | "expired" };
+export type Tip = { id: number; invoice?: string; amount_sats?: number; verifiable: boolean; status: "pending" | "settled" | "expired"; zap?: boolean };
 /** GET /v1/tips/top: 打赏榜. */
 export type TipTop = {
   days: number;
@@ -236,6 +237,7 @@ export type Me = {
   wallets?: LinkedWallet[];
   admin?: boolean; // a site admin (ADMIN_ADDRESSES)
   banned?: boolean; // stopped from posting by a site admin
+  nostr?: string | null; // linked Nostr public key (hex)
 };
 
 /** GET /v1/admin/reports: a reported post with its open reports. */

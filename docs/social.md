@@ -88,6 +88,9 @@ media: none
 | POST | `/v1/tips` | 发起打赏 `{"post_id"或"bitmap_number"或"event_id"+"place", "amount_sats", "comment"}`，返回收款方钱包开出的发票；不能打赏自己，对方没开通是 409，10 分钟超过 20 次是 429 |
 | GET | `/v1/tips/{id}` | 打赏人查询付款状态 `pending`/`settled`/`expired` |
 | GET | `/v1/tips/top?days=7` | 打赏榜：近几天收到打赏最多的帖子和街区 |
+| GET | `/v1/tips/zap?post_id=` 或 `?bitmap_number=` | 打赏前查询：收款人绑定的 Nostr 公钥和帖子的 Nostr 笔记 id；对方没绑或钱包不收 zap 时是 `{"zap": null}` |
+| GET / PUT / DELETE | `/v1/me/nostr` | 查看 / 绑定 / 解除 Nostr 公钥；绑定时传 `{"event"}`（插件签的 kind 22242 事件） |
+| POST | `/v1/posts/{id}/nostr` | 作者记下这条帖子在 Nostr 上的笔记 `{"event"}`（kind 1，要带帖子正文和链接） |
 | GET | `/v1/game` | 区块节拍：当前的幸运街区、最近 20 个区块抽中的宝箱（带验算用的哈希、候选数和序号）、登录时附上自己的徽章 |
 | POST | `/v1/game/treasures/{height}/open` | 地块主人（钱包组里任一地址）打开宝箱；不是主人 403，已打开 409，过期 410 |
 | GET | `/v1/season` | 难度调整赛季：本赛季的区块范围、开始时间、前 10 名街区和各项得分、上赛季戴王冠的前三名、奖池（聪）和分配 |
@@ -240,6 +243,14 @@ expires: …
 - 顶栏的铃铛显示未读数，每分钟和每次换页时检查一次。通知页 `/notifications` 打开后把列表里的都标成已读，同一条帖子的点赞、同一个街区的关注合成一行。
 - 接口：`GET /v1/notifications?before=`（每页 30 条，带帖子摘要和未读数）、`GET /v1/notifications/unread`、`POST /v1/notifications/read`（`up_to` 不填就是全部）。
 - 下一步可以把同样的通知推到电报机器人或邮件。
+
+## Nostr
+
+Nostr 是比特币圈常用的开放社交协议（`api/nostr.py`，表 `social.nostr_keys`）。所有签名都在用户浏览器的 Nostr 插件里完成（NIP-07，比如 Alby、nos2x），unimap 拿不到 Nostr 私钥，服务器也不连中继。
+
+- 绑定：在「我的」点「绑定 Nostr」，插件签一个 kind 22242 事件（NIP-42 的认证事件，中继不会保存），内容是 `unimap: link this Nostr key to <地址>`，10 分钟内有效。一个钱包组只绑一个公钥，存在主地址下；一个公钥只能绑一个钱包组。
+- 同步到 Nostr：绑定后，在装了插件的浏览器里发新帖，发帖框会出现「同步到 Nostr」（默认勾上，记在浏览器里）。帖子发出后，插件签一条 kind 1 笔记，内容是正文、图片链接和帖子链接，网页直接发到中继（插件列出的写入中继，没有就用 damus、nos.lol、primal），至少一个中继收下后再告诉服务器笔记 id。服务器检查是作者绑定的公钥、内容里有帖子正文和链接，帖子下面就多一个 Nostr 图标，点开是 njump.me 上的这条笔记。回复和 agent 的帖子不同步。
+- Zap（NIP-57）：打赏时如果打赏人的浏览器有插件，收款人绑了 Nostr，而且对方的闪电地址声明 `allowsNostr`，插件会签一个 zap 请求（kind 9734，带金额、收款人公钥、帖子的笔记 id 和中继），服务器检查后随发票请求一起交给对方钱包。对方钱包收款后自己把 zap 回执发到 Nostr，unimap 只记下这笔打赏是 zap（`social.tips.zap`）。插件拒绝签名或任何一步不满足时，就是一笔普通打赏。
 
 ## 绑定 X 账号
 

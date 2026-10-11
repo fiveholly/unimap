@@ -147,6 +147,7 @@ type State = {
   reports?: { post_id: number; reporter: string; reason: string; note: string; created_at: string; resolved?: boolean }[];
   bans?: Ban[];
   lightning?: string | null; // the visitor's Lightning address for tips
+  nostr?: string | null; // the visitor's linked Nostr key
   tips?: DemoTip[];
   boot?: number; // when this demo began: a new block is "mined" every DEMO_BLOCK_MS after it
   badges?: Badge[]; // the visitor's
@@ -996,7 +997,7 @@ function route(path: string, opts: Opts): unknown {
   if ((m = p.match(/^\/v1\/land\/(\d+)\/events$/))) return { events: events(+m[1]) };
   if (p === "/v1/me") {
     const a = needMe();
-    return { address: a, districts: OWNED, parcels: [OWN_PARCEL], follows: [...s.follows].sort((x, y) => x - y), x: s.x ?? null, wallets: walletsView(), admin: true, banned: isBanned(a) } satisfies Me;
+    return { address: a, districts: OWNED, parcels: [OWN_PARCEL], follows: [...s.follows].sort((x, y) => x - y), x: s.x ?? null, wallets: walletsView(), admin: true, banned: isBanned(a), nostr: s.nostr ?? null } satisfies Me;
   }
   if ((m = p.match(/^\/v1\/people\/([^/]+)$/))) {
     const before = url.searchParams.get("before_id");
@@ -1227,6 +1228,39 @@ function route(path: string, opts: Opts): unknown {
   }
   if ((m = p.match(/^\/v1\/posts\/(\d+)\/replies$/)))
     return { replies: s.posts.filter((x) => x.reply_to === +m![1] && !x.removed).sort((a, b) => a.id - b.id).map((x) => view(x, me)) };
+  if (p === "/v1/me/nostr") {
+    const a = needMe();
+    if (method === "PUT") {
+      const ev = body.event as { pubkey?: string; kind?: number; content?: string } | undefined;
+      if (!ev || ev.kind !== 22242 || !/^[0-9a-f]{64}$/.test(ev.pubkey ?? "")) fail(400, "this Nostr event isn't signed correctly");
+      if (ev!.content !== `unimap: link this Nostr key to ${a}`) fail(400, "the signed text doesn't name this address");
+      s.nostr = ev!.pubkey!;
+      save();
+    } else if (method === "DELETE") {
+      s.nostr = null;
+      save();
+    }
+    return { pubkey: s.nostr ?? null };
+  }
+  if ((m = p.match(/^\/v1\/posts\/(\d+)\/nostr$/)) && method === "POST") {
+    const a = needMe();
+    const post = s.posts.find((x) => x.id === +m![1] && !x.removed) ?? fail(404, "no such post");
+    if (post.author.address !== a) fail(403, "only the author can post this to Nostr");
+    const ev = body.event as { id?: string; pubkey?: string } | undefined;
+    if (!ev?.id || ev.pubkey !== s.nostr) fail(400, "sign with the Nostr key linked to this address");
+    post.nostr_event_id = ev!.id!;
+    save();
+    return { nostr_event_id: post.nostr_event_id };
+  }
+  if (p === "/v1/tips/zap") {
+    needMe();
+    // A few of the made-up people linked Nostr keys and use wallets that take zaps.
+    const id = Number(url.searchParams.get("post_id") ?? NaN);
+    const post = s.posts.find((x) => x.id === id);
+    const who = post ? post.author.address : ownerOf(Number(url.searchParams.get("bitmap_number")));
+    if (!who || strHash(who) % 3 !== 0 || !tippable(who)) return { zap: null };
+    return { zap: { pubkey: (strHash(who).toString(16).padStart(8, "0")).repeat(8), event_id: post?.nostr_event_id ?? null } };
+  }
   if (p === "/v1/me/lightning") {
     needMe();
     if (method === "PUT") {
@@ -1614,7 +1648,7 @@ function route(path: string, opts: Opts): unknown {
     const tip: DemoTip = { id: (s.tips ??= []).length + 1, tipper: a, recipient: recipient!, n, post_id: postId, sats, comment: String(body.comment ?? "").trim(), status: "pending", at: Date.now(), event };
     s.tips.push(tip);
     save();
-    return { id: tip.id, invoice: fakeInvoice(sats, tip.id), amount_sats: sats, verifiable: true, status: "pending" } satisfies Tip;
+    return { id: tip.id, invoice: fakeInvoice(sats, tip.id), amount_sats: sats, verifiable: true, status: "pending", zap: !!body.zap_request && body.event_id == null } satisfies Tip;
   }
   if ((m = p.match(/^\/v1\/tips\/(\d+)$/))) {
     needMe();

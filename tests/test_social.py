@@ -1815,6 +1815,98 @@ class SocialApi(unittest.TestCase):
                             "delete from social.market_listings where inscription_id = 'mi0'; delete from social.shop_orders where invoice = 'lnbcs'; "
                             "delete from social.shop_items where content = 'c' and seller = 'x';", (dave,))
 
+    def test_nostr(self):
+        from coincurve import PublicKeyXOnly
+
+        from api import nostr, tips
+
+        class Key:
+            def __init__(self, seed):
+                self.secret = PrivateKey(bytes([seed]) * 32)
+                self.pubkey = PublicKeyXOnly.from_secret(self.secret.secret).format().hex()
+
+            def sign(self, kind, content, tags=(), created_at=None):
+                ev = {"pubkey": self.pubkey, "created_at": created_at or int(time.time()), "kind": kind, "tags": [list(t) for t in tags], "content": content}
+                ev["id"] = nostr.event_id(ev)
+                ev["sig"] = self.secret.sign_schnorr(bytes.fromhex(ev["id"])).hex()
+                return ev
+
+        bob, alice = Key(7), Key(8)
+
+        class Fake:
+            asked = []
+            zaps = True
+
+            @staticmethod
+            def pay_request(a):
+                return {"tag": "payRequest", "callback": "https://wallet.test/cb", "allowsNostr": Fake.zaps, "nostrPubkey": "ab" * 32}
+
+            @staticmethod
+            def ask_invoice(a, sats, comment, zap=None):
+                Fake.asked.append(zap)
+                return f"lnbc{sats * 10}n1zap{len(Fake.asked)}", f"https://wallet.test/z/{len(Fake.asked)}"
+
+            @staticmethod
+            def settled(url):
+                return False
+
+        old, tips.lnurl = tips.lnurl, Fake
+        try:
+            link = lambda w, ev: self.client.put("/v1/me/nostr", json={"event": ev}, headers=self.h(w))
+            # Linking takes a fresh, correctly signed event naming this address.
+            self.assertEqual(link(BOB, bob.sign(22242, nostr.link_text(ALICE.address))).status_code, 400)
+            self.assertEqual(link(BOB, bob.sign(22242, nostr.link_text(BOB.address), created_at=int(time.time()) - 3600)).status_code, 400)
+            forged = bob.sign(22242, nostr.link_text(BOB.address))
+            forged["pubkey"] = alice.pubkey
+            self.assertEqual(link(BOB, forged).status_code, 400)
+            self.assertEqual(link(BOB, bob.sign(1, nostr.link_text(BOB.address))).status_code, 400)
+            self.assertEqual(link(BOB, bob.sign(22242, nostr.link_text(BOB.address))).json(), {"pubkey": bob.pubkey})
+            self.assertEqual(self.client.get("/v1/me", headers=self.h(BOB)).json()["nostr"], bob.pubkey)
+            self.assertEqual(link(ALICE, bob.sign(22242, nostr.link_text(ALICE.address))).status_code, 409)  # one address per key
+
+            # The author records the note they published; it must be their key and carry the post.
+            post = self.post(BOB, "gm from the city").json()
+            self.assertEqual(post["author"]["nostr"], bob.pubkey)
+            mirror = lambda w, ev: self.client.post(f"/v1/posts/{post['id']}/nostr", json={"event": ev}, headers=self.h(w))
+            note = f"gm from the city\n\nhttps://unimap.test/post/{post['id']}"
+            self.assertEqual(mirror(ALICE, alice.sign(1, note)).status_code, 403)
+            self.assertEqual(mirror(BOB, alice.sign(1, note)).status_code, 400)
+            self.assertEqual(mirror(BOB, bob.sign(1, "something else https://unimap.test/post/" + str(post["id"]))).status_code, 400)
+            self.assertEqual(mirror(BOB, bob.sign(1, f"gm from the city https://unimap.test/post/{post['id']}0")).status_code, 400)
+            ev = bob.sign(1, note, [("r", f"https://unimap.test/post/{post['id']}")])
+            self.assertEqual(mirror(BOB, ev).json(), {"nostr_event_id": ev["id"]})
+            self.assertEqual(self.client.get(f"/v1/posts/{post['id']}").json()["nostr_event_id"], ev["id"])
+
+            # A tip to someone with a key and a zap-taking wallet can carry a zap request.
+            self.client.put("/v1/me/lightning", json={"lightning_address": "bob@wallet.test"}, headers=self.h(BOB))
+            target = self.client.get(f"/v1/tips/zap?post_id={post['id']}", headers=self.h(ALICE)).json()
+            self.assertEqual(target, {"zap": {"pubkey": bob.pubkey, "event_id": ev["id"]}})
+            relays = ("relays", "wss://relay.test")
+            zr = lambda **kw: alice.sign(9734, "nice", [relays, ("amount", kw.get("amount", "500000")), ("p", kw.get("p", bob.pubkey)), ("e", kw.get("e", ev["id"]))])
+            tip = lambda **body: self.client.post("/v1/tips", json={"post_id": post["id"], "amount_sats": 500, "comment": "nice", **body}, headers=self.h(ALICE))
+            self.assertEqual(tip(zap_request=zr(amount="1000")).status_code, 400)
+            self.assertEqual(tip(zap_request=zr(p=alice.pubkey)).status_code, 400)
+            self.assertEqual(tip(zap_request=zr(e="00" * 32)).status_code, 400)
+            self.assertEqual(tip(zap_request=alice.sign(9734, "", [("p", bob.pubkey)])).status_code, 400)  # no relays
+            good = zr()
+            t = tip(zap_request=good).json()
+            self.assertTrue(t["zap"])
+            self.assertEqual(json.loads(Fake.asked[-1]), good)
+            self.assertFalse(tip().json()["zap"])  # without one it is a plain tip
+            self.assertIsNone(Fake.asked[-1])
+            # No zaps when the wallet doesn't take them, or the recipient has no key.
+            Fake.zaps = False
+            self.assertEqual(self.client.get(f"/v1/tips/zap?post_id={post['id']}", headers=self.h(ALICE)).json(), {"zap": None})
+            Fake.zaps = True
+            self.assertEqual(self.client.delete("/v1/me/nostr", headers=self.h(BOB)).json(), {"pubkey": None})
+            self.assertEqual(self.client.get(f"/v1/tips/zap?post_id={post['id']}", headers=self.h(ALICE)).json(), {"zap": None})
+            self.assertEqual(tip(zap_request=good).status_code, 400)
+        finally:
+            tips.lnurl = old
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.tips; delete from social.lightning_addresses; delete from social.nostr_keys; "
+                            "update social.posts set nostr_event_id = null;")
+
     def test_lnurl_checks(self):
         from api import tips
 

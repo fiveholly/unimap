@@ -1171,6 +1171,29 @@ kbd {
   height: 8px;
   background: var(--p-own);
 }
+.nostr-toggle {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  white-space: nowrap;
+  gap: 6px;
+  color: var(--fg-2);
+  cursor: pointer;
+}
+.nostr-toggle input {
+  margin: 0;
+  width: auto;
+}
+.nostr-link {
+  display: inline-flex;
+  align-items: center;
+}
+.me-group.nostr .x-card .grow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
 .post {
   display: flex;
   gap: 14px;

@@ -14,7 +14,7 @@ import psycopg2.extras
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import bip322, game, holdings, moderation, notify, parks, prosperity, recruit, roles, seasons, style, tips, wallets, xlink
+from api import bip322, game, holdings, moderation, nostr, notify, parks, prosperity, recruit, roles, seasons, style, tips, wallets, xlink
 from api.auth import current_address, normalize_address, optional_address
 from api.db import cursor
 from api.land import EVENT_SELECT, _event
@@ -55,6 +55,9 @@ POST_COLUMNS = (
     "exists(select 1 from social.lightning_addresses a where a.address = coalesce("
     "(select w.main_address from social.wallet_links w where w.address = p.author_address), p.author_address)) "
     "as author_tippable, "
+    "(select k.pubkey from social.nostr_keys k where k.address = coalesce("
+    "(select w.main_address from social.wallet_links w where w.address = p.author_address), p.author_address)) "
+    "as author_nostr, p.nostr_event_id, "
     "p.agent_id, (select a.agent_key from social.agents a where a.id = p.agent_id) as agent_key "
 )
 
@@ -71,6 +74,7 @@ def _post(row):
             "as_bitmap": row["author_bitmap"],
             "x": row["author_x"],  # linked X @username, if any
             "tippable": row["author_tippable"],  # has a Lightning address for tips
+            "nostr": row["author_nostr"],  # linked Nostr public key (hex), if any
         },
         "reply_to": row["reply_to"],
         "body": None if removed else row["body"],
@@ -83,6 +87,7 @@ def _post(row):
         "reply_count": row["reply_count"],
         "liked_by_me": row["liked_by_me"],
         "tips_sats": int(row["tips_sats"]),  # confirmed Lightning tips
+        "nostr_event_id": None if removed else row["nostr_event_id"],  # the note it was also published as (api/nostr.py)
         # Published by the district's agent (api/agent.py), signed with its key under this grant.
         "agent": {"grant_id": row["agent_id"], "key": row["agent_key"]} if row["agent_id"] is not None else None,
     }
@@ -127,6 +132,7 @@ def me(address: str = Depends(current_address)):
         x = xlink.of(cur, address)
         linked = wallets.view(cur, address)
         is_banned = moderation.banned(cur, address)
+        nostr_key = nostr.of(cur, address)
     return {
         "address": address,
         "districts": districts,
@@ -136,6 +142,7 @@ def me(address: str = Depends(current_address)):
         "wallets": linked,
         "admin": moderation.is_admin(address),
         "banned": is_banned,
+        "nostr": nostr_key,
     }
 
 
