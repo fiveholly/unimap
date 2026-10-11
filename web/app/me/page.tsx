@@ -4,10 +4,11 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
+import { Delivered } from "@/components/Shop";
 import { useSession } from "@/components/Session";
 import { Bolt } from "@/components/Tip";
 import { XIcon } from "@/components/X";
-import { api, ApiError, type LinkedWallet, type Me, type XAccount } from "@/lib/api";
+import { api, ApiError, type LinkedWallet, type Me, type ShopBought, type XAccount } from "@/lib/api";
 import { LINK_WALLETS, type Wallet } from "@/lib/wallets";
 import { t } from "@/lib/i18n";
 
@@ -63,6 +64,7 @@ export default function MePage() {
           </Link>
         ))}
       </Group>
+      <BoughtSection token={token} />
       <Group title={t("关注#following")} count={me.follows.length} empty={t("还没有关注街区。")}>
         {me.follows.map((n) => (
           <Link key={n} className="chip mono" href={`/district/${n}`}>
@@ -81,6 +83,37 @@ function Group({ title, count, empty, children }: { title: string; count: number
         {title} <span className="mono">{count}</span>
       </h2>
       {count === 0 ? <p className="muted">{empty}</p> : <div className="chips">{children}</div>}
+    </section>
+  );
+}
+
+/** What this address bought in shops, with what each one gave. Hidden until something was bought. */
+function BoughtSection({ token }: { token: string }) {
+  const [bought, setBought] = useState<ShopBought[]>([]);
+  useEffect(() => {
+    api<{ bought: ShopBought[] }>("/v1/me/shop", { token })
+      .then((r) => setBought(r.bought))
+      .catch(() => {});
+  }, [token]);
+  if (bought.length === 0) return null;
+  return (
+    <section className="me-group">
+      <h2 className="section-title">
+        {t("买到的东西")} <span className="mono">{bought.length}</span>
+      </h2>
+      <ul className="me-bought">
+        {bought.map((b) => (
+          <li key={b.order_id}>
+            <div className="row between small">
+              <b>{b.title}</b>
+              <Link className="mono" href={`/district/${b.bitmap_number}?tab=shop`}>
+                {b.bitmap_number}.bitmap
+              </Link>
+            </div>
+            <Delivered content={b.content} />
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

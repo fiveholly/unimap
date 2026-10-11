@@ -139,6 +139,10 @@ function sentence(item: Item): [React.ReactNode, string] {
           : tn("你的街区 {place} 的 agent 自己发了帖子", { place }),
         n.post_id ? `/post/${n.post_id}` : `/district/${n.bitmap_number}?tab=agent`,
       ];
+    case "shop_sold": {
+      const sats = <b className="mono tip-amount">{(n.amount_sats ?? 0).toLocaleString("en-US")}</b>;
+      return [tn("{who} 在 {place} 的店铺买了你的「{title}」，{sats} 聪", { who, place, title: n.title ?? "", sats }), `/district/${n.bitmap_number}?tab=shop`];
+    }
     case "agent_alert":
       return [
         n.agent_parcel != null

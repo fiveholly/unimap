@@ -1,7 +1,7 @@
 """In-app notifications (通知): someone replied to your post, liked it, posted in or followed
 your district, applied to live there, or tipped you sats (api/tips.py); or a block put a
 treasure on your parcel or made your district the lucky one (api/game.py), or your district
-won a crown at the end of a season (api/seasons.py), you won a prize in a district event (api/events.py), or someone bought what you listed, made you an offer, or took yours (api/market.py); or your district's agent has drafts for you to look at or posted on its own, or saw a listing you asked it to watch for (api/agent.py). Each is written in
+won a crown at the end of a season (api/seasons.py), you won a prize in a district event (api/events.py), or someone bought what you listed, made you an offer, or took yours (api/market.py), or bought something in your shop (api/shop.py); or your district's agent has drafts for you to look at or posted on its own, or saw a listing you asked it to watch for (api/agent.py). Each is written in
 the same transaction as the action, for the address it concerns, and never for your own actions.
 """
 
@@ -13,19 +13,19 @@ from api.db import cursor
 
 router = APIRouter()
 
-KINDS = ("reply", "like", "post", "follow", "apply", "tip", "treasure", "lucky", "crown", "event_win", "sold", "offer", "offer_accepted", "agent_draft", "agent_posted", "agent_alert")
+KINDS = ("reply", "like", "post", "follow", "apply", "tip", "treasure", "lucky", "crown", "event_win", "sold", "offer", "offer_accepted", "agent_draft", "agent_posted", "agent_alert", "shop_sold")
 PAGE = 30
 
 
-def notify(cur, address, kind, actor, bitmap_number, post_id=None, tip_id=None, block_height=None):
+def notify(cur, address, kind, actor, bitmap_number, post_id=None, tip_id=None, block_height=None, order_id=None):
     """Tell address that actor did kind. A like or follow repeated after an undo isn't told twice."""
     assert kind in KINDS
     if not address or address == actor:
         return
     cur.execute(
-        "insert into social.notifications (address, kind, actor, bitmap_number, post_id, tip_id, block_height) "
-        "values (%s, %s, %s, %s, %s, %s, %s) on conflict do nothing;",
-        (address, kind, actor, bitmap_number, post_id, tip_id, block_height),
+        "insert into social.notifications (address, kind, actor, bitmap_number, post_id, tip_id, block_height, order_id) "
+        "values (%s, %s, %s, %s, %s, %s, %s, %s) on conflict do nothing;",
+        (address, kind, actor, bitmap_number, post_id, tip_id, block_height, order_id),
     )
 
 
@@ -40,11 +40,12 @@ def notifications(before: int | None = None, address: str = Depends(current_addr
     with cursor() as cur:
         cur.execute(
             "select n.id, n.kind, n.actor, n.bitmap_number, n.post_id, n.created_at, n.read_at is not null, "
-            "case when p.removed_at is null then left(p.body, 140) end, t.amount_sats, t.comment, n.block_height, d.treasure_tx, d.rarity, ag.tx_index "
+            "case when p.removed_at is null then left(p.body, 140) end, t.amount_sats, t.comment, n.block_height, d.treasure_tx, d.rarity, ag.tx_index, si.title, so.amount_sats "
             "from social.notifications n left join social.posts p on p.id = n.post_id "
             "left join social.tips t on t.id = n.tip_id "
             "left join social.block_draws d on d.height = n.block_height and n.kind = 'treasure' "
             "left join social.agents ag on ag.agent_key = n.actor and n.kind like 'agent%%' "
+            "left join social.shop_orders so on so.id = n.order_id left join social.shop_items si on si.id = so.item_id "
             "where n.address = %s and (%s::int8 is null or n.id < %s) order by n.id desc limit %s;",
             (address, before, before, PAGE),
         )
@@ -62,8 +63,9 @@ def notifications(before: int | None = None, address: str = Depends(current_addr
                 **({"block_height": height} if kind in ("treasure", "lucky", "crown", "event_win", "sold") else {}),
                 **({"tx_index": tx, "rarity": rare} if kind == "treasure" else {}),
                 **({"agent_parcel": agent_tx} if kind.startswith("agent") else {}),  # set when it's a parcel's agent
+                **({"title": title, "amount_sats": paid} if kind == "shop_sold" else {}),
             }
-            for i, kind, actor, n, post_id, at, read, snippet, sats, comment, height, tx, rare, agent_tx in cur.fetchall()
+            for i, kind, actor, n, post_id, at, read, snippet, sats, comment, height, tx, rare, agent_tx, title, paid in cur.fetchall()
         ]
         return {"notifications": rows, "unread": _unread(cur, address)}
 

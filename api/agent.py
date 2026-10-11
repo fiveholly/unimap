@@ -36,16 +36,16 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from psycopg2.extras import Json
 from pydantic import BaseModel, Field
 
-from api import bip322, events, game, listings, moderation, notify, prosperity, recruit, roles, seasons, social, tips
+from api import bip322, events, game, listings, moderation, notify, prosperity, recruit, roles, seasons, shop, social, tips
 from api.auth import current_address
 from api.db import cursor
 
 router = APIRouter()
 log = logging.getLogger("unimap.agent")
 
-TASKS = ("welcome", "digest", "answers")
+TASKS = ("welcome", "digest", "answers", "shop")
 AUTO_DEFAULT = ("welcome", "digest")  # answering people is left to the owner unless they say otherwise
-PARCEL_TASKS = ("answers",)  # a parcel's agent only answers people under its holder's posts
+PARCEL_TASKS = ("answers", "shop")  # a parcel's agent answers people under its holder's posts and tells of their new items
 MAX_DAYS = 90  # a grant lasts at most this long; the owner signs again after
 MAX_PER_DAY = 10
 MAX_PERSONA = 1000
@@ -357,7 +357,7 @@ def grant(bitmap_number: int, req: Grant, parcel: int | None = None, address: st
             (bitmap_number, parcel, address, req.id),
         )
         old = cur.fetchone()
-        default_auto = list(AUTO_DEFAULT) if parcel is None else list(PARCEL_TASKS)  # a resident who ticks the box means their answers
+        default_auto = list(AUTO_DEFAULT) if parcel is None else ["answers"]  # a resident who ticks the box means their answers
         persona, tasks_, watch, memory, state, paid_until, auto = old[1:] if old else ("", list(tasks_for(parcel)), {}, [], {}, None, default_auto)
         auto = auto or default_auto
         if old and old[0] in live:
@@ -366,7 +366,9 @@ def grant(bitmap_number: int, req: Grant, parcel: int | None = None, address: st
             cur.execute("select coalesce(max(id), 0) from land_events where bitmap_number = %s;", (bitmap_number,))
             event = cur.fetchone()[0]
             cur.execute("select coalesce(max(id), 0) from social.posts;")
-            state = {"event": event, "post": cur.fetchone()[0], **({"digest_at": state["digest_at"]} if "digest_at" in state else {})}
+            post = cur.fetchone()[0]
+            cur.execute("select coalesce(max(id), 0) from social.shop_items;")
+            state = {"event": event, "post": post, "item": cur.fetchone()[0], **({"digest_at": state["digest_at"]} if "digest_at" in state else {})}
         cur.execute(
             "update social.agents set grant_signature = %s, granted_at = now(), persona = %s, tasks = %s, watch = %s, "
             "memory = %s, state = %s, paid_until = %s, auto_tasks = %s where id = %s;",
@@ -640,6 +642,9 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {"radius": {"type": "integer", "minimum": 1, "maximum": MAX_RADIUS}}}},
     {"name": "recruiting_districts", "description": "Districts across the city looking for residents right now.",
      "input_schema": {"type": "object", "properties": {}}},
+    {"name": "shop_items", "description": "What is on sale in the district's shop now (digital goods paid over Lightning), "
+     "with prices in sats and how many are left. Who sells each: the owner, or the resident of a parcel.",
+     "input_schema": {"type": "object", "properties": {}}},
     {"name": "draft_post", "description": "Write a top-level post for the owner to approve.",
      "input_schema": {"type": "object", "properties": {
          "task": {"type": "string", "enum": list(TASKS)}, "body": {"type": "string"},
@@ -726,6 +731,13 @@ class Toolbox:
         with cursor() as cur:
             found = listings.in_range(cur, self.n - r, self.n + r)
         return [{"district": f"{k}.bitmap", "price_sats": v} for k, v in sorted(found.items(), key=lambda x: x[1])][:20]
+
+    def t_shop_items(self):
+        with cursor() as cur:
+            found = shop.items(cur, self.n)
+        return [{"id": i["id"], "title": i["title"], "description": i["description"], "price_sats": i["price_sats"],
+                 "left": i["left"], "seller": "owner" if i["tx_index"] is None else f"resident of parcel #{i['tx_index']}",
+                 "yours": i["seller"] == self.a["owner"]} for i in found]
 
     def t_recruiting_districts(self):
         return [{"district": d["name"], "message": d["message"], "open_parcels": len(d["parcels"])}
@@ -815,6 +827,13 @@ def task_prompt(a, due):
             f"{lines}\nIf someone asked something the district can answer with facts from your tools, draft a reply under the "
             "top-level post. Skip anything that isn't a question, or that only the owner can answer."
         )
+    if "shop" in due:
+        lines = "\n".join(json.dumps(x, ensure_ascii=False) for x in due["shop"])
+        parts.append(
+            f"\n[shop] New items your {'owner' if a['tx_index'] is None else 'resident'} put up for sale in the district's shop:\n{lines}\n"
+            "Draft one short post telling people about them: what each is and its price in sats, as the item says. Don't add "
+            "details that aren't there, and don't promise discounts or anything beyond the item."
+        )
     if "digest" in due:
         parts.append(
             "\n[digest] Write this week's digest for the district as one post: what happened here (posts, new residents, "
@@ -856,6 +875,16 @@ def _due(cur, a):
     cursors["post"] = cur.fetchone()[0]
     if rows and "answers" in a["tasks"]:
         due["answers"] = [{"id": i, "reply_to": r, "role": role, "text": body[:500]} for i, r, role, body in rows]
+    cur.execute(
+        "select id, title, description, price_sats from social.shop_items where bitmap_number = %s and tx_index is not distinct from %s "
+        "and seller = %s and active and id > %s order by id limit 5;",
+        (n, a["tx_index"], owner, st.get("item", 0)),
+    )
+    rows = cur.fetchall()
+    if rows:
+        cursors["item"] = rows[-1][0]
+        if "shop" in a["tasks"]:
+            due["shop"] = [{"title": t, "description": d[:300], "price_sats": p} for _, t, d, p in rows]
     last = st.get("digest_at")
     if "digest" in a["tasks"] and (last is None or datetime.fromisoformat(last) < _now() - timedelta(days=DIGEST_DAYS)):
         due["digest"] = True

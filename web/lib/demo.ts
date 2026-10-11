@@ -3,7 +3,7 @@
 // here from deterministic fake data; what the visitor does (posts, likes, follows, profile
 // edits) is kept in localStorage, and "重置演示数据" clears it.
 
-import type { MarketOffer, OfferQuote, Agent, AgentDraft, AgentGrant, AgentInfo, AgentTask, AgentView, Application, Badge, Contest, MarketListing, ContestMetric, District, DistrictGame, Draw, Game, Season, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
+import type { MarketOffer, OfferQuote, Agent, AgentDraft, AgentGrant, AgentInfo, AgentTask, AgentView, Application, Badge, Contest, MarketListing, ContestMetric, District, DistrictGame, Draw, Game, Season, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, ShopBought, ShopItem, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
 import { CLAIM_BLOCKS, pick, rarityOf, ROUND, roundOf, SEASON, seasonOf, sha256, type Rarity } from "./game";
 import { connected } from "./parks";
 import { MAX_SHOWN, PET_KEYS, PETS, type Pet, type PetKey } from "./pets";
@@ -158,8 +158,12 @@ type State = {
   agents?: DemoAgent[]; // 街区 agent, on the visitor's districts
   offers?: MarketOffer[]; // 出价
   agentPay?: { id: number; at: number; settled: boolean; agent?: number } | null;
+  shop?: DemoItem[]; // 店铺
+  orders?: DemoOrder[];
 };
 type DemoAgent = Omit<Agent, "posted_today" | "running" | "problem"> & { n: number; message: string; revoked?: boolean; drafts: AgentDraft[] };
+type DemoItem = Omit<ShopItem, "sold" | "left" | "on_sale" | "mine" | "bought"> & { content: string; sold: number; introduced?: boolean };
+type DemoOrder = { id: number; item: number; buyer: string; at: number; settled: boolean };
 type DemoListing = { id: number; n: number; seller: string; price: number; status: MarketListing["status"]; at: string; txid?: string; park?: number; members?: number[]; tx?: number };
 type DemoTip = { id: number; tipper: string; recipient: string; n: number; post_id: number | null; sats: number; comment: string; status: Tip["status"]; at: number; event?: [number, number] };
 type DemoContest = { id: number; bitmap_number: number; season: number; host: string; metric: ContestMetric; prizes: number[]; note: string; created_at: string; cancelled?: boolean;
@@ -224,6 +228,8 @@ function seedExtras(s: State) {
       block_height: (seasonOf(DEMO_TIP)[0] - 1) * SEASON }, ...(s.notifications ?? [])];
   }
   if (!s.agents) seedAgent(s);
+  s.shop ??= seedShop();
+  s.orders ??= [];
   s.opened ??= Object.fromEntries(Array.from({ length: 12 }, (_, i) => [DEMO_TIP - 3 - i * 9, fakeAddress(900 + i)]));
   return s;
 }
@@ -919,6 +925,25 @@ function parcelBriefing(n: number, parcel: number, s: State): AgentView["briefin
     ...districtGame(n, DEMO_ADDRESS).treasures.filter((x) => x.tx_index === parcel && x.claimable).map((x) => ({ kind: "treasure" as const, height: x.height, rarity: x.rarity, closes_at_height: x.closes_at })),
   ];
 }
+// 店铺: 840001's owner and a resident sell there; the visitor sells one poster in 840000.
+function seedShop(): DemoItem[] {
+  const item = (id: number, n: number, tx: number | null, title: string, description: string, price: number, stock: number | null, sold: number, content: string, days: number): DemoItem => ({
+    id, bitmap_number: n, tx_index: tx, seller: (tx == null ? ownerOf(n) : parcelOwner(n, tx)) ?? fakeAddress(n), title, description, price_sats: price, stock, active: true,
+    created_at: iso(days), content, sold, introduced: true });
+  return [
+    item(1, 840000, null, "减半区块纪念海报（高清 PNG）", "第四次减半区块 840000 的 Mondrian 图，6000×6000 像素，可以打印成海报。", 5000, null, 2, "https://files.unimap.city/demo/840000-poster.png", 3),
+    item(2, 840001, null, "840001 街区壁纸包", "四张手机壁纸，用这条街的交易画的。", 2100, 20, 3, "https://files.unimap.city/demo/840001-wallpapers.zip", 5),
+    item(3, 840001, 14, "#14 号地块手绘明信片（电子版）", "我画的这条街，适合发给朋友。", 500, null, 7, "https://files.unimap.city/demo/840001-14-postcard.jpg", 2),
+  ];
+}
+const shopHolder = (i: { bitmap_number: number; tx_index: number | null }) => agentHolder(i.bitmap_number, i.tx_index);
+function itemView(i: DemoItem, viewer: string | null, s: State): ShopItem {
+  const { content: _c, introduced: _i, ...rest } = i;
+  const left = i.stock == null ? null : Math.max(0, i.stock - i.sold);
+  const on_sale = i.active && shopHolder(i) === i.seller && left !== 0;
+  const bought = viewer ? s.orders!.filter((o) => o.item === i.id && o.buyer === viewer && o.settled).map((o) => ({ order_id: o.id, content: i.content, at: new Date(o.at).toISOString() })) : [];
+  return { ...rest, left, on_sale, mine: viewer === i.seller, bought };
+}
 function agentView(a: DemoAgent, s: State): AgentView {
   const today = s.posts.filter((p) => p.agent?.grant_id === a.id && Date.parse(p.created_at) > Date.now() - DAY * 1000).length;
   const problem = Date.parse(a.expires_at) < Date.now() ? "expired" : a.paid_until && Date.parse(a.paid_until) < Date.now() ? "unpaid" : null;
@@ -1297,7 +1322,17 @@ function route(path: string, opts: Opts): unknown {
     if (sub === "/run") {
       if (ag.last_run_at && Date.now() - Date.parse(ag.last_run_at) < 10 * 60_000) fail(429, "it looked a few minutes ago; try again later");
       const id = Math.max(0, ...s.agents!.flatMap((x) => x.drafts.map((d) => d.id))) + 1, now = new Date().toISOString();
-      // A parcel's agent answers the newest question under its holder's posts; the district's writes the digest.
+      // A new item in the holder's shop comes first; otherwise a parcel's agent answers the newest question under its
+      // holder's posts and the district's writes the digest.
+      const fresh = ag.tasks.includes("shop") ? s.shop!.find((i) => i.bitmap_number === n && i.tx_index === parcel && i.seller === a && i.active && !i.introduced) : undefined;
+      if (fresh) {
+        fresh.introduced = true;
+        ag.drafts.push({ id, reply_to: null, body: `新上架：${fresh.title}，${fresh.price_sats.toLocaleString("en-US")} 聪。${fresh.description} 在店铺里就能买，付款直接走闪电。`,
+          why: "店里上了新商品", task: "shop", status: "pending", post_id: null, created_at: now, decided_at: null });
+        Object.assign(ag, { last_run_at: now, last: { at: now, drafts: 1, posted: 0, error: null } });
+        save();
+        return { running: true };
+      }
       const asked = parcel != null
         ? s.posts.filter((x) => x.bitmap_number === n && x.reply_to == null && !x.removed && x.author.address === a
             && s.posts.some((r) => r.reply_to === x.id && r.author.address !== a) && !ag.drafts.some((d) => d.reply_to === x.id)).sort((x, y) => y.id - x.id)[0]
@@ -1324,6 +1359,66 @@ function route(path: string, opts: Opts): unknown {
       return { id: s.agentPay.id, invoice: "lnbc21000n1pdemoagent0unimap0city", amount_sats: 2100, verifiable: true, status: "pending" } satisfies Tip;
     }
     void a;
+  }
+  if ((m = p.match(/^\/v1\/districts\/(\d+)\/shop$/))) {
+    const n = +m[1];
+    if (method === "POST") {
+      const a = needMe(), parcel = body.parcel != null ? Number(body.parcel) : null;
+      if (agentHolder(n, parcel) !== a) fail(403, parcel == null ? "only the district owner can sell here" : `only the holder of parcel #${parcel} can sell here`);
+      if (!s.lightning) fail(409, "set a Lightning address first, so buyers can pay you");
+      const id = Math.max(0, ...s.shop!.map((x) => x.id)) + 1;
+      const it: DemoItem = { id, bitmap_number: n, tx_index: parcel, seller: a, title: String(body.title).trim(), description: String(body.description ?? "").trim(), price_sats: Number(body.price_sats),
+        stock: body.stock != null ? Number(body.stock) : null, active: true, created_at: new Date().toISOString(), content: String(body.content).trim(), sold: 0 };
+      s.shop!.push(it);
+      save();
+      return { ...itemView(it, a, s), content: it.content };
+    }
+    return { items: s.shop!.filter((i) => i.bitmap_number === n).map((i) => itemView(i, me, s)).filter((i) => i.on_sale || i.mine) };
+  }
+  if ((m = p.match(/^\/v1\/shop\/items\/(\d+)(\/buy)?$/))) {
+    const a = needMe(), it = s.shop!.find((x) => x.id === +m![1]) ?? fail(404, "no such item");
+    if (m[2]) {
+      const v = itemView(it, a, s);
+      if (!v.on_sale) fail(409, v.left === 0 ? "sold out" : "this item isn't on sale any more");
+      if (it.seller === a) fail(400, "you can't buy your own item");
+      const order: DemoOrder = { id: Math.max(0, ...s.orders!.map((o) => o.id)) + 1, item: it.id, buyer: a, at: Date.now(), settled: false };
+      s.orders!.push(order);
+      save();
+      return { id: order.id, invoice: `lnbc${it.price_sats * 10}n1pdemoshop0unimap0city${order.id}`, amount_sats: it.price_sats, verifiable: true, status: "pending" } satisfies Tip;
+    }
+    if (it.seller !== a) fail(404, "no such item");
+    if (method === "PUT") {
+      for (const k of ["title", "description", "content"] as const) if (body[k] != null) it[k] = String(body[k]).trim();
+      if (body.price_sats != null) it.price_sats = Number(body.price_sats);
+      if (body.unlimited) it.stock = null;
+      else if (body.stock != null) it.stock = Number(body.stock);
+      if (body.active != null) it.active = !!body.active;
+      save();
+    }
+    if (method === "DELETE") {
+      it.active = false;
+      save();
+      return { ok: true };
+    }
+    return { ...itemView(it, a, s), content: it.content };
+  }
+  if ((m = p.match(/^\/v1\/shop\/orders\/(\d+)$/))) {
+    const a = needMe(), o = s.orders!.find((x) => x.id === +m![1] && x.buyer === a) ?? fail(404, "no such order");
+    const it = s.shop!.find((x) => x.id === o.item)!;
+    if (!o.settled && Date.now() - o.at > 4000) {
+      o.settled = true;
+      it.sold++;
+      save();
+    }
+    return { id: o.id, item_id: it.id, status: o.settled ? "settled" : "pending", verifiable: true, ...(o.settled ? { content: it.content } : {}) };
+  }
+  if (p === "/v1/me/shop") {
+    const a = needMe();
+    const bought = s.orders!.filter((o) => o.buyer === a && o.settled).sort((x, y) => y.id - x.id).map((o) => {
+      const it = s.shop!.find((x) => x.id === o.item)!;
+      return { order_id: o.id, item_id: it.id, bitmap_number: it.bitmap_number, title: it.title, amount_sats: it.price_sats, content: it.content, at: new Date(o.at).toISOString() } satisfies ShopBought;
+    });
+    return { bought, sold: [] };
   }
   if ((m = p.match(/^\/v1\/agent\/payments\/(\d+)$/))) {
     needMe();

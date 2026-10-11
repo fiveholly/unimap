@@ -8,5 +8,6 @@ import { social } from "./social.ts";
 import { market } from "./market.ts";
 import { tips } from "./tips.ts";
 import { agent } from "./agent.ts";
+import { shop } from "./shop.ts";
 
-export const EN: Record<string, string> = { ...district, ...map, ...social, ...moderation, ...tips, ...game, ...market, ...agent, ...common };
+export const EN: Record<string, string> = { ...district, ...map, ...social, ...moderation, ...tips, ...game, ...market, ...agent, ...shop, ...common };
