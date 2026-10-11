@@ -117,6 +117,7 @@ const SEEDS: Seed[] = [
   { n: 767430, who: "owner", body: "第一个铭文出现的区块。数据区的起点。", ago: 12 },
   { n: 840002, who: 9, body: "免费空投！连接钱包签名就能领 1000 枚 BITMAP 代币，名额有限 → bitmap-airdrop.example", ago: 0.3 },
   { n: 840000, who: 31, body: "收地块，高价收，私信。收地块，高价收，私信。收地块，高价收，私信。", ago: 0.7 },
+  { n: 840001, who: 7, body: "在 #7 号地块上开了一家小书店，周末开门。", ago: 1.1, replies: [[14, "书店卖旧书吗？几点开门？"]] },
 ];
 // Reports other wallets filed on the two spam seeds above, for the admin page.
 const SEED_REPORTS: [string, number, string, string][] = [
@@ -156,7 +157,7 @@ type State = {
   dummies?: boolean; // the visitor made the two small outputs a purchase needs
   agents?: DemoAgent[]; // 街区 agent, on the visitor's districts
   offers?: MarketOffer[]; // 出价
-  agentPay?: { id: number; at: number; settled: boolean } | null;
+  agentPay?: { id: number; at: number; settled: boolean; agent?: number } | null;
 };
 type DemoAgent = Omit<Agent, "posted_today" | "running" | "problem"> & { n: number; message: string; revoked?: boolean; drafts: AgentDraft[] };
 type DemoListing = { id: number; n: number; seller: string; price: number; status: MarketListing["status"]; at: string; txid?: string; park?: number; members?: number[]; tx?: number };
@@ -870,13 +871,14 @@ type Opts = { method?: string; body?: unknown; token?: string | null };
 
 // 街区 agent: one already working on the visitor's 840000, with a digest it posted and two drafts waiting.
 const AGENT_KEY = "7c3f9a1e5b2d8c4f6a0e9d3b1c7f5a2e8d4b6c0a9f3e1d7b5c2a8f4e6d0b9c3a";
-const agentGrant = (n: number, key: string, perDay: number, expires: string, mayPublish = false) =>
-  `unimap agent grant\ndistrict: ${n}.bitmap\nagent key: ${key}\nmay: draft posts and replies here; ${mayPublish ? "publish them on its own, up to the posts per day below" : "publish the ones I approve"}\nposts per day: ${perDay}\nexpires: ${expires.slice(0, 19)}Z\nissued: ${Math.floor(Date.now() / 1000)}`;
+const agentGrant = (n: number, key: string, perDay: number, expires: string, mayPublish = false, parcel: number | null = null) =>
+  `unimap agent grant\ndistrict: ${n}.bitmap\n${parcel != null ? `parcel: #${parcel}\n` : ""}agent key: ${key}\nmay: draft posts and replies here; ${mayPublish ? "publish them on its own, up to the posts per day below" : "publish the ones I approve"}\nposts per day: ${perDay}\nexpires: ${expires.slice(0, 19)}Z\nissued: ${Math.floor(Date.now() / 1000)}`;
 /** The agent's post of draft d, as the demo's agent key would sign it. */
 function agentPost(s: State, live: DemoAgent, d: AgentDraft, text: string, owner: string, auto = false): Post {
   const now = new Date().toISOString();
   const signed = `unimap agent post\ngrant: ${live.id}\nagent key: ${live.key}\n\nunimap post\ndistrict: ${live.n}.bitmap\nreply-to: ${d.reply_to ?? "none"}\nas: none\n\n${text}`;
-  const post: Post = { id: s.nextId++, bitmap_number: live.n, reply_to: d.reply_to, body: text, media: [], author: { address: owner, role: "owner", parcel: null, as_bitmap: null },
+  const parcel = live.parcel ?? null;
+  const post: Post = { id: s.nextId++, bitmap_number: live.n, reply_to: d.reply_to, body: text, media: [], author: { address: owner, role: parcel != null ? "resident" : "owner", parcel, as_bitmap: null },
     signed_message: signed, signature: sha256(signed) + sha256(text), created_at: now, removed: false, like_count: 0, reply_count: 0, liked_by_me: false,
     agent: { grant_id: live.id, key: live.key } };
   s.posts.push(post);
@@ -908,11 +910,21 @@ function seedAgent(s: State) {
     ],
   }];
 }
+/** Who holds what an agent looks after: the district, or one of its parcels. */
+const agentHolder = (n: number, parcel: number | null | undefined) => (parcel != null ? parcelOwner(n, parcel) : ownerOf(n));
+function parcelBriefing(n: number, parcel: number, s: State): AgentView["briefing"] {
+  const soon = (s.polls ?? []).filter((x) => x.n === n && !x.closed_at && Date.parse(x.closes_at) > Date.now() && Date.parse(x.closes_at) < Date.now() + 2 * DAY * 1000 && !(DEMO_ADDRESS in x.votes));
+  return [
+    ...soon.map((x) => ({ kind: "poll_closing" as const, poll_id: x.id, question: x.question, closes_at: x.closes_at })),
+    ...districtGame(n, DEMO_ADDRESS).treasures.filter((x) => x.tx_index === parcel && x.claimable).map((x) => ({ kind: "treasure" as const, height: x.height, rarity: x.rarity, closes_at_height: x.closes_at })),
+  ];
+}
 function agentView(a: DemoAgent, s: State): AgentView {
   const today = s.posts.filter((p) => p.agent?.grant_id === a.id && Date.parse(p.created_at) > Date.now() - DAY * 1000).length;
   const problem = Date.parse(a.expires_at) < Date.now() ? "expired" : a.paid_until && Date.parse(a.paid_until) < Date.now() ? "unpaid" : null;
   const { n: _n, message: _m, revoked: _r, drafts, ...rest } = a;
-  const briefing: AgentView["briefing"] = (s.applications?.[a.n]?.length ?? 0) > 0 ? [{ kind: "applications", count: s.applications![a.n].length }] : [];
+  const briefing: AgentView["briefing"] = a.parcel != null ? parcelBriefing(a.n, a.parcel, s)
+    : (s.applications?.[a.n]?.length ?? 0) > 0 ? [{ kind: "applications", count: s.applications![a.n].length }] : [];
   return { agent: { ...rest, may_publish: rest.may_publish ?? false, auto_tasks: rest.may_publish ? rest.auto_tasks ?? [] : [], posted_today: today, running: false, problem }, drafts: drafts.filter((d) => d.status === "pending"),
     recent: drafts.filter((d) => d.status !== "pending").sort((x, y) => y.id - x.id), briefing };
 }
@@ -1231,9 +1243,12 @@ function route(path: string, opts: Opts): unknown {
     save();
     return contestView(c);
   }
-  if (p === "/v1/agent") return { open: true, price_sats: 2100, days: 30, max_days: 90, max_per_day: 10, tasks: ["welcome", "digest", "answers"] } satisfies AgentInfo;
+  if (p === "/v1/agent") return { open: true, price_sats: 2100, days: 30, max_days: 90, max_per_day: 10, tasks: ["welcome", "digest", "answers"], parcel_tasks: ["answers"] } satisfies AgentInfo;
   if ((m = p.match(/^\/v1\/districts\/(\d+)\/agent(\/[a-z]+)?$/))) {
-    const n = +m[1], a = owns(n), live = s.agents!.find((x) => x.n === n && !x.revoked);
+    const n = +m[1], q = url.searchParams.get("parcel"), parcel = q != null ? +q : null;
+    const a = parcel == null ? owns(n) : agentHolder(n, parcel) === needMe() ? needMe() : fail(403, `only the holder of parcel #${parcel} can do this`);
+    const scope = (x: DemoAgent) => x.n === n && (x.parcel ?? null) === parcel;
+    const live = s.agents!.find((x) => scope(x) && !x.revoked);
     const sub = m[2] ?? "";
     if (sub === "/prepare") {
       const key = sha256(`agent:${n}:${Date.now()}`);
@@ -1241,15 +1256,15 @@ function route(path: string, opts: Opts): unknown {
       const id = Math.max(0, ...s.agents!.map((x) => x.id)) + 1;
       const expires = new Date(Date.now() + days * DAY * 1000).toISOString();
       const mayPublish = !!body.may_publish;
-      s.agents!.push({ id, n, key, message: agentGrant(n, key, perDay, expires, mayPublish), posts_per_day: perDay, expires_at: expires, granted_at: "", paid_until: null, persona: "", tasks: ["welcome", "digest", "answers"],
-        may_publish: mayPublish, auto_tasks: ["welcome", "digest"],
+      s.agents!.push({ id, n, parcel, key, message: agentGrant(n, key, perDay, expires, mayPublish, parcel), posts_per_day: perDay, expires_at: expires, granted_at: "", paid_until: null, persona: "",
+        tasks: parcel != null ? ["answers"] : ["welcome", "digest", "answers"], may_publish: mayPublish, auto_tasks: parcel != null ? ["answers"] : ["welcome", "digest"],
         watch: {}, memory: [], last_run_at: null, last: null, drafts: [], revoked: true });
       save();
       return { id, message: s.agents!.find((x) => x.id === id)!.message };
     }
     if (sub === "" && method === "POST") {
-      const g = s.agents!.find((x) => x.id === Number(body.id) && x.n === n && !x.granted_at) ?? fail(404, "no such grant waiting to be signed; start again");
-      const last = live ?? s.agents!.filter((x) => x.n === n && x.granted_at && x.id !== g.id).sort((x, y) => y.id - x.id)[0];
+      const g = s.agents!.find((x) => x.id === Number(body.id) && scope(x) && !x.granted_at) ?? fail(404, "no such grant waiting to be signed; start again");
+      const last = live ?? s.agents!.filter((x) => scope(x) && x.granted_at && x.id !== g.id).sort((x, y) => y.id - x.id)[0];
       if (last) Object.assign(g, { persona: last.persona, tasks: last.tasks, watch: last.watch, memory: last.memory, paid_until: last.paid_until, auto_tasks: last.auto_tasks?.length ? last.auto_tasks : g.auto_tasks });
       if (live) {
         live.revoked = true;
@@ -1261,17 +1276,17 @@ function route(path: string, opts: Opts): unknown {
       return agentView(g, s);
     }
     if (sub === "" && method === "DELETE") {
-      const gone = live ?? fail(404, "this district has no agent");
+      const gone = live ?? fail(404, parcel != null ? "this parcel has no agent" : "this district has no agent");
       gone.revoked = true;
       gone.drafts.forEach((d) => d.status === "pending" && (d.status = "expired"));
       save();
       return { ok: true };
     }
     if (sub === "" && method === "GET") {
-      if (!live) return { agent: null, drafts: [], recent: [], briefing: [] } satisfies AgentView;
+      if (!live) return { agent: null, drafts: [], recent: [], briefing: parcel != null ? parcelBriefing(n, parcel, s) : [] } satisfies AgentView;
       return agentView(live, s);
     }
-    const ag = live ?? fail(404, "this district has no agent");
+    const ag = live ?? fail(404, parcel != null ? "this parcel has no agent" : "this district has no agent");
     if (sub === "/settings") {
       Object.assign(ag, { persona: String(body.persona ?? "").trim(), tasks: body.tasks as AgentTask[], watch: body.watch as Agent["watch"],
         memory: body.memory ? ag.memory.filter((x) => (body.memory as string[]).includes(x)) : ag.memory,
@@ -1281,22 +1296,30 @@ function route(path: string, opts: Opts): unknown {
     }
     if (sub === "/run") {
       if (ag.last_run_at && Date.now() - Date.parse(ag.last_run_at) < 10 * 60_000) fail(429, "it looked a few minutes ago; try again later");
-      const id = Math.max(0, ...ag.drafts.map((d) => d.id)) + 1, now = new Date().toISOString();
-      const d: AgentDraft = { id, reply_to: null, body: `这周 ${n} 街区很热闹：有新邻居搬进来，邻居们换了头像，也在聊区块里最大的那笔交易。欢迎大家周末来签到。`, why: "该写本周周报了",
-        task: "digest", status: "pending", post_id: null, created_at: now, decided_at: null };
-      ag.drafts.push(d);
-      const auto = ag.may_publish && ag.auto_tasks?.includes("digest") && agentView(ag, s).agent!.posted_today < ag.posts_per_day;
-      if (auto) {
+      const id = Math.max(0, ...s.agents!.flatMap((x) => x.drafts.map((d) => d.id))) + 1, now = new Date().toISOString();
+      // A parcel's agent answers the newest question under its holder's posts; the district's writes the digest.
+      const asked = parcel != null
+        ? s.posts.filter((x) => x.bitmap_number === n && x.reply_to == null && !x.removed && x.author.address === a
+            && s.posts.some((r) => r.reply_to === x.id && r.author.address !== a) && !ag.drafts.some((d) => d.reply_to === x.id)).sort((x, y) => y.id - x.id)[0]
+        : undefined;
+      const d: AgentDraft | null = parcel == null
+        ? { id, reply_to: null, body: `这周 ${n} 街区很热闹：有新邻居搬进来，邻居们换了头像，也在聊区块里最大的那笔交易。欢迎大家周末来签到。`, why: "该写本周周报了",
+          task: "digest", status: "pending", post_id: null, created_at: now, decided_at: null }
+        : asked ? { id, reply_to: asked.id, body: asked.body?.includes("书店") ? "卖旧书，也可以拿书来换。周六周日下午两点开门，欢迎来坐坐。" : "谢谢留言，我看到了，晚点详细回你。",
+          why: "有邻居在你的帖子下面提问", task: "answers", status: "pending", post_id: null, created_at: now, decided_at: null } : null;
+      const auto = !!d && ag.may_publish && !!ag.auto_tasks?.includes(d.task) && agentView(ag, s).agent!.posted_today < ag.posts_per_day;
+      if (d) ag.drafts.push(d);
+      if (d && auto) {
         const post = agentPost(s, ag, d, d.body, a, true);
         if (a === DEMO_ADDRESS) s.notifications = [{ id: Math.max(0, ...(s.notifications ?? []).map((x) => x.id)) + 1, kind: "agent_posted", actor: a, bitmap_number: n,
-          post_id: post.id, created_at: now, read: false, snippet: (post.body ?? "").slice(0, 80) }, ...(s.notifications ?? [])];
+          post_id: post.id, created_at: now, read: false, snippet: (post.body ?? "").slice(0, 80), agent_parcel: parcel }, ...(s.notifications ?? [])];
       }
-      Object.assign(ag, { last_run_at: now, last: { at: now, drafts: auto ? 0 : 1, posted: auto ? 1 : 0, error: null } });
+      Object.assign(ag, { last_run_at: now, last: { at: now, drafts: d && !auto ? 1 : 0, posted: auto ? 1 : 0, error: null } });
       save();
       return { running: true };
     }
     if (sub === "/pay") {
-      s.agentPay = { id: Date.now() % 100000, at: Date.now(), settled: false };
+      s.agentPay = { id: Date.now() % 100000, at: Date.now(), settled: false, agent: ag.id };
       save();
       return { id: s.agentPay.id, invoice: "lnbc21000n1pdemoagent0unimap0city", amount_sats: 2100, verifiable: true, status: "pending" } satisfies Tip;
     }
@@ -1307,7 +1330,7 @@ function route(path: string, opts: Opts): unknown {
     const pay = s.agentPay?.id === +m[1] ? s.agentPay : fail(404, "no such payment");
     if (!pay.settled && Date.now() - pay.at > 4000) {
       pay.settled = true;
-      const live = s.agents!.find((x) => !x.revoked);
+      const live = s.agents!.find((x) => !x.revoked && (pay.agent == null || x.id === pay.agent));
       if (live) live.paid_until = new Date(Math.max(Date.now(), Date.parse(live.paid_until ?? "0")) + 30 * DAY * 1000).toISOString();
       save();
     }
@@ -1315,7 +1338,7 @@ function route(path: string, opts: Opts): unknown {
   }
   if ((m = p.match(/^\/v1\/agent\/drafts\/(\d+)(\/publish)?$/))) {
     const a = needMe(), id = +m[1];
-    const live = s.agents!.find((x) => !x.revoked && ownerOf(x.n) === a && x.drafts.some((d) => d.id === id && d.status === "pending")) ?? fail(409, "this draft isn't waiting any more");
+    const live = s.agents!.find((x) => !x.revoked && agentHolder(x.n, x.parcel) === a && x.drafts.some((d) => d.id === id && d.status === "pending")) ?? fail(409, "this draft isn't waiting any more");
     const d = live.drafts.find((x) => x.id === id)!, now = new Date().toISOString();
     if (!m[2]) {
       Object.assign(d, { status: "discarded", decided_at: now });
@@ -1330,7 +1353,7 @@ function route(path: string, opts: Opts): unknown {
   }
   if ((m = p.match(/^\/v1\/agent\/grants\/(\d+)$/))) {
     const g = s.agents!.find((x) => x.id === +m![1] && x.granted_at) ?? fail(404, "no such grant");
-    return { id: g.id, bitmap_number: g.n, owner: ownerOf(g.n) ?? DEMO_ADDRESS, agent_key: g.key, message: g.message, signature: "演示签名", granted_at: g.granted_at,
+    return { id: g.id, bitmap_number: g.n, parcel: g.parcel ?? null, owner: agentHolder(g.n, g.parcel) ?? DEMO_ADDRESS, agent_key: g.key, message: g.message, signature: "演示签名", granted_at: g.granted_at,
       expires_at: g.expires_at, revoked_at: g.revoked ? new Date().toISOString() : null } satisfies AgentGrant;
   }
   if (p === "/v1/market/offers" && method === "GET") {
