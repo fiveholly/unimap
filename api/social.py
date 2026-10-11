@@ -14,7 +14,7 @@ import psycopg2.extras
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import bip322, game, holdings, moderation, nostr, notify, parks, prosperity, recruit, roles, seasons, style, tips, wallets, xlink
+from api import bip322, game, holdings, moderation, nostr, notify, parks, pets, prosperity, recruit, roles, seasons, style, tips, wallets, xlink
 from api.auth import current_address, normalize_address, optional_address
 from api.db import cursor
 from api.land import EVENT_SELECT, _event
@@ -170,6 +170,7 @@ def person(address: str, before_id: int | None = None, limit: int = 20, viewer: 
         cur.execute("select count(*) from social.follows where address = %s;", (address,))
         follows = cur.fetchone()[0]
         badges = game.badges_of(cur, address)
+        shown_pets = pets.public_pets(cur, address)
         # Score held districts a run at a time, so two far-apart districts don't score everything between.
         levels, park_of, run = {}, {}, []
         for n in districts + [None]:
@@ -190,6 +191,7 @@ def person(address: str, before_id: int | None = None, limit: int = 20, viewer: 
         "follows": follows,
         "first_post_at": first_post.isoformat() if first_post else None,
         "badges": badges,
+        "pets": shown_pets,
         "posts": posts,
     }
 

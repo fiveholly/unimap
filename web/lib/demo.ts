@@ -498,7 +498,7 @@ function holdingsOf(address: string | null, n: number): Partial<Record<PetKey, n
   };
 }
 // 我的宠物, as api/pets.py: the dog has been looked after for a few days, the others are new.
-type DemoCare = { name: string | null; affection: number; fed_at: number | null; streak: number; last_day: string | null; face?: string | null };
+type DemoCare = { name: string | null; affection: number; fed_at: number | null; streak: number; last_day: string | null; face?: string | null; public?: boolean };
 // The demo frogs are real Bitcoin Frogs (their pictures load from ordinals.com); the other
 // collections have no made-up inscriptions, so their pets are drawn.
 const DEMO_ITEMS: Partial<Record<PetKey, string[]>> = {
@@ -530,6 +530,7 @@ function caredPet(k: PetKey): CaredPet {
     fed_at: c.fed_at == null ? null : new Date(c.fed_at).toISOString(),
     can_feed_at: c.fed_at == null ? null : new Date(c.fed_at + FEED_HOURS * HOUR).toISOString(),
     items: DEMO_ITEMS[k] ?? [],
+    public: !!c.public,
     face: c.face && DEMO_ITEMS[k]?.includes(c.face) ? c.face : (DEMO_ITEMS[k]?.[0] ?? null),
     mood: c.fed_at == null || (hours >= 24 && hours < 72) ? "hungry" : hours < FEED_HOURS ? "full" : hours < 24 ? "ok" : "starving",
   };
@@ -540,7 +541,8 @@ function petsAt(n: number): Pet[] {
   const owner = ownerOf(n);
   const held = holdingsOf(owner, n);
   const chosen = owner === DEMO_ADDRESS ? load().showcase?.[n] ?? [] : (Object.keys(held) as PetKey[]);
-  return chosen.flatMap((k) => (petTier(k, held[k] ?? 0) ? [{ asset: k, tier: petTier(k, held[k]!), amount: String(held[k]) }] : []));
+  const face = (k: PetKey) => (owner === DEMO_ADDRESS ? caredPet(k).face : null);
+  return chosen.flatMap((k) => (petTier(k, held[k] ?? 0) ? [{ asset: k, tier: petTier(k, held[k]!), amount: String(held[k]), face: face(k) }] : []));
 }
 /** {tx_index: "dog:2"}: residents' pets on their parcels; a made-up quarter of them show one. */
 function parcelPetsAt(n: number): Record<string, string> {
@@ -904,6 +906,7 @@ function personDemo(a: string, me: string | null, before: number | null): Person
     follows: a === DEMO_ADDRESS ? load().follows.length : 0,
     first_post_at: first,
     posts,
+    pets: a === DEMO_ADDRESS ? myPets().map(caredPet).filter((p) => p.public).map(({ asset, tier, amount, name, level, mood, face }) => ({ asset, tier, amount, name, level, mood, face })) : [],
     badges: a === DEMO_ADDRESS ? load().badges ?? [] : a === ownerOf(840001) ? [{ kind: "lucky", height: roundOf(DEMO_TIP)[0], bitmap_number: 840001, tx_index: null, rarity: "rare", created_at: iso(0.3) }] : [],
   };
 }
@@ -1351,6 +1354,7 @@ function route(path: string, opts: Opts): unknown {
         if (name.length > 20) fail(422, "a name is at most 20 characters");
         c.name = name || null;
       }
+      if ("public" in body) c.public = !!body.public;
       if ("face" in body) {
         if (!DEMO_ITEMS[k]?.includes(String(body.face))) fail(400, "pick one of the inscriptions this pet has");
         c.face = String(body.face);

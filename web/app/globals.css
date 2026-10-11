@@ -800,6 +800,24 @@ kbd {
     max-height: none;
   }
 }
+@media (max-width: 560px) {
+  /* The key sits under the map rather than over the land. */
+  .world-stage {
+    overflow: visible;
+    margin-bottom: 40px;
+  }
+  .world-canvas {
+    border-radius: 14px;
+  }
+  .world-key {
+    left: 0;
+    right: 0;
+    bottom: -40px;
+    justify-content: center;
+    border: 0;
+    background: none;
+  }
+}
 .city {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 300px;
@@ -3232,6 +3250,33 @@ span.act.tip-btn {
   object-fit: cover;
   image-rendering: pixelated;
   background: var(--surface-2);
+}
+.pet-public {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-2);
+}
+.person-pets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.person-pets li {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 168px;
+  padding: 12px 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  text-align: center;
 }
 .pet-faces {
   display: flex;

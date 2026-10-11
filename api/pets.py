@@ -7,7 +7,8 @@ A pet is there while the wallet group holds its asset (tier above 0); its care i
 group's main address, so linking or unlinking a wallet doesn't reset it, and selling the asset
 and buying it back finds the pet as it was. Feeding is free and only for fun: once every
 FEED_HOURS, each feed adds affection, more on a streak of days in a row, and affection decides
-the pet's level. A pet left alone gets hungry but never leaves. Mirrors web/lib/demo.ts.
+the pet's level. A pet left alone gets hungry but never leaves. Pets stay private unless their
+owner shows them on their public page (public_pets). Mirrors web/lib/demo.ts.
 """
 
 import math
@@ -42,12 +43,12 @@ def mood(fed_at, now):
 
 
 def _care(cur, main):
-    cur.execute("select asset, name, affection, fed_at, streak, last_day, face from social.pet_care where address = %s;", (main,))
+    cur.execute("select asset, name, affection, fed_at, streak, last_day, face, public from social.pet_care where address = %s;", (main,))
     return {r[0]: r[1:] for r in cur.fetchall()}
 
 
 def _view(asset, amount, care, items, now):
-    name, affection, fed_at, streak, last_day, face = care or (None, 0, None, 0, None, None)
+    name, affection, fed_at, streak, last_day, face, public = care or (None, 0, None, 0, None, None, False)
     lvl = level(affection)
     # A streak only lasts while the next feed comes the next day at the latest.
     if last_day is not None and last_day < now.date() - timedelta(days=1):
@@ -64,6 +65,7 @@ def _view(asset, amount, care, items, now):
         "mood": mood(fed_at, now),
         "items": items,
         "face": face if face in items else (items[0] if items else None),
+        "public": public,
     }
 
 
@@ -74,6 +76,14 @@ def pets(cur, address, now=None):
     care = _care(cur, wallets.main_of(cur, address))
     items = holdings.held_items(cur, address)
     return [_view(a, held[a], care.get(a), items.get(a, []), now) for a in holdings.ASSETS if holdings.tier(a, held.get(a, 0)) > 0]
+
+
+PUBLIC_FIELDS = ("asset", "tier", "amount", "name", "level", "mood", "face")
+
+
+def public_pets(cur, address):
+    """The pets address's owner chose to show on their page, without the care details."""
+    return [{k: p[k] for k in PUBLIC_FIELDS} for p in pets(cur, address) if p["public"]]
 
 
 def _refresh_unchecked(address):
@@ -132,6 +142,7 @@ def feed(asset: str, address: str = Depends(current_address)):
 class PetBody(BaseModel):
     name: str | None = Field(default=None, max_length=20)  # empty or null: no name
     face: str | None = None  # one of the pet's items
+    public: bool | None = None  # show it on the owner's public page
 
 
 @router.put("/v1/me/pets/{asset}")
@@ -148,4 +159,6 @@ def update(asset: str, req: PetBody, address: str = Depends(current_address)):
             if req.face not in pet["items"]:
                 raise HTTPException(400, "pick one of the inscriptions this pet has")
             cur.execute("update social.pet_care set face = %s where address = %s and asset = %s;", (req.face, main, asset))
+        if req.public is not None:
+            cur.execute("update social.pet_care set public = %s where address = %s and asset = %s;", (req.public, main, asset))
         return _pet(cur, address, asset)

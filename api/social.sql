@@ -606,5 +606,8 @@ CREATE TABLE IF NOT EXISTS social.pet_care (
 	streak int4 NOT NULL DEFAULT 0,
 	last_day date NULL,
 	face text NULL, -- the inscription its picture shows, one of the group's own
+	public bool NOT NULL DEFAULT false, -- shown on the owner's public page
 	CONSTRAINT pet_care_pk PRIMARY KEY (address, asset)
 );
+ALTER TABLE social.pet_care ADD COLUMN IF NOT EXISTS face text NULL;
+ALTER TABLE social.pet_care ADD COLUMN IF NOT EXISTS public bool NOT NULL DEFAULT false;

@@ -269,7 +269,17 @@ def shown(cur, n, owner):
         return []
     assets = _choices(cur, n, n, {n: owner}).get(n, [])
     held = _amounts(cur, [owner]).get(owner, {})
-    return [_view(a, held[a]) for a in assets if tier(a, held.get(a, 0)) > 0]
+    looks = faces(cur, owner)
+    return [{**_view(a, held[a]), "face": looks.get(a)} for a in assets if tier(a, held.get(a, 0)) > 0]
+
+
+def faces(cur, owner):
+    """{asset: inscription id} each of owner's collection pets looks like: the one picked on
+    我的土地 (api/pets.py), else the first held."""
+    items = held_items(cur, owner)
+    cur.execute("select asset, face from social.pet_care where address = %s;", (wallets.main_of(cur, owner),))
+    picked = dict(cur.fetchall())
+    return {a: picked[a] if picked.get(a) in ids else ids[0] for a, ids in items.items() if ids}
 
 
 def _owner_view(cur, n, owner):

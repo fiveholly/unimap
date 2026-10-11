@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
 import { BadgeList } from "@/components/Badge";
+import { PetFace } from "@/components/Pets";
 import { PostCard } from "@/components/PostCard";
 import { useSession } from "@/components/Session";
 import { ShareMenu } from "@/components/ShareMenu";
@@ -13,6 +14,7 @@ import { XHandle } from "@/components/X";
 import { api, type Person, type Post } from "@/lib/api";
 import { short } from "@/lib/format";
 import { locale, t } from "@/lib/i18n";
+import { PETS } from "@/lib/pets";
 import { LEVEL_NAMES, type Level } from "@/lib/prosperity";
 
 /** Someone's page: the land an address holds, its X account and what it posted. */
@@ -128,6 +130,23 @@ export default function AddressPage() {
               </Link>
             ))}
           </div>
+        </section>
+      )}
+      {!!person.pets?.length && (
+        <section className="me-group">
+          <h2 className="section-title">
+            {t("宠物")} <span className="mono">{person.pets.length}</span>
+          </h2>
+          <ul className="person-pets">
+            {person.pets.map((p) => (
+              <li key={p.asset}>
+                <PetFace asset={p.asset} tier={p.tier} face={p.face} size={72} />
+                <b className="small">{p.name || t(PETS[p.asset].name)}</b>
+                <span className="muted small">{PETS[p.asset].asset}</span>
+                <span className="muted small">{t("等级 {n}", { n: p.level })}</span>
+              </li>
+            ))}
+          </ul>
         </section>
       )}
       {!!person.badges?.length && (

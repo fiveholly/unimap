@@ -39,7 +39,9 @@ export function WorldMap({ tip, highlight, onEnter }: { tip: number; highlight: 
   const [hot, setHot] = useState<Ranking[]>([]);
   const [hover, setHover] = useState<Hover | null>(null);
   const epochs = Math.floor(tip / HALVING) + 1; // continents with blocks; one more is still to come
-  const shown = Math.min(epochs + 1, ISLANDS.length);
+  // The continent still to come, outlined in the sea; left out on a small screen, where the room
+  // is better spent on the land there is.
+  const shownFor = (w: number) => Math.min(epochs + (w < 520 ? 0 : 1), ISLANDS.length);
 
   useEffect(() => {
     api<{ rankings: Ranking[] }>("/v1/rankings")
@@ -50,6 +52,7 @@ export function WorldMap({ tip, highlight, onEnter }: { tip: number; highlight: 
   /** The land, drawn once per size: every cell back to front, with a cliff under the coast. */
   const paintLand = useCallback(
     (w: number, h: number, dpr: number) => {
+      const shown = shownFor(w);
       let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
       for (let e = 0; e < shown; e++)
         for (const [u, v] of cellsOf(e)) {
@@ -58,7 +61,7 @@ export function WorldMap({ tip, highlight, onEnter }: { tip: number; highlight: 
           minY = Math.min(minY, (u + v) / 2);
           maxY = Math.max(maxY, (u + v) / 2);
         }
-      const pad = 24, top = 44; // room above for the continents' names
+      const pad = w < 520 ? 10 : 24, top = w < 520 ? 26 : 44; // room above for the continents' names
       const hw = Math.min((w - 2 * pad) / (maxX - minX + 2), (h - pad - top) / (maxY - minY + 2));
       const ox = w / 2 - ((minX + maxX) / 2) * hw, oy = top + (h - pad - top) / 2 - ((minY + maxY) / 2) * hw;
       const tops: [number, number][] = [];
@@ -130,7 +133,7 @@ export function WorldMap({ tip, highlight, onEnter }: { tip: number; highlight: 
       markers.current = list;
       land.current = { img, key: `${w}x${h}@${dpr}:${tip}:${hot.length}` };
     },
-    [tip, hot, shown, epochs],
+    [tip, hot, epochs], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   const draw = useCallback(
@@ -140,6 +143,7 @@ export function WorldMap({ tip, highlight, onEnter }: { tip: number; highlight: 
       const dpr = window.devicePixelRatio || 1;
       const w = cv.clientWidth, h = cv.clientHeight;
       if (!w || !h) return;
+      const shown = shownFor(w);
       if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
         cv.width = Math.round(w * dpr);
         cv.height = Math.round(h * dpr);
@@ -230,7 +234,7 @@ export function WorldMap({ tip, highlight, onEnter }: { tip: number; highlight: 
         }
       }
     },
-    [tip, hot, highlight, epochs, shown, paintLand],
+    [tip, hot, highlight, epochs, paintLand], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   useEffect(() => {

@@ -491,7 +491,7 @@ class SocialApi(unittest.TestCase):
                 put = self.client.put(f"/v1/districts/{DISTRICT}/showcase", json={"assets": ["dog", "cat"]}, headers=self.h(ALICE))
                 self.assertEqual(put.status_code, 200, put.text)
                 self.assertEqual([p["asset"] for p in put.json()["shown"]], ["dog", "cat"])
-                self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}").json()["pets"][0], {"asset": "dog", "tier": 2, "amount": "2500000.5"})
+                self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}").json()["pets"][0], {"asset": "dog", "tier": 2, "amount": "2500000.5", "face": None})
                 tiles = {t["bitmap_number"]: t for t in self.client.get(f"/v1/land?start={DISTRICT}&end={OTHER}").json()["tiles"]}
                 self.assertEqual((tiles[DISTRICT]["pets"], tiles[OTHER]["pets"]), (["dog:2", "cat:1"], []))
                 # 刷新 is rate limited; a provider failure keeps the old cache.
@@ -646,6 +646,14 @@ class SocialApi(unittest.TestCase):
             self.assertEqual(frog["face"], "f2i0")
             # Naming leaves the face as it is.
             self.assertEqual(self.client.put("/v1/me/pets/frog", json={"name": "呱呱"}, headers=self.h(BOB)).json()["face"], "f2i0")
+            # Pets stay off the public page until shown there, and then without their care details.
+            page = f"/v1/people/{BOB.address}"
+            self.assertEqual(self.client.get(page).json()["pets"], [])
+            self.assertTrue(self.client.put("/v1/me/pets/frog", json={"public": True}, headers=self.h(BOB)).json()["public"])
+            [shown] = self.client.get(page).json()["pets"]
+            self.assertEqual((shown["asset"], shown["name"], shown["face"]), ("frog", "呱呱", "f2i0"))
+            self.assertNotIn("fed_at", shown)
+            self.assertEqual(holdings.faces(self.conn.cursor(), BOB.address), {"frog": "f2i0"})
             with self.conn.cursor() as cur:
                 cur.execute("delete from social.pet_care;")
             holdings.collection.cache_clear()

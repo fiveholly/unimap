@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from "react";
 
-import { PetPicture } from "./Pets";
+import { PetFace } from "./Pets";
 import { api, type CaredPet } from "@/lib/api";
 import { t } from "@/lib/i18n";
-import { amountText, inscriptionImage, PET_KEYS, PETS, type PetKey } from "@/lib/pets";
+import { amountText, PET_KEYS, PETS } from "@/lib/pets";
 
 const MOODS: Record<CaredPet["mood"], string> = { full: "吃饱了", ok: "心情不错", hungry: "饿了", starving: "饿坏了" };
 
@@ -71,6 +71,13 @@ function PetCard({ pet, token, onChange }: { pet: CaredPet; token: string; onCha
       setError((e as Error).message);
     } finally {
       setBusy(false);
+    }
+  };
+  const setPublic = async (show: boolean) => {
+    try {
+      onChange(await api<CaredPet>(`/v1/me/pets/${pet.asset}`, { method: "PUT", token, body: { public: show } }));
+    } catch (err) {
+      setError((err as Error).message);
     }
   };
   const setFace = async (face: string) => {
@@ -141,6 +148,10 @@ function PetCard({ pet, token, onChange }: { pet: CaredPet; token: string; onCha
             {t("喂食")}
           </button>
         )}
+        <label className="pet-public small">
+          <input type="checkbox" checked={pet.public} onChange={(e) => setPublic(e.target.checked)} />
+          {t("在我的主页展示")}
+        </label>
         {pet.items.length > 1 && (
           <div className="pet-faces" role="group" aria-label={t("换一个样子")}>
             {pet.items.map((id) => (
@@ -159,15 +170,4 @@ function PetCard({ pet, token, onChange }: { pet: CaredPet; token: string; onCha
 function hoursText(ms: number) {
   const min = Math.ceil(ms / 60_000);
   return min >= 60 ? t("{n} 小时", { n: Math.ceil(min / 60) }) : t("{n} 分钟", { n: min });
-}
-
-/** The pet's own inscription when it has one, else the drawing used on the map (also when the
- * picture won't load, or isn't an image). */
-function PetFace({ asset, tier, face, size }: { asset: PetKey; tier: number; face: string | null; size: number }) {
-  const [failed, setFailed] = useState<string | null>(null);
-  if (!face || failed === face) return <PetPicture asset={asset} tier={tier} size={size} />;
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img className="pet-face" src={inscriptionImage(face)} alt="" width={size} height={size} loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(face)} />
-  );
 }

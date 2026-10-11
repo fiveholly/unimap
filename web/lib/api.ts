@@ -2,7 +2,7 @@
 
 import { DEMO, demoApi } from "./demo";
 import type { BadgeKind, Rarity } from "./game";
-import type { Pet, PetKey } from "./pets";
+import type { Pet, PetKey, PublicPet } from "./pets";
 import type { Prosperity } from "./prosperity";
 import type { DistrictStyle } from "./style";
 
@@ -242,6 +242,7 @@ export type CaredPet = {
   mood: "full" | "ok" | "hungry" | "starving";
   items: string[]; // the wallet's own inscriptions of this collection, a few at most; none for a rune
   face: string | null; // the one the pet looks like
+  public: boolean; // shown on the owner's public page
 };
 
 export type Ranking = { bitmap_number: number; name: string; zone: string | null; owner: string | null; score: number; level: number };
@@ -282,6 +283,7 @@ export type Person = {
   first_post_at: string | null;
   posts: Post[];
   badges?: Badge[];
+  pets?: PublicPet[]; // the ones the owner chose to show
 };
 
 /** GET /v1/search: a district number, parks by name, people by address or X handle. */
