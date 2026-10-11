@@ -1775,6 +1775,46 @@ class SocialApi(unittest.TestCase):
                 for row in kept:
                     cur.execute("insert into social.lightning_addresses (address, lightning_address) values (%s, %s);", tuple(row))
 
+    def test_metrics(self):
+        dave, eve = "bcrt1qdavemetrics", "bcrt1qevemetrics"
+        get = lambda w: self.client.get("/v1/admin/metrics?weeks=4", headers=self.h(w))
+        os.environ["ADMIN_ADDRESSES"] = CAROL.address
+        try:
+            self.assertEqual(get(ALICE).status_code, 403)
+            before = get(CAROL).json()
+            self.assertEqual((len(before["weeks"]), before["gates"]["tipped_districts"]), (4, 50))
+            with self.conn.cursor() as cur:
+                # Dave signed in two weeks ago and checks in now: returning. Eve's first post is now: new.
+                cur.execute(
+                    "insert into social.sessions (token_hash, address, created_at, expires_at) values ('m1', %s, now() - interval '14 days', now()); "
+                    "insert into social.checkins (address, bitmap_number, day) values (%s, 999, current_date); "
+                    "insert into social.posts (bitmap_number, author_address, author_role, body, media, signed_message, signature) "
+                    "values (999, %s, 'visitor', 'hi', '[]', 'm', 'metrics-sig'); "
+                    "insert into social.tips (tipper, recipient, bitmap_number, amount_sats, invoice, status, settled_at) "
+                    "values (%s, 'x', 999, 2100, 'lnbcm', 'settled', now()); "
+                    "insert into social.market_listings (inscription_id, bitmap_number, seller, price_sats, pay_to_script, outpoint, postage_sats, psbt, status) "
+                    "values ('mi0', 999, 'x', 50000, '', 'o:0', 546, '', 'sold'); "
+                    "insert into social.shop_items (bitmap_number, seller, title, price_sats, content) values (999, 'x', 't', 300, 'c') returning id;",
+                    (dave, dave, eve, eve),
+                )
+                item = cur.fetchone()[0]
+                cur.execute("insert into social.shop_orders (item_id, buyer, seller, amount_sats, invoice, verify_url, status, settled_at) "
+                            "values (%s, %s, 'x', 300, 'lnbcs', 'v', 'settled', now());", (item, eve))
+            after = get(CAROL).json()["weeks"]
+            now, then = after[-1], before["weeks"][-1]
+            delta = {k: now[k] - then[k] for k in now if k != "week"}
+            self.assertEqual((delta["tipped_districts"], delta["tip_sats"], delta["trades"], delta["trade_sats"], delta["shop_orders"], delta["shop_sats"]),
+                             (1, 2100, 1, 50000, 1, 300))
+            self.assertEqual((delta["active"], delta["returning"], delta["new"]), (2, 1, 1))
+            self.assertEqual(after[-3]["active"] - before["weeks"][-3]["active"], 1)  # Dave, two weeks ago
+        finally:
+            os.environ.pop("ADMIN_ADDRESSES", None)
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.sessions where token_hash = 'm1'; delete from social.checkins where address = %s; "
+                            "delete from social.posts where signature = 'metrics-sig'; delete from social.tips where invoice = 'lnbcm'; "
+                            "delete from social.market_listings where inscription_id = 'mi0'; delete from social.shop_orders where invoice = 'lnbcs'; "
+                            "delete from social.shop_items where content = 'c' and seller = 'x';", (dave,))
+
     def test_lnurl_checks(self):
         from api import tips
 

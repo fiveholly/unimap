@@ -351,6 +351,22 @@ export type Season = {
   pool_split: number[];
 };
 
+/** 指标 (api/metrics.py), for site admins. */
+export type MetricsWeek = {
+  week: string; // the Monday it starts on
+  tipped_districts: number;
+  tippers: number;
+  tip_sats: number;
+  active: number;
+  returning: number;
+  new: number;
+  trades: number;
+  trade_sats: number;
+  shop_orders: number;
+  shop_sats: number;
+};
+export type Metrics = { weeks: MetricsWeek[]; gates: { tipped_districts: number } };
+
 /** 店铺 (api/shop.py). */
 export type ShopItem = {
   id: number;
