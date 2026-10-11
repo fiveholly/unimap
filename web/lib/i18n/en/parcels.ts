@@ -44,6 +44,7 @@ export const parcels: Record<string, string> = {
   "{h}后可以再喂": "Feed again in {h}",
   "喂食": "Feed",
   "换一个样子": "Pick its look",
+  "官方 logo": "Official logo",
   "在我的主页展示": "Show on my public page",
   "宠物": "Pets",
   "{n} 小时": "{n} h",

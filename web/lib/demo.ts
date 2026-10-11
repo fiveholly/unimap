@@ -531,7 +531,7 @@ function caredPet(k: PetKey): CaredPet {
     can_feed_at: c.fed_at == null ? null : new Date(c.fed_at + FEED_HOURS * HOUR).toISOString(),
     items: DEMO_ITEMS[k] ?? [],
     public: !!c.public,
-    face: c.face && DEMO_ITEMS[k]?.includes(c.face) ? c.face : (DEMO_ITEMS[k]?.[0] ?? null),
+    face: c.face && DEMO_ITEMS[k]?.includes(c.face) ? c.face : null,
     mood: c.fed_at == null || (hours >= 24 && hours < 72) ? "hungry" : hours < FEED_HOURS ? "full" : hours < 24 ? "ok" : "starving",
   };
 }
@@ -1356,8 +1356,8 @@ function route(path: string, opts: Opts): unknown {
       }
       if ("public" in body) c.public = !!body.public;
       if ("face" in body) {
-        if (!DEMO_ITEMS[k]?.includes(String(body.face))) fail(400, "pick one of the inscriptions this pet has");
-        c.face = String(body.face);
+        if (body.face != null && !DEMO_ITEMS[k]?.includes(String(body.face))) fail(400, "pick one of the inscriptions this pet has");
+        c.face = body.face == null ? null : String(body.face);
       }
     }
     s.petCare = { ...s.petCare, [k]: c };

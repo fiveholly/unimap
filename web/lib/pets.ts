@@ -47,3 +47,11 @@ export function nextTier(key: PetKey, tier: number): number | null {
 /** An inscription's own picture, served by an ord server (ordinals.com unless set). */
 const ORD = (process.env.NEXT_PUBLIC_ORD_CONTENT_URL || "https://ordinals.com").replace(/\/$/, "");
 export const inscriptionImage = (id: string) => `${ORD}/content/${encodeURIComponent(id)}`;
+
+/** Each pet's official logo, shown wherever the pet is pictured unless the owner picked one of
+ * their own inscriptions. A collection's is its icon inscription (Bitcoin Frogs': the one in
+ * ordinals-wallet/ordinals-collections); the others are files in public/pets/. A pet with no logo
+ * yet, or whose logo won't load, is drawn as on the map. */
+export const PET_LOGOS: Partial<Record<PetKey, string>> = {
+  frog: inscriptionImage("d19981a198e4a8419c8be18588d9e4919cea294deefdb5f9261a30242df578b7i0"),
+};

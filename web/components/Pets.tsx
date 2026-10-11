@@ -4,10 +4,10 @@ import { useEffect, useRef, useState } from "react";
 
 import { drawShapes, petShapes, shapesBounds } from "@/lib/iso";
 import { t } from "@/lib/i18n";
-import { amountText, inscriptionImage, PETS, type Pet, type PetKey } from "@/lib/pets";
+import { amountText, inscriptionImage, PET_LOGOS, PETS, type Pet, type PetKey } from "@/lib/pets";
 
 /** The pets of one asset and tier, drawn as on the map. */
-export function PetPicture({ asset, tier, size = 64 }: { asset: PetKey; tier: number; size?: number }) {
+function PetDrawing({ asset, tier, size = 64 }: { asset: PetKey; tier: number; size?: number }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const cv = ref.current!;
@@ -24,8 +24,19 @@ export function PetPicture({ asset, tier, size = 64 }: { asset: PetKey; tier: nu
   return <canvas ref={ref} className="pet-picture" style={{ width: size, height: size }} aria-hidden />;
 }
 
-/** A collection pet as the owner's own inscription, else the drawing used on the map (also when
- * the picture won't load, or isn't an image). */
+/** A pet as its official logo (PET_LOGOS), else drawn as on the map. */
+export function PetPicture({ asset, tier, size = 64 }: { asset: PetKey; tier: number; size?: number }) {
+  const logo = PET_LOGOS[asset];
+  const [failed, setFailed] = useState<string | null>(null);
+  if (!logo || failed === logo) return <PetDrawing asset={asset} tier={tier} size={size} />;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img className="pet-face" src={logo} alt="" width={size} height={size} loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(logo)} />
+  );
+}
+
+/** A collection pet as the owner's own inscription, else its logo (also when the picture won't
+ * load, or isn't an image). */
 export function PetFace({ asset, tier, face, size }: { asset: PetKey; tier: number; face?: string | null; size: number }) {
   const [failed, setFailed] = useState<string | null>(null);
   if (!face || failed === face) return <PetPicture asset={asset} tier={tier} size={size} />;

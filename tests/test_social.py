@@ -640,7 +640,7 @@ class SocialApi(unittest.TestCase):
         try:
             # A collection's pet looks like one of the wallet's own inscriptions, the first by default.
             frog = next(p for p in self.client.get("/v1/me/pets", headers=self.h(BOB)).json()["pets"] if p["asset"] == "frog")
-            self.assertEqual((frog["items"], frog["face"]), (["f1i0", "f2i0"], "f1i0"))
+            self.assertEqual((frog["items"], frog["face"]), (["f1i0", "f2i0"], None))  # its logo until one is picked
             self.assertEqual(self.client.put("/v1/me/pets/frog", json={"face": "zzi0"}, headers=self.h(BOB)).status_code, 400)
             frog = self.client.put("/v1/me/pets/frog", json={"face": "f2i0"}, headers=self.h(BOB)).json()
             self.assertEqual(frog["face"], "f2i0")
@@ -654,6 +654,7 @@ class SocialApi(unittest.TestCase):
             self.assertEqual((shown["asset"], shown["name"], shown["face"]), ("frog", "呱呱", "f2i0"))
             self.assertNotIn("fed_at", shown)
             self.assertEqual(holdings.faces(self.conn.cursor(), BOB.address), {"frog": "f2i0"})
+            self.assertIsNone(self.client.put("/v1/me/pets/frog", json={"face": None}, headers=self.h(BOB)).json()["face"])
             with self.conn.cursor() as cur:
                 cur.execute("delete from social.pet_care;")
             holdings.collection.cache_clear()

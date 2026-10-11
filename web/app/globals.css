@@ -3258,6 +3258,9 @@ span.act.tip-btn {
   gap: 6px;
   color: var(--fg-2);
 }
+.pet-public input {
+  width: auto;
+}
 .person-pets {
   display: flex;
   flex-wrap: wrap;

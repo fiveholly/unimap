@@ -274,12 +274,12 @@ def shown(cur, n, owner):
 
 
 def faces(cur, owner):
-    """{asset: inscription id} each of owner's collection pets looks like: the one picked on
-    我的土地 (api/pets.py), else the first held."""
+    """{asset: inscription id} of owner's collection pets that look like one of their own
+    inscriptions, picked on 我的土地 (api/pets.py); the others show their logo."""
     items = held_items(cur, owner)
     cur.execute("select asset, face from social.pet_care where address = %s;", (wallets.main_of(cur, owner),))
     picked = dict(cur.fetchall())
-    return {a: picked[a] if picked.get(a) in ids else ids[0] for a, ids in items.items() if ids}
+    return {a: picked[a] for a, ids in items.items() if picked.get(a) in ids}
 
 
 def _owner_view(cur, n, owner):

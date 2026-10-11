@@ -80,7 +80,7 @@ function PetCard({ pet, token, onChange }: { pet: CaredPet; token: string; onCha
       setError((err as Error).message);
     }
   };
-  const setFace = async (face: string) => {
+  const setFace = async (face: string | null) => {
     try {
       onChange(await api<CaredPet>(`/v1/me/pets/${pet.asset}`, { method: "PUT", token, body: { face } }));
     } catch (err) {
@@ -152,8 +152,11 @@ function PetCard({ pet, token, onChange }: { pet: CaredPet; token: string; onCha
           <input type="checkbox" checked={pet.public} onChange={(e) => setPublic(e.target.checked)} />
           {t("在我的主页展示")}
         </label>
-        {pet.items.length > 1 && (
+        {pet.items.length > 0 && (
           <div className="pet-faces" role="group" aria-label={t("换一个样子")}>
+            <button type="button" className={!pet.face ? "on" : ""} aria-pressed={!pet.face} aria-label={t("官方 logo")} title={t("官方 logo")} onClick={() => setFace(null)}>
+              <PetFace asset={pet.asset} tier={pet.tier} size={36} />
+            </button>
             {pet.items.map((id) => (
               <button key={id} type="button" className={id === pet.face ? "on" : ""} aria-pressed={id === pet.face} aria-label={id} onClick={() => setFace(id)}>
                 <PetFace asset={pet.asset} tier={pet.tier} face={id} size={36} />
