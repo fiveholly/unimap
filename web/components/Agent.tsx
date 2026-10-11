@@ -7,7 +7,8 @@ import { useSession } from "./Session";
 import { TipDialog } from "./Tip";
 import { api, type AgentBriefing, type AgentDraft, type AgentInfo, type AgentProblem, type AgentTask, type AgentView, type AgentGrant, type Agent } from "@/lib/api";
 import { short, timeAgo } from "@/lib/format";
-import { locale, t } from "@/lib/i18n";
+import { RARITY_COLORS, RARITY_NAMES } from "@/lib/game";
+import { locale, t, tn } from "@/lib/i18n";
 
 const POLL_MS = 3000;
 const DAYS = [7, 30, 90];
@@ -17,12 +18,18 @@ const TASK_HINTS: Record<AgentTask, string> = {
   digest: "每 7 天总结一次这里发生了什么。",
   answers: "有人在你的帖子下面或者居民发帖时提问，起草一条回复。",
 };
+const PARCEL_HINTS: Partial<Record<AgentTask, string>> = { answers: "有人在你的帖子下面提问时，起草一条回复。" };
 const PROBLEMS: Record<AgentProblem, string> = {
   expired: "授权已到期，重新签名就能继续。",
   owner_changed: "你已经不是这个街区的主人，授权失效了。",
   unpaid: "使用时间到了，续费后继续工作。",
   banned: "这个地址被禁止发帖，agent 也停下了。",
+  muted: "你在这个街区被禁言了，agent 也停下了。",
 };
+const problemText = (p: AgentProblem, parcel: number | null) => (p === "owner_changed" && parcel != null ? "你已经不持有这个地块，授权失效了。" : PROBLEMS[p]);
+/** Where an agent's routes live: the district's own, or a resident's for one parcel. */
+const agentPath = (n: number, parcel: number | null, sub = "") => `/v1/districts/${n}/agent${sub}${parcel != null ? `?parcel=${parcel}` : ""}`;
+const tasksOf = (parcel: number | null): AgentTask[] => (parcel != null ? ["answers"] : (Object.keys(TASK_NAMES) as AgentTask[]));
 const date = (iso: string) => new Date(iso).toLocaleDateString(locale(), { month: "short", day: "numeric" });
 
 let info: Promise<AgentInfo> | null = null;
@@ -35,15 +42,15 @@ function useAgentInfo() {
   return i;
 }
 
-/** 街区 agent, for the district's owner: switch it on, look over its drafts, tell it how to talk. */
-export function AgentPanel({ n, token }: { n: number; token: string }) {
+/** 街区 agent, for the district's owner, or a resident's agent for a parcel they hold: switch it on, look over its drafts, tell it how to talk. */
+export function AgentPanel({ n, token, parcel = null }: { n: number; token: string; parcel?: number | null }) {
   const info = useAgentInfo();
   const [view, setView] = useState<AgentView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [settings, setSettings] = useState(false);
   const [paying, setPaying] = useState(false);
   const [regrant, setRegrant] = useState(false);
-  const load = useCallback(() => api<AgentView>(`/v1/districts/${n}/agent`, { token }).then(setView), [n, token]);
+  const load = useCallback(() => api<AgentView>(agentPath(n, parcel), { token }).then(setView), [n, parcel, token]);
   useEffect(() => {
     if (info?.open) load().catch((e) => setError(e.message));
   }, [info?.open, load]);
@@ -69,11 +76,11 @@ export function AgentPanel({ n, token }: { n: number; token: string }) {
   return (
     <div className="agent">
       {!a || regrant ? (
-        <AgentSetup n={n} token={token} info={info} current={a} onDone={() => (setRegrant(false), load())} onCancel={a ? () => setRegrant(false) : undefined} />
+        <AgentSetup n={n} parcel={parcel} token={token} info={info} current={a} onDone={() => (setRegrant(false), load())} onCancel={a ? () => setRegrant(false) : undefined} />
       ) : (
         <section className="agent-card">
           <div className="row between">
-            <b>{t("街区 agent")}</b>
+            <b>{parcel != null ? t("地块 #{n} 的 agent", { n: parcel }) : t("街区 agent")}</b>
             <span className={`badge${a.problem ? "" : " resident"}`}>{a.problem ? t("已停下") : a.running ? t("正在看…") : t("在工作")}</span>
           </div>
           <p className="muted small">
@@ -85,7 +92,7 @@ export function AgentPanel({ n, token }: { n: number; token: string }) {
               ? t("自己发：{tasks}。其他的写成草稿等你确认。", { tasks: a.auto_tasks.map((k) => t(TASK_NAMES[k])).join(t("、")) })
               : t("只写草稿，每条都等你确认。")}
           </p>
-          {a.problem && <p className="callout small">{t(PROBLEMS[a.problem])}</p>}
+          {a.problem && <p className="callout small">{t(problemText(a.problem, parcel))}</p>}
           {info.price_sats > 0 && (
             <p className="small">
               {a.paid_until && Date.parse(a.paid_until) > Date.now()
@@ -114,17 +121,17 @@ export function AgentPanel({ n, token }: { n: number; token: string }) {
             <button
               type="button"
               className="ghost sm"
-              onClick={() => confirm(t("撤销 agent 的授权？待确认的草稿会作废，已经发出去的帖子保留。")) && act(`/v1/districts/${n}/agent`, "DELETE")}
+              onClick={() => confirm(t("撤销 agent 的授权？待确认的草稿会作废，已经发出去的帖子保留。")) && act(agentPath(n, parcel), "DELETE")}
             >
               {t("撤销授权")}
             </button>
             {!a.problem && (
-              <button type="button" className="sm" disabled={a.running} onClick={() => act(`/v1/districts/${n}/agent/run`, "POST")}>
+              <button type="button" className="sm" disabled={a.running} onClick={() => act(agentPath(n, parcel, "/run"), "POST")}>
                 {t("现在看一下")}
               </button>
             )}
           </div>
-          {settings && <AgentSettings n={n} token={token} agent={a} onSaved={(v) => (setView(v), setSettings(false))} />}
+          {settings && <AgentSettings n={n} parcel={parcel} token={token} agent={a} onSaved={(v) => (setView(v), setSettings(false))} />}
         </section>
       )}
 
@@ -134,7 +141,7 @@ export function AgentPanel({ n, token }: { n: number; token: string }) {
           <ul className="agent-brief">
             {view.briefing.map((b, i) => (
               <li key={i}>
-                <BriefingLine b={b} n={n} />
+                <BriefingLine b={b} n={n} parcel={parcel} />
               </li>
             ))}
           </ul>
@@ -145,7 +152,11 @@ export function AgentPanel({ n, token }: { n: number; token: string }) {
         <section>
           <h3 className="section-title">{t("待确认的草稿")}</h3>
           {view.drafts.length === 0 ? (
-            <p className="muted small">{t("没有待确认的草稿。有新居民、有人提问、或者该写周报的时候，它会写在这里。")}</p>
+            <p className="muted small">
+              {parcel != null
+                ? t("没有待确认的草稿。有人在你的帖子下面提问的时候，它会写在这里。")
+                : t("没有待确认的草稿。有新居民、有人提问、或者该写周报的时候，它会写在这里。")}
+            </p>
           ) : (
             view.drafts.map((d) => <DraftCard key={d.id} draft={d} token={token} disabled={!!a.problem} onDone={load} />)
           )}
@@ -173,10 +184,10 @@ export function AgentPanel({ n, token }: { n: number; token: string }) {
           token={token}
           fixed={info.price_sats}
           bill={{
-            title: t("续用街区 agent"),
+            title: parcel != null ? t("续用地块 agent") : t("续用街区 agent"),
             note: t("付给 unimap，用来支付 agent 调用模型的费用，到账后延长 {days} 天。", { days: info.days }),
             done: t("付款成功，agent 可以再工作 {days} 天。", { days: info.days }),
-            create: `/v1/districts/${n}/agent/pay`,
+            create: agentPath(n, parcel, "/pay"),
             status: (id) => `/v1/agent/payments/${id}`,
           }}
           close={() => {
@@ -189,8 +200,18 @@ export function AgentPanel({ n, token }: { n: number; token: string }) {
   );
 }
 
-function BriefingLine({ b, n }: { b: AgentBriefing; n: number }) {
+function BriefingLine({ b, n, parcel }: { b: AgentBriefing; n: number; parcel: number | null }) {
   switch (b.kind) {
+    case "treasure":
+      return (
+        <Link href={`/district/${n}`}>
+          {tn("你的地块 #{i} 上有一个{rarity}宝箱，区块 {end} 之前去打开它。", {
+            i: parcel ?? 0,
+            rarity: <b style={{ color: RARITY_COLORS[b.rarity] }}>{t(RARITY_NAMES[b.rarity])}</b>,
+            end: b.closes_at_height.toLocaleString("en-US"),
+          })}
+        </Link>
+      );
     case "applications":
       return <>{t("有 {n} 份入住申请，去「管理街区 → 招募」看看。", { n: b.count })}</>;
     case "poll_closing":
@@ -202,7 +223,7 @@ function BriefingLine({ b, n }: { b: AgentBriefing; n: number }) {
   }
 }
 
-function AgentSetup({ n, token, info, current, onDone, onCancel }: { n: number; token: string; info: AgentInfo; current: Agent | null; onDone: () => void; onCancel?: () => void }) {
+function AgentSetup({ n, parcel, token, info, current, onDone, onCancel }: { n: number; parcel: number | null; token: string; info: AgentInfo; current: Agent | null; onDone: () => void; onCancel?: () => void }) {
   const { sign } = useSession();
   const [perDay, setPerDay] = useState(current?.posts_per_day ?? 3);
   const [days, setDays] = useState(30);
@@ -213,9 +234,9 @@ function AgentSetup({ n, token, info, current, onDone, onCancel }: { n: number; 
     setError(null);
     setBusy(true);
     try {
-      const g = await api<{ id: number; message: string }>(`/v1/districts/${n}/agent/prepare`, { method: "POST", token, body: { posts_per_day: perDay, days, may_publish: mayPublish } });
+      const g = await api<{ id: number; message: string }>(agentPath(n, parcel, "/prepare"), { method: "POST", token, body: { posts_per_day: perDay, days, may_publish: mayPublish } });
       const signature = await sign(g.message);
-      await api(`/v1/districts/${n}/agent`, { method: "POST", token, body: { id: g.id, signature } });
+      await api(agentPath(n, parcel), { method: "POST", token, body: { id: g.id, signature } });
       onDone();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -226,14 +247,18 @@ function AgentSetup({ n, token, info, current, onDone, onCancel }: { n: number; 
   };
   return (
     <section className="agent-card agent-setup">
-      <b>{current ? t("重新签名授权") : t("开通街区 agent")}</b>
+      <b>{current ? t("重新签名授权") : parcel != null ? t("给地块 #{n} 开通 agent", { n: parcel }) : t("开通街区 agent")}</b>
       {!current && (
         <>
-          <p className="small">{t("它帮你打理这个街区：欢迎新居民、每周写一份周报、回答大家的问题，还能帮你盯着附近的挂单。")}</p>
+          <p className="small">
+            {parcel != null
+              ? t("它帮你照看你在这里的地块：有人在你的帖子下面提问时起草回复，还能帮你盯着附近的挂单。")
+              : t("它帮你打理这个街区：欢迎新居民、每周写一份周报、回答大家的问题，还能帮你盯着附近的挂单。")}
+          </p>
           <ul className="small agent-points">
             <li>{t("默认它只写草稿，每一条都要你点确认才会发出去。发出的帖子都标着「agent 代发」。")}</li>
             <li>{t("你的钱包签一份授权，写明它能在这里做什么、每天最多几条、什么时候到期。它有自己的密钥，只能签帖子，拿不到你的钱包，也动不了任何资产。")}</li>
-            <li>{t("随时可以撤销。街区卖掉以后，授权自动失效。")}</li>
+            <li>{parcel != null ? t("随时可以撤销。地块卖掉以后，授权自动失效。") : t("随时可以撤销。街区卖掉以后，授权自动失效。")}</li>
             {info.price_sats > 0 && <li>{t("开通后每 {days} 天付 {sats} 聪，覆盖模型的费用。", { days: info.days, sats: info.price_sats.toLocaleString("en-US") })}</li>}
           </ul>
         </>
@@ -264,7 +289,11 @@ function AgentSetup({ n, token, info, current, onDone, onCancel }: { n: number; 
         <input type="checkbox" checked={mayPublish} onChange={(e) => setMayPublish(e.target.checked)} />
         <span>
           <b>{t("允许它自己发帖")}</b>{" "}
-          <span className="muted">{t("授权里会写上这一条。欢迎新居民和周报写好就直接发，不超过每天的条数；回答问题默认仍然等你确认，可以在设置里改。")}</span>
+          <span className="muted">
+            {parcel != null
+              ? t("授权里会写上这一条。回答写好就直接发，不超过每天的条数。")
+              : t("授权里会写上这一条。欢迎新居民和周报写好就直接发，不超过每天的条数；回答问题默认仍然等你确认，可以在设置里改。")}
+          </span>
         </span>
       </label>
       {error && <p className="error small">{error}</p>}
@@ -282,7 +311,7 @@ function AgentSetup({ n, token, info, current, onDone, onCancel }: { n: number; 
   );
 }
 
-function AgentSettings({ n, token, agent, onSaved }: { n: number; token: string; agent: Agent; onSaved: (v: AgentView) => void }) {
+function AgentSettings({ n, parcel, token, agent, onSaved }: { n: number; parcel: number | null; token: string; agent: Agent; onSaved: (v: AgentView) => void }) {
   const [persona, setPersona] = useState(agent.persona);
   const [tasks, setTasks] = useState<AgentTask[]>(agent.tasks);
   const [auto, setAuto] = useState<AgentTask[]>(agent.auto_tasks);
@@ -296,7 +325,7 @@ function AgentSettings({ n, token, agent, onSaved }: { n: number; token: string;
     setBusy(true);
     try {
       onSaved(
-        await api<AgentView>(`/v1/districts/${n}/agent/settings`, {
+        await api<AgentView>(agentPath(n, parcel, "/settings"), {
           method: "PUT",
           token,
           body: { persona, tasks, memory, ...(agent.may_publish ? { auto_tasks: auto } : {}), watch: { radius: Math.min(100, Number(radius) || 0), max_price_sats: Number(price) || 0 } },
@@ -312,11 +341,11 @@ function AgentSettings({ n, token, agent, onSaved }: { n: number; token: string;
     <form className="agent-settings" onSubmit={(e) => (e.preventDefault(), save())}>
       <fieldset>
         <legend className="small">{t("它做哪些事")}</legend>
-        {(Object.keys(TASK_NAMES) as AgentTask[]).map((k) => (
+        {tasksOf(parcel).map((k) => (
           <label key={k} className="check small">
             <input type="checkbox" checked={tasks.includes(k)} onChange={(e) => setTasks(e.target.checked ? [...tasks, k] : tasks.filter((x) => x !== k))} />
             <span>
-              <b>{t(TASK_NAMES[k])}</b> <span className="muted">{t(TASK_HINTS[k])}</span>
+              <b>{t(TASK_NAMES[k])}</b> <span className="muted">{t((parcel != null && PARCEL_HINTS[k]) || TASK_HINTS[k])}</span>
             </span>
           </label>
         ))}
@@ -324,7 +353,7 @@ function AgentSettings({ n, token, agent, onSaved }: { n: number; token: string;
       {agent.may_publish && (
         <fieldset>
           <legend className="small">{t("哪些不用等你确认，写好就发")}</legend>
-          {(Object.keys(TASK_NAMES) as AgentTask[]).map((k) => (
+          {tasksOf(parcel).map((k) => (
             <label key={k} className="check small">
               <input type="checkbox" checked={auto.includes(k)} disabled={!tasks.includes(k)} onChange={(e) => setAuto(e.target.checked ? [...auto, k] : auto.filter((x) => x !== k))} />
               <span>
@@ -336,7 +365,7 @@ function AgentSettings({ n, token, agent, onSaved }: { n: number; token: string;
         </fieldset>
       )}
       <label className="small">
-        {t("人设：告诉它怎么说话、这条街有什么讲究")}
+        {parcel != null ? t("人设：告诉它怎么说话、你是个什么样的邻居") : t("人设：告诉它怎么说话、这条街有什么讲究")}
         <textarea rows={3} maxLength={1000} value={persona} onChange={(e) => setPersona(e.target.value)} placeholder={t("比如：语气轻松一点，叫居民「邻居」，别用感叹号。")} />
       </label>
       <fieldset>
@@ -431,7 +460,7 @@ export function AgentGrantNote({ grantId, agentKey }: { grantId: number; agentKe
   return (
     <div className="small">
       <p className="muted">
-        {t("这条由街区 agent 代发，用它自己的密钥 {key} 签名（对签名原文的 SHA-256 做 BIP-340 签名）。主人用钱包签过授权：", { key: short(agentKey) })}{" "}
+        {t("这条由 agent 代发，用它自己的密钥 {key} 签名（对签名原文的 SHA-256 做 BIP-340 签名）。发帖人用钱包签过授权：", { key: short(agentKey) })}{" "}
         <button
           type="button"
           className="link-btn small"

@@ -5,6 +5,10 @@ owner to approve it. If the grant the owner signed says it may publish on its ow
 drafts of the tasks the owner picked straight away, within the grant's posts per day, and the
 rest still wait. Either way a post goes out marked as the agent's.
 
+A resident can switch one on for a parcel they hold too (`?parcel=<tx_index>` on the same routes).
+It drafts answers to people replying under the resident's own posts, watches listings like the
+district's agent does, and posts as the parcel's holder; it stops when the parcel changes hands.
+
 The owner grants it with a wallet signature over grant_message(...): which district, the
 agent's own key, what it may do, how many posts a day, and until when. unimap makes that key
 for the agent; it can only sign posts, never move anything, and the grant ends when it expires,
@@ -41,6 +45,7 @@ log = logging.getLogger("unimap.agent")
 
 TASKS = ("welcome", "digest", "answers")
 AUTO_DEFAULT = ("welcome", "digest")  # answering people is left to the owner unless they say otherwise
+PARCEL_TASKS = ("answers",)  # a parcel's agent only answers people under its holder's posts
 MAX_DAYS = 90  # a grant lasts at most this long; the owner signs again after
 MAX_PER_DAY = 10
 MAX_PERSONA = 1000
@@ -77,12 +82,17 @@ def config():
 # --- what is signed ---------------------------------------------------------------------------
 
 
-def grant_message(bitmap_number, agent_key, posts_per_day, expires_at, issued, may_publish=False):
+def tasks_for(tx_index):
+    return TASKS if tx_index is None else PARCEL_TASKS
+
+
+def grant_message(bitmap_number, agent_key, posts_per_day, expires_at, issued, may_publish=False, tx_index=None):
     """The exact text the owner's wallet signs to switch the agent on."""
     return "\n".join(
         [
             "unimap agent grant",
             f"district: {bitmap_number}.bitmap",
+            *([f"parcel: #{tx_index}"] if tx_index is not None else []),
             f"agent key: {agent_key}",
             "may: draft posts and replies here; publish them on its own, up to the posts per day below"
             if may_publish
@@ -108,7 +118,7 @@ def sign_post(secret_hex, message):
 
 COLUMNS = (
     "id, bitmap_number, owner, agent_key, agent_secret, posts_per_day, expires_at, persona, tasks, watch, memory, "
-    "state, paid_until, granted_at, last_run_at, may_publish, auto_tasks"
+    "state, paid_until, granted_at, last_run_at, may_publish, auto_tasks, tx_index"
 )
 FIELDS = [c.strip() for c in COLUMNS.split(",")]
 
@@ -125,25 +135,48 @@ def _now():
     return datetime.now(timezone.utc)
 
 
+def holder(cur, bitmap_number, tx_index):
+    """Who holds the district (tx_index None) or one of its parcels."""
+    if tx_index is None:
+        return roles.district_owner(cur, bitmap_number)
+    cur.execute(
+        "select o.address from parcels p join inscription_owners o on o.inscription_id = p.inscription_id "
+        "where p.bitmap_number = %s and p.tx_index = %s;",
+        (bitmap_number, tx_index),
+    )
+    return roles._first(cur.fetchone())
+
+
+def _require_holder(cur, bitmap_number, tx_index, address):
+    if holder(cur, bitmap_number, tx_index) != address:
+        raise HTTPException(403, "only the district owner can do this" if tx_index is None else f"only the holder of parcel #{tx_index} can do this")
+
+
+SCOPE = "bitmap_number = %s and tx_index is not distinct from %s"
+
+
 def problem(cur, a):
     """Why the agent can't act right now, or None."""
     if a["expires_at"] <= _now():
         return "expired"
-    if roles.district_owner(cur, a["bitmap_number"]) != a["owner"]:
+    if holder(cur, a["bitmap_number"], a["tx_index"]) != a["owner"]:
         return "owner_changed"
     if config()["price_sats"] and (a["paid_until"] is None or a["paid_until"] <= _now()):
         return "unpaid"
     if moderation.banned(cur, a["owner"]):
         return "banned"
+    cur.execute("select 1 from social.mutes where bitmap_number = %s and address = %s;", (a["bitmap_number"], a["owner"]))
+    if cur.fetchone() is not None:
+        return "muted"
     return None
 
 
-def _owned(cur, bitmap_number, address):
-    """The district's live agent, for its owner."""
-    roles.require_owner(cur, bitmap_number, address)
-    a = _row(cur, "bitmap_number = %s and owner = %s", (bitmap_number, address))
+def _owned(cur, bitmap_number, address, tx_index=None):
+    """The live agent of the district or parcel, for whoever holds it."""
+    _require_holder(cur, bitmap_number, tx_index, address)
+    a = _row(cur, SCOPE + " and owner = %s", (bitmap_number, tx_index, address))
     if a is None:
-        raise HTTPException(404, "this district has no agent")
+        raise HTTPException(404, "this district has no agent" if tx_index is None else "this parcel has no agent")
     return a
 
 
@@ -163,8 +196,11 @@ def _drafts(cur, agent_id, pending):
     return out
 
 
-def briefing(cur, n):
-    """Things waiting on the owner, found without the model: applications, polls about to close, prizes unpaid."""
+def briefing(cur, n, tx_index=None, address=None):
+    """Things waiting on the owner, found without the model: applications, polls about to close, prizes unpaid.
+    For a parcel's holder: polls about to close they haven't voted in, and a treasure on the parcel to open."""
+    if tx_index is not None:
+        return _parcel_briefing(cur, n, tx_index, address)
     out = []
     notice = recruit.get(cur, n)
     if notice and notice["applications"]:
@@ -187,6 +223,23 @@ def briefing(cur, n):
     return out
 
 
+def _parcel_briefing(cur, n, tx_index, address):
+    out = []
+    cur.execute(
+        "select id, question, closes_at from social.polls p where bitmap_number = %s and closed_at is null "
+        "and closes_at > now() and closes_at < now() + interval '2 days' "
+        "and not exists (select 1 from social.poll_votes v where v.poll_id = p.id and v.address = %s) order by closes_at;",
+        (n, address),
+    )
+    for pid, question, closes_at in cur.fetchall():
+        out.append({"kind": "poll_closing", "poll_id": pid, "question": question, "closes_at": closes_at.isoformat()})
+    tip = game.top(cur)
+    if tip is not None:
+        for height, _, _, _, rare in game._open_treasures(cur, tip, "d.treasure_bitmap = %s and d.treasure_tx = %s", (n, tx_index)):
+            out.append({"kind": "treasure", "height": height, "rarity": rare, "closes_at_height": height + game.CLAIM_BLOCKS - 1})
+    return out
+
+
 def _view(cur, a):
     cur.execute("select count(*) from social.posts where agent_id = %s and created_at > now() - interval '1 day';", (a["id"],))
     posted_today = cur.fetchone()[0]
@@ -195,6 +248,7 @@ def _view(cur, a):
     return {
         "id": a["id"],
         "key": a["agent_key"],
+        "parcel": a["tx_index"],
         "posts_per_day": a["posts_per_day"],
         "posted_today": posted_today,
         "expires_at": a["expires_at"].isoformat(),
@@ -220,16 +274,16 @@ def _view(cur, a):
 def agent_info():
     c = config()
     return {"open": c["open"], "price_sats": c["price_sats"], "days": c["days"], "max_days": MAX_DAYS,
-            "max_per_day": MAX_PER_DAY, "tasks": list(TASKS)}
+            "max_per_day": MAX_PER_DAY, "tasks": list(TASKS), "parcel_tasks": list(PARCEL_TASKS)}
 
 
 @router.get("/v1/districts/{bitmap_number}/agent")
-def district_agent(bitmap_number: int, address: str = Depends(current_address)):
+def district_agent(bitmap_number: int, parcel: int | None = None, address: str = Depends(current_address)):
     """For the owner: the agent, its drafts waiting for approval, what it did lately, and what waits on the owner."""
     with cursor() as cur:
-        roles.require_owner(cur, bitmap_number, address)
-        a = _row(cur, "bitmap_number = %s and owner = %s", (bitmap_number, address))
-        out = {"agent": None, "drafts": [], "recent": [], "briefing": briefing(cur, bitmap_number)}
+        _require_holder(cur, bitmap_number, parcel, address)
+        a = _row(cur, SCOPE + " and owner = %s", (bitmap_number, parcel, address))
+        out = {"agent": None, "drafts": [], "recent": [], "briefing": briefing(cur, bitmap_number, parcel, address)}
         if a:
             _expire_drafts(cur, a["id"])
             out.update(agent=_view(cur, a), drafts=_drafts(cur, a["id"], True), recent=_drafts(cur, a["id"], False))
@@ -243,21 +297,22 @@ class GrantTerms(BaseModel):
 
 
 @router.post("/v1/districts/{bitmap_number}/agent/prepare")
-def prepare(bitmap_number: int, req: GrantTerms, address: str = Depends(current_address)):
+def prepare(bitmap_number: int, req: GrantTerms, parcel: int | None = None, address: str = Depends(current_address)):
     """A fresh key for the agent and the grant for the owner's wallet to sign."""
     if not config()["open"]:
         raise HTTPException(503, "the district agent isn't open on this server")
     key = PrivateKey()
     agent_key = key.public_key.format(compressed=True)[1:].hex()
     expires_at = (_now() + timedelta(days=req.days)).replace(microsecond=0)
-    message = grant_message(bitmap_number, agent_key, req.posts_per_day, expires_at, int(time.time()), req.may_publish)
+    message = grant_message(bitmap_number, agent_key, req.posts_per_day, expires_at, int(time.time()), req.may_publish, parcel)
     with cursor() as cur:
-        roles.require_owner(cur, bitmap_number, address)
+        _require_holder(cur, bitmap_number, parcel, address)
         cur.execute("delete from social.agents where grant_signature is null and created_at < now() - %s;", (PENDING_GRANT,))
         cur.execute(
-            "insert into social.agents (bitmap_number, owner, agent_key, agent_secret, grant_message, posts_per_day, expires_at, may_publish) "
-            "values (%s, %s, %s, %s, %s, %s, %s, %s) returning id;",
-            (bitmap_number, address, agent_key, key.secret.hex(), message, req.posts_per_day, expires_at, req.may_publish),
+            "insert into social.agents (bitmap_number, tx_index, owner, agent_key, agent_secret, grant_message, posts_per_day, expires_at, "
+            "may_publish, tasks) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) returning id;",
+            (bitmap_number, parcel, address, agent_key, key.secret.hex(), message, req.posts_per_day, expires_at, req.may_publish,
+             list(tasks_for(parcel))),
         )
         return {"id": cur.fetchone()[0], "message": message}
 
@@ -268,14 +323,14 @@ class Grant(BaseModel):
 
 
 @router.post("/v1/districts/{bitmap_number}/agent")
-def grant(bitmap_number: int, req: Grant, address: str = Depends(current_address)):
+def grant(bitmap_number: int, req: Grant, parcel: int | None = None, address: str = Depends(current_address)):
     """Switch the agent on with the owner's signature over the prepared grant. Replaces any earlier agent."""
     with cursor() as cur:
-        roles.require_owner(cur, bitmap_number, address)
+        _require_holder(cur, bitmap_number, parcel, address)
         cur.execute(
-            "select grant_message, persona, tasks, watch from social.agents where id = %s and bitmap_number = %s and owner = %s "
+            "select grant_message, persona, tasks, watch from social.agents where id = %s and " + SCOPE + " and owner = %s "
             "and grant_signature is null and created_at > now() - %s;",
-            (req.id, bitmap_number, address, PENDING_GRANT),
+            (req.id, bitmap_number, parcel, address, PENDING_GRANT),
         )
         row = cur.fetchone()
         if row is None:
@@ -291,19 +346,20 @@ def grant(bitmap_number: int, req: Grant, address: str = Depends(current_address
         # A new grant takes over the owner's last one here: settings, notes and paid time, and, if it was
         # still on, what it had read. Otherwise it starts from now, with no welcomes for people who came long ago.
         cur.execute(
-            "update social.agents set revoked_at = now() where bitmap_number = %s and grant_signature is not null "
+            "update social.agents set revoked_at = now() where " + SCOPE + " and grant_signature is not null "
             "and revoked_at is null returning id;",
-            (bitmap_number,),
+            (bitmap_number, parcel),
         )
         live = {r[0] for r in cur.fetchall()}
         cur.execute(
-            "select id, persona, tasks, watch, memory, state, paid_until, auto_tasks from social.agents where bitmap_number = %s "
+            "select id, persona, tasks, watch, memory, state, paid_until, auto_tasks from social.agents where " + SCOPE + " "
             "and owner = %s and grant_signature is not null and id <> %s order by id desc limit 1;",
-            (bitmap_number, address, req.id),
+            (bitmap_number, parcel, address, req.id),
         )
         old = cur.fetchone()
-        persona, tasks_, watch, memory, state, paid_until, auto = old[1:] if old else ("", list(TASKS), {}, [], {}, None, list(AUTO_DEFAULT))
-        auto = auto or list(AUTO_DEFAULT)
+        default_auto = list(AUTO_DEFAULT) if parcel is None else list(PARCEL_TASKS)  # a resident who ticks the box means their answers
+        persona, tasks_, watch, memory, state, paid_until, auto = old[1:] if old else ("", list(tasks_for(parcel)), {}, [], {}, None, default_auto)
+        auto = auto or default_auto
         if old and old[0] in live:
             state = {k: v for k, v in state.items() if k != "last"}
         else:
@@ -316,9 +372,9 @@ def grant(bitmap_number: int, req: Grant, address: str = Depends(current_address
             "memory = %s, state = %s, paid_until = %s, auto_tasks = %s where id = %s;",
             (req.signature, persona, tasks_, Json(watch), Json(memory), Json(state), paid_until, auto, req.id),
         )
-        cur.execute("update social.agent_drafts set status = 'expired', decided_at = now() where bitmap_number = %s "
-                    "and status = 'pending' and agent_id <> %s;", (bitmap_number, req.id))
-    return district_agent(bitmap_number, address)
+        cur.execute("update social.agent_drafts set status = 'expired', decided_at = now() where status = 'pending' and agent_id <> %s "
+                    "and agent_id in (select id from social.agents where " + SCOPE + ");", (req.id, bitmap_number, parcel))
+    return district_agent(bitmap_number, parcel, address)
 
 
 class Watch(BaseModel):
@@ -335,25 +391,26 @@ class Settings(BaseModel):
 
 
 @router.put("/v1/districts/{bitmap_number}/agent/settings")
-def settings(bitmap_number: int, req: Settings, address: str = Depends(current_address)):
-    if any(t not in TASKS for t in req.tasks + (req.auto_tasks or [])):
-        raise HTTPException(400, f"tasks are {', '.join(TASKS)}")
+def settings(bitmap_number: int, req: Settings, parcel: int | None = None, address: str = Depends(current_address)):
+    tasks_ = tasks_for(parcel)
+    if any(t not in tasks_ for t in req.tasks + (req.auto_tasks or [])):
+        raise HTTPException(400, f"tasks are {', '.join(tasks_)}")
     with cursor() as cur:
-        a = _owned(cur, bitmap_number, address)
+        a = _owned(cur, bitmap_number, address, parcel)
         memory = a["memory"] if req.memory is None else [m for m in a["memory"] if m in req.memory]
-        auto = a["auto_tasks"] if req.auto_tasks is None else [t for t in TASKS if t in req.auto_tasks]
+        auto = a["auto_tasks"] if req.auto_tasks is None else [t for t in tasks_ if t in req.auto_tasks]
         cur.execute(
             "update social.agents set persona = %s, tasks = %s, watch = %s, memory = %s, auto_tasks = %s where id = %s;",
-            (req.persona.strip(), [t for t in TASKS if t in req.tasks], Json(req.watch.model_dump()), Json(memory), auto, a["id"]),
+            (req.persona.strip(), [t for t in tasks_ if t in req.tasks], Json(req.watch.model_dump()), Json(memory), auto, a["id"]),
         )
-    return district_agent(bitmap_number, address)
+    return district_agent(bitmap_number, parcel, address)
 
 
 @router.delete("/v1/districts/{bitmap_number}/agent")
-def revoke(bitmap_number: int, address: str = Depends(current_address)):
+def revoke(bitmap_number: int, parcel: int | None = None, address: str = Depends(current_address)):
     """Switch the agent off. Its grant is void from now on; what it already posted stays, marked as the agent's."""
     with cursor() as cur:
-        a = _owned(cur, bitmap_number, address)
+        a = _owned(cur, bitmap_number, address, parcel)
         cur.execute("update social.agents set revoked_at = now() where id = %s;", (a["id"],))
         cur.execute("update social.agent_drafts set status = 'expired', decided_at = now() where agent_id = %s and status = 'pending';",
                     (a["id"],))
@@ -365,17 +422,18 @@ def grant_record(grant_id: int):
     """A grant as signed, for anyone checking an agent's post."""
     with cursor() as cur:
         cur.execute(
-            "select bitmap_number, owner, agent_key, grant_message, grant_signature, granted_at, expires_at, revoked_at "
+            "select bitmap_number, tx_index, owner, agent_key, grant_message, grant_signature, granted_at, expires_at, revoked_at "
             "from social.agents where id = %s and grant_signature is not null;",
             (grant_id,),
         )
         row = cur.fetchone()
     if row is None:
         raise HTTPException(404, "no such grant")
-    n, owner, key, message, signature, granted_at, expires_at, revoked_at = row
+    n, tx_index, owner, key, message, signature, granted_at, expires_at, revoked_at = row
     return {
         "id": grant_id,
         "bitmap_number": n,
+        "parcel": tx_index,
         "owner": owner,
         "agent_key": key,
         "message": message,
@@ -398,12 +456,13 @@ def _expire_drafts(cur, agent_id):
 
 
 def _draft_for_owner(cur, draft_id, address):
-    cur.execute("select agent_id, bitmap_number, reply_to, body, status from social.agent_drafts where id = %s for update;", (draft_id,))
+    cur.execute("select d.agent_id, d.bitmap_number, d.reply_to, d.body, d.status, a.tx_index from social.agent_drafts d "
+                "join social.agents a on a.id = d.agent_id where d.id = %s for update of d;", (draft_id,))
     row = cur.fetchone()
     if row is None:
         raise HTTPException(404, "no such draft")
-    agent_id, n, reply_to, body, status = row
-    a = _owned(cur, n, address)
+    agent_id, n, reply_to, body, status, tx_index = row
+    a = _owned(cur, n, address, tx_index)
     if a["id"] != agent_id or status != "pending":
         raise HTTPException(409, "this draft isn't waiting any more")
     return a, n, reply_to, body
@@ -422,9 +481,10 @@ def publish(draft_id: int, req: Publish, address: str = Depends(current_address)
         why = problem(cur, a)
         if why:
             raise HTTPException(409, {"expired": "the grant has expired; sign a new one",
-                                      "owner_changed": "you no longer hold this district",
+                                      "owner_changed": "you no longer hold this district" if a["tx_index"] is None else "you no longer hold this parcel",
                                       "unpaid": "the agent's time has run out; renew it first",
-                                      "banned": "this address is banned from posting"}[why])
+                                      "banned": "this address is banned from posting",
+                                      "muted": "you are muted in this district"}[why])
         body = (req.body if req.body is not None else body).strip()
         if not body:
             raise HTTPException(400, "the post is empty")
@@ -449,9 +509,10 @@ def _post(cur, a, draft_id, reply_to, body, auto=False):
     signed_at = int(time.time())
     message = agent_post_message(a["id"], a["agent_key"], social.post_message(n, reply_to, None, signed_at, [], body))
     cur.execute(
-        "insert into social.posts (bitmap_number, author_address, author_role, reply_to, body, media, signed_message, "
-        "signature, agent_id) values (%s, %s, %s, %s, %s, '[]', %s, %s, %s) returning id;",
-        (n, owner, roles.OWNER, reply_to, body, message, sign_post(a["agent_secret"], message), a["id"]),
+        "insert into social.posts (bitmap_number, author_address, author_role, author_parcel, reply_to, body, media, signed_message, "
+        "signature, agent_id) values (%s, %s, %s, %s, %s, %s, '[]', %s, %s, %s) returning id;",
+        (n, owner, roles.OWNER if a["tx_index"] is None else roles.RESIDENT, a["tx_index"], reply_to, body, message,
+         sign_post(a["agent_secret"], message), a["id"]),
     )
     post_id = cur.fetchone()[0]
     cur.execute("update social.agent_drafts set status = 'posted', post_id = %s, body = %s, decided_at = now(), auto = %s where id = %s;",
@@ -480,13 +541,13 @@ def discard(draft_id: int, address: str = Depends(current_address)):
 
 
 @router.post("/v1/districts/{bitmap_number}/agent/pay")
-def pay(bitmap_number: int, address: str = Depends(current_address)):
+def pay(bitmap_number: int, parcel: int | None = None, address: str = Depends(current_address)):
     """An invoice from unimap's Lightning wallet for PAID_DAYS more of the agent."""
     c = config()
     if not c["price_sats"]:
         raise HTTPException(400, "the agent is free on this server")
     with cursor() as cur:
-        a = _owned(cur, bitmap_number, address)
+        a = _owned(cur, bitmap_number, address, parcel)
         cur.execute("select count(*) from social.agent_payments where payer = %s and created_at > now() - interval '10 minutes';", (address,))
         if cur.fetchone()[0] >= 5:
             raise HTTPException(429, "too many invoices at once, try again in a few minutes")
@@ -688,10 +749,13 @@ class Toolbox:
 
     def t_draft_reply(self, task, post_id, body, why=""):
         with cursor() as cur:
-            cur.execute("select 1 from social.posts where id = %s and bitmap_number = %s and reply_to is null and removed_at is null;",
-                        (int(post_id), self.n))
-            if cur.fetchone() is None:
+            cur.execute("select author_address from social.posts where id = %s and bitmap_number = %s and reply_to is null "
+                        "and removed_at is null;", (int(post_id), self.n))
+            row = cur.fetchone()
+            if row is None:
                 return {"error": "reply to a top-level post in this district"}
+            if self.a["tx_index"] is not None and row[0] != self.a["owner"]:
+                return {"error": "you only answer under posts by the parcel's holder"}
         return self._add(task, body, why, int(post_id))
 
     def t_remember(self, note):
@@ -711,9 +775,14 @@ def _how_it_goes_out(a):
 
 def system_prompt(a):
     notes = "\n".join(f"- {m}" for m in a["memory"]) or "(none yet)"
-    return f"""You are the agent of {a['bitmap_number']}.bitmap, a district in unimap: a city on Bitcoin where every block is a \
+    n = a["bitmap_number"]
+    who = (f"the agent of {n}.bitmap" if a["tx_index"] is None else f"the agent of parcel #{a['tx_index']} in {n}.bitmap")
+    boss = (f"the district's owner ({_short(a['owner'])})" if a["tx_index"] is None
+            else f"the resident who holds that parcel ({_short(a['owner'])}). The district belongs to someone else: speak only "
+                 "for your resident, never for the district or its owner")
+    return f"""You are {who}, in unimap: a city on Bitcoin where every block is a \
 district held as a Bitmap inscription, the people holding its parcels are its residents, and anyone can visit, follow, \
-check in and reply. You work for the district's owner ({_short(a['owner'])}).
+check in and reply. You work for {boss}.
 
 {_how_it_goes_out(a)} It appears under the owner's name marked "posted by the agent". So write what the owner would be \
 glad to sign:
@@ -740,8 +809,9 @@ def task_prompt(a, due):
         parts.append(f"\n[welcome] New residents: {people}. Draft one short post welcoming them by their short address.")
     if "answers" in due:
         lines = "\n".join(json.dumps(x, ensure_ascii=False) for x in due["answers"])
+        whose = "" if a["tx_index"] is None else " under your resident's own posts"
         parts.append(
-            "\n[answers] New posts and replies from other people (reply_to is the top-level post a reply sits under):\n"
+            f"\n[answers] New posts and replies from other people{whose} (reply_to is the top-level post a reply sits under):\n"
             f"{lines}\nIf someone asked something the district can answer with facts from your tools, draft a reply under the "
             "top-level post. Skip anything that isn't a question, or that only the owner can answer."
         )
@@ -776,10 +846,10 @@ def _due(cur, a):
         "select p.id, p.reply_to, p.author_role, p.body from social.posts p "
         "left join social.posts t on t.id = p.reply_to "
         "where p.bitmap_number = %s and p.id > %s and p.removed_at is null and p.agent_id is null and p.author_address <> %s "
-        "and (p.reply_to is null or t.author_address = %s) "
+        "and ((p.reply_to is null and %s) or t.author_address = %s) "
         "and not exists (select 1 from social.posts o where o.reply_to = coalesce(p.reply_to, p.id) and o.id > p.id "
         "and o.author_address = %s) order by p.id limit 10;",
-        (n, st.get("post", 0), owner, owner, owner),
+        (n, st.get("post", 0), owner, a["tx_index"] is None, owner, owner),
     )
     rows = cur.fetchall()
     cur.execute("select coalesce(max(id), 0) from social.posts;")
@@ -880,12 +950,12 @@ def _converse(system, prompt, box):
 
 
 @router.post("/v1/districts/{bitmap_number}/agent/run", status_code=202)
-def run_now(bitmap_number: int, background: BackgroundTasks, address: str = Depends(current_address)):
+def run_now(bitmap_number: int, background: BackgroundTasks, parcel: int | None = None, address: str = Depends(current_address)):
     """Ask the agent to look now rather than on its hourly round."""
     if not config()["open"]:
         raise HTTPException(503, "the district agent isn't open on this server")
     with cursor() as cur:
-        a = _owned(cur, bitmap_number, address)
+        a = _owned(cur, bitmap_number, address, parcel)
         why = problem(cur, a)
         if why:
             raise HTTPException(409, why)

@@ -453,8 +453,8 @@ CREATE INDEX IF NOT EXISTS market_offers_district_idx ON social.market_offers US
 CREATE INDEX IF NOT EXISTS market_offers_buyer_idx ON social.market_offers USING btree (buyer, id);
 CREATE INDEX IF NOT EXISTS market_offers_seller_idx ON social.market_offers USING btree (seller, id);
 
--- 街区 agent (api/agent.py): a helper the owner grants, with a wallet signature, the right to
--- draft posts for the district and publish those the owner approves, signed with its own key.
+-- 街区 agent (api/agent.py): a helper the owner of a district or a parcel grants, with a wallet signature,
+-- the right to draft posts there and publish those the owner approves, signed with its own key.
 CREATE TABLE IF NOT EXISTS social.agents (
 	id bigserial NOT NULL,
 	bitmap_number int4 NOT NULL,
@@ -477,8 +477,6 @@ CREATE TABLE IF NOT EXISTS social.agents (
 	last_run_at timestamptz NULL,
 	CONSTRAINT agents_pk PRIMARY KEY (id)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS agents_one_live ON social.agents USING btree (bitmap_number)
-	WHERE grant_signature IS NOT NULL AND revoked_at IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS agents_key_idx ON social.agents USING btree (agent_key);
 CREATE TABLE IF NOT EXISTS social.agent_drafts (
 	id bigserial NOT NULL,
@@ -498,6 +496,11 @@ CREATE INDEX IF NOT EXISTS agent_drafts_agent_idx ON social.agent_drafts USING b
 -- Posting on its own: only under a grant that says so, and only for the tasks the owner picked.
 ALTER TABLE social.agents ADD COLUMN IF NOT EXISTS may_publish bool NOT NULL DEFAULT false; -- the signed grant lets it post without asking
 ALTER TABLE social.agents ADD COLUMN IF NOT EXISTS auto_tasks text[] NOT NULL DEFAULT '{}'; -- tasks whose drafts it posts itself
+-- A resident's agent looks after one parcel: tx_index is set, and it acts as that parcel's holder.
+ALTER TABLE social.agents ADD COLUMN IF NOT EXISTS tx_index int4 NULL; -- null for the district's own agent
+DROP INDEX IF EXISTS social.agents_one_live;
+CREATE UNIQUE INDEX IF NOT EXISTS agents_one_live_each ON social.agents USING btree (bitmap_number, coalesce(tx_index, -1))
+	WHERE grant_signature IS NOT NULL AND revoked_at IS NULL;
 ALTER TABLE social.agent_drafts ADD COLUMN IF NOT EXISTS auto bool NOT NULL DEFAULT false; -- posted by the agent without the owner looking first
 CREATE TABLE IF NOT EXISTS social.agent_payments (
 	id bigserial NOT NULL,

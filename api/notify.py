@@ -40,10 +40,11 @@ def notifications(before: int | None = None, address: str = Depends(current_addr
     with cursor() as cur:
         cur.execute(
             "select n.id, n.kind, n.actor, n.bitmap_number, n.post_id, n.created_at, n.read_at is not null, "
-            "case when p.removed_at is null then left(p.body, 140) end, t.amount_sats, t.comment, n.block_height, d.treasure_tx, d.rarity "
+            "case when p.removed_at is null then left(p.body, 140) end, t.amount_sats, t.comment, n.block_height, d.treasure_tx, d.rarity, ag.tx_index "
             "from social.notifications n left join social.posts p on p.id = n.post_id "
             "left join social.tips t on t.id = n.tip_id "
             "left join social.block_draws d on d.height = n.block_height and n.kind = 'treasure' "
+            "left join social.agents ag on ag.agent_key = n.actor and n.kind like 'agent%%' "
             "where n.address = %s and (%s::int8 is null or n.id < %s) order by n.id desc limit %s;",
             (address, before, before, PAGE),
         )
@@ -60,8 +61,9 @@ def notifications(before: int | None = None, address: str = Depends(current_addr
                 **({"amount_sats": sats, "comment": comment} if kind == "tip" else {}),
                 **({"block_height": height} if kind in ("treasure", "lucky", "crown", "event_win", "sold") else {}),
                 **({"tx_index": tx, "rarity": rare} if kind == "treasure" else {}),
+                **({"agent_parcel": agent_tx} if kind.startswith("agent") else {}),  # set when it's a parcel's agent
             }
-            for i, kind, actor, n, post_id, at, read, snippet, sats, comment, height, tx, rare in cur.fetchall()
+            for i, kind, actor, n, post_id, at, read, snippet, sats, comment, height, tx, rare, agent_tx in cur.fetchall()
         ]
         return {"notifications": rows, "unread": _unread(cur, address)}
 

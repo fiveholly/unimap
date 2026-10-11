@@ -126,11 +126,26 @@ function sentence(item: Item): [React.ReactNode, string] {
     case "offer_accepted":
       return [tn("{who} 接受了你对 {place} 的出价，交易已经发出", { who, place }), `/district/${n.bitmap_number}`];
     case "agent_draft":
-      return [tn("你的街区 {place} 的 agent 写好了草稿，等你确认", { place }), `/district/${n.bitmap_number}?tab=agent`];
+      return [
+        n.agent_parcel != null
+          ? tn("你在 {place} 的地块 #{i} 的 agent 写好了草稿，等你确认", { place, i: n.agent_parcel })
+          : tn("你的街区 {place} 的 agent 写好了草稿，等你确认", { place }),
+        `/district/${n.bitmap_number}?tab=agent`,
+      ];
     case "agent_posted":
-      return [tn("你的街区 {place} 的 agent 自己发了帖子", { place }), n.post_id ? `/post/${n.post_id}` : `/district/${n.bitmap_number}?tab=agent`];
+      return [
+        n.agent_parcel != null
+          ? tn("你在 {place} 的地块 #{i} 的 agent 自己发了帖子", { place, i: n.agent_parcel })
+          : tn("你的街区 {place} 的 agent 自己发了帖子", { place }),
+        n.post_id ? `/post/${n.post_id}` : `/district/${n.bitmap_number}?tab=agent`,
+      ];
     case "agent_alert":
-      return [tn("你的街区 agent 发现 {place} 在售，价格在你设的范围内", { place }), `/district/${n.bitmap_number}`];
+      return [
+        n.agent_parcel != null
+          ? tn("你的地块 agent 发现 {place} 在售，价格在你设的范围内", { place })
+          : tn("你的街区 agent 发现 {place} 在售，价格在你设的范围内", { place }),
+        `/district/${n.bitmap_number}`,
+      ];
     case "lucky":
       return [
         tn("区块 {h} 抽中你的街区 {place} 做今日幸运街区，你得到一枚徽章", { h: <span className="mono">{(n.block_height ?? 0).toLocaleString("en-US")}</span>, place }),

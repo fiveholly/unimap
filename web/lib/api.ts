@@ -294,6 +294,7 @@ export type Notification = {
   block_height?: number; // treasure, lucky: the block that drew it; crown, event_win: the season's first block
   tx_index?: number; // treasure: the parcel
   rarity?: Rarity;
+  agent_parcel?: number | null; // agent_*: set when it is a parcel's agent rather than the district's
 };
 
 /** 区块节拍 (api/game.py). */
@@ -351,11 +352,12 @@ export type Season = {
 
 /** 街区 agent (api/agent.py). */
 export type AgentTask = "welcome" | "digest" | "answers";
-export type AgentInfo = { open: boolean; price_sats: number; days: number; max_days: number; max_per_day: number; tasks: AgentTask[] };
-export type AgentProblem = "expired" | "owner_changed" | "unpaid" | "banned";
+export type AgentInfo = { open: boolean; price_sats: number; days: number; max_days: number; max_per_day: number; tasks: AgentTask[]; parcel_tasks?: AgentTask[] };
+export type AgentProblem = "expired" | "owner_changed" | "unpaid" | "banned" | "muted";
 export type Agent = {
   id: number;
   key: string;
+  parcel?: number | null; // set for a resident's agent, which looks after that parcel
   posts_per_day: number;
   posted_today: number;
   expires_at: string;
@@ -387,6 +389,7 @@ export type AgentDraft = {
 export type AgentBriefing =
   | { kind: "applications"; count: number }
   | { kind: "poll_closing"; poll_id: number; question: string; closes_at: string }
-  | { kind: "prizes_unpaid"; event_id: number; season: number; count: number };
+  | { kind: "prizes_unpaid"; event_id: number; season: number; count: number }
+  | { kind: "treasure"; height: number; rarity: Rarity; closes_at_height: number };
 export type AgentView = { agent: Agent | null; drafts: AgentDraft[]; recent: AgentDraft[]; briefing: AgentBriefing[] };
-export type AgentGrant = { id: number; bitmap_number: number; owner: string; agent_key: string; message: string; signature: string; granted_at: string; expires_at: string; revoked_at: string | null };
+export type AgentGrant = { id: number; bitmap_number: number; parcel?: number | null; owner: string; agent_key: string; message: string; signature: string; granted_at: string; expires_at: string; revoked_at: string | null };

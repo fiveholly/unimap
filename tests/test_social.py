@@ -1602,6 +1602,48 @@ class SocialApi(unittest.TestCase):
                 cur.execute("update social.agents set may_publish = false where id = %s;", (g4["id"],))
             self.assertEqual(view().json()["agent"]["auto_tasks"], [])
             self.client.delete(f"/v1/districts/{DISTRICT}/agent", headers=self.h(ALICE))
+
+            # A resident's agent for parcel #1: only the parcel's holder grants it, and the grant names the parcel.
+            for k in ("AGENT_PRICE_SATS", "AGENT_LIGHTNING_ADDRESS"):
+                os.environ.pop(k)
+            pp = lambda path="": f"/v1/districts/{DISTRICT}/agent{path}?parcel=1"
+            self.assertEqual(post(ALICE, pp("/prepare"), {}).status_code, 403)
+            gp = post(BOB, pp("/prepare"), {"may_publish": True}).json()
+            self.assertIn("parcel: #1", gp["message"])
+            v = post(BOB, pp(), {"id": gp["id"], "signature": BOB.sign(gp["message"])}).json()
+            self.assertEqual((v["agent"]["parcel"], v["agent"]["tasks"], v["agent"]["auto_tasks"]), (1, ["answers"], ["answers"]))
+            self.assertEqual(self.client.put(pp("/settings"), json={"tasks": ["welcome"]}, headers=self.h(BOB)).status_code, 400)
+            self.assertIsNone(view().json()["agent"])  # the district's own agent is a different one
+            # It only answers people under Bob's own posts, and posts as the parcel's resident.
+            mine = self.post(BOB, "有人想一起修路灯吗？").json()
+            self.post(ALICE, "什么时候修？", reply_to=mine["id"])
+            self.post(ALICE, "下周开会，谁有问题？")
+            agent.model = fake = FakeModel([[("draft_reply", {"task": "answers", "post_id": top["id"], "body": "不是我的帖子", "why": ""}),
+                                             ("draft_reply", {"task": "answers", "post_id": mine["id"], "body": "这周六上午。", "why": "Alice asked"})]])
+            out = agent.run(gp["id"])
+            self.assertEqual((out["posted"], out["drafts"], out["error"]), (1, 0, None))
+            system, messages = fake.seen[0]
+            self.assertIn("parcel #1", system)
+            self.assertIn("什么时候修", messages[0]["content"])
+            self.assertNotIn("下周开会", messages[0]["content"])
+            self.assertIn("error", json.loads(fake.seen[1][1][-1]["content"][0]["content"]))
+            v = self.client.get(pp(), headers=self.h(BOB)).json()
+            answer = self.client.get(f"/v1/posts/{v['recent'][0]['post_id']}").json()
+            self.assertEqual((answer["author"]["address"], answer["author"]["role"], answer["author"]["parcel"], answer["reply_to"]),
+                             (BOB.address, "resident", 1, mine["id"]))
+            self.assertEqual(self.client.get(f"/v1/agent/grants/{gp['id']}").json()["parcel"], 1)
+            n = [x for x in self.client.get("/v1/notifications", headers=self.h(BOB)).json()["notifications"] if x["kind"] == "agent_posted"]
+            self.assertEqual(n[0]["agent_parcel"], 1)
+            # Muted in the district, or the parcel sold, it stops.
+            with self.conn.cursor() as cur:
+                cur.execute("insert into social.mutes (bitmap_number, address, by_address) values (%s, %s, %s);", (DISTRICT, BOB.address, ALICE.address))
+            self.assertEqual(self.client.get(pp(), headers=self.h(BOB)).json()["agent"]["problem"], "muted")
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.mutes; update inscription_owners set address = %s where inscription_id = 'p1i0';", (CAROL.address,))
+                a = agent._row(cur, "id = %s", (gp["id"],))
+                self.assertEqual(agent.problem(cur, a), "owner_changed")
+                cur.execute("update inscription_owners set address = %s where inscription_id = 'p1i0';", (BOB.address,))
+            self.assertEqual(self.client.delete(pp(), headers=self.h(BOB)).status_code, 200)
             # Its posts stay, still checkable against the old grant.
             self.assertEqual(self.client.get(f"/v1/posts/{p['id']}").json()["agent"]["grant_id"], me["id"])
         finally:

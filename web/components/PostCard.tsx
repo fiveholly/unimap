@@ -132,7 +132,7 @@ export function PostCard({
           {a.x && <XHandle username={a.x} />}
           <span className={`badge ${a.role}`}>{a.role === "owner" ? t("街区主人") : a.role === "resident" ? t("居民#one") : t("访客")}</span>
           {post.agent && (
-            <span className="badge agent" title={t("主人授权的街区 agent 写的，主人确认后发出")}>
+            <span className="badge agent" title={t("发帖人用钱包授权的 agent 写的，用它自己的密钥签名")}>
               {t("agent 代发")}
             </span>
           )}

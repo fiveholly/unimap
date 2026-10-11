@@ -386,7 +386,7 @@ function DistrictView() {
             ["posts", t("动态")],
             ["polls", t("投票")],
             ["contests", t("活动")],
-            ...(isOwner ? [["agent", t("助手")]] : []),
+            ...(isOwner || viewer?.role === "resident" ? [["agent", t("助手")]] : []),
             ["parcels", t("地块")],
             ["history", t("历史")],
           ] as [Tab, string][]
@@ -425,7 +425,7 @@ function DistrictView() {
           )}
           {tab === "polls" && <Polls n={n} token={token} canVote={!!viewer && viewer.role !== "visitor"} isOwner={isOwner} />}
           {tab === "contests" && <Contests n={n} token={token} me={viewer?.address ?? null} isOwner={isOwner} />}
-          {tab === "agent" && isOwner && token && <AgentPanel n={n} token={token} />}
+          {tab === "agent" && token && (isOwner ? <AgentPanel n={n} token={token} /> : viewer?.role === "resident" && viewer.parcel != null && <AgentPanel n={n} token={token} parcel={viewer.parcel} />)}
           {tab === "parcels" && <ParcelList land={land} txValues={txValues} own={own} token={token} onPick={(i) => setSelected(i)} />}
           {tab === "history" && (
             <ul className="events">
