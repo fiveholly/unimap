@@ -51,8 +51,6 @@ const LEVELS: [Level, string][] = [
 const levelOf = (s: number): Level => (s < AREA_SCALE ? "area" : s < PARCEL_FADE[0] ? "block" : "parcel");
 /** Blocks fill the view a few columns across, so every building is legible. */
 const defaultScale = (w: number) => Math.min(1.6, Math.max(0.45, w / ((w < 600 ? 2.6 : 5.5) * 128)));
-/** The whole width of the city at once, as far out as the map goes. */
-const overviewScale = (w: number) => Math.max(MIN_SCALE, w / (QUARTERS * QW + QW / 2));
 const LEVEL_SCALE: Record<Level, (w: number) => number> = { area: () => 0.16, block: defaultScale, parcel: () => 2.8 };
 
 const shade = (hex: string, f: number) => {
@@ -293,7 +291,7 @@ function clamp(v: View, w: number, h: number, tip: number): View {
   };
 }
 
-export function CityMap({ tip, focus, overview = false }: { tip: number; focus: number; overview?: boolean }) {
+export function CityMap({ tip, focus }: { tip: number; focus: number }) {
   const router = useRouter();
   const canvas = useRef<HTMLCanvasElement>(null);
   const box = useRef<HTMLDivElement>(null);
@@ -328,7 +326,7 @@ export function CityMap({ tip, focus, overview = false }: { tip: number; focus: 
     const ctx = cv.getContext("2d")!;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    if (!view.current.s) view.current.s = overview ? overviewScale(w) : defaultScale(w);
+    if (!view.current.s) view.current.s = defaultScale(w);
     view.current = clamp(view.current, w, h, tip);
     const { x: vx, y: vy, s } = view.current;
     const toWorld = (sx: number, sy: number): [number, number] => [vx + (sx - w / 2) / s, vy + (sy - h / 2) / s];
@@ -389,7 +387,7 @@ export function CityMap({ tip, focus, overview = false }: { tip: number; focus: 
       ctx.fill();
     }
     const want = new Set<number>();
-    const labels: [number, number, string, "landmark" | "park" | "sale" | "lucky"][] = [];
+    const labels: [number, number, string, "landmark" | "park" | "sale" | "lucky" | "selected"][] = [];
     const parkCells = new Map<number, [number, number][]>(); // park id -> screen centres of its members
     // A park's outline goes over everything at the end, like a territory line in a game:
     // drawn at ground level it would hide behind the tall buildings in front.
@@ -632,6 +630,8 @@ export function CityMap({ tip, focus, overview = false }: { tip: number; focus: 
             ctx.stroke();
           }
         }
+        // The district the panel describes carries its number, so the two are easy to match up.
+        if (n === selectedRef.current && s >= SALE_TEXT_SCALE) labels.push([c.x, c.y - (t?.sale && t?.lucky ? 168 : t?.sale || t?.lucky ? 140 : 112) * s, `${n}.bitmap`, "selected"]);
         if (n === selectedRef.current || n === hover.current) {
           ctx.strokeStyle = n === selectedRef.current ? "#EDEAE3" : "rgba(237,234,227,0.45)";
           ctx.lineWidth = 2;
@@ -675,7 +675,7 @@ export function CityMap({ tip, focus, overview = false }: { tip: number; focus: 
     ctx.textBaseline = "middle";
     for (const [x, y, text, kind] of labels) {
       const tw = ctx.measureText(text).width + 18;
-      ctx.fillStyle = kind === "park" ? "rgba(22,21,18,0.88)" : kind === "sale" ? SALE : kind === "lucky" ? LUCKY : "#E8B04A";
+      ctx.fillStyle = kind === "park" ? "rgba(22,21,18,0.88)" : kind === "sale" ? SALE : kind === "lucky" ? LUCKY : kind === "selected" ? "#EDEAE3" : "#E8B04A";
       ctx.beginPath();
       ctx.roundRect(x - tw / 2, y - 10, tw, 20, 10);
       ctx.fill();

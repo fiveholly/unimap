@@ -679,6 +679,126 @@ kbd {
   display: block;
   margin: -8px 0 14px;
 }
+.world {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+.world-stage {
+  position: relative;
+  aspect-ratio: 1;
+  max-height: min(80vh, 760px);
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+  background: #0a1217;
+}
+.world-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: manipulation;
+}
+.world-tip {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 240px;
+  padding: 8px 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: rgba(22, 21, 18, 0.94);
+  font-size: 12px;
+  pointer-events: none;
+  transform: translate(12px, 12px);
+}
+.world-tip.left {
+  transform: translate(calc(-100% - 12px), 12px);
+}
+.world-tip span {
+  color: var(--fg-2);
+}
+.world-key {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: rgba(22, 21, 18, 0.88);
+  color: var(--fg-2);
+  pointer-events: none;
+}
+.world-key span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.world-key i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.world-panel .section-title {
+  margin-top: 0;
+}
+.continents {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.continent-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--fg);
+  text-align: left;
+}
+.continent-row:hover:not(:disabled),
+.continent-row.on {
+  border-color: var(--fg-2);
+}
+.continent-row:disabled {
+  opacity: 0.6;
+}
+.continent-row .swatch {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+.continent-row .block {
+  display: block;
+}
+.map-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+@media (max-width: 900px) {
+  .world {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .world-stage {
+    max-height: none;
+  }
+}
 .city {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 300px;

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
+import { Feed } from "@/components/Feed";
 import { Delivered } from "@/components/Shop";
 import { useSession } from "@/components/Session";
 import { Bolt } from "@/components/Tip";
@@ -75,6 +76,10 @@ export default function MePage() {
           </Link>
         ))}
       </Group>
+      <section className="me-group">
+        <h2 className="section-title">{t("关注的动态")}</h2>
+        <Feed token={token} />
+      </section>
     </div>
   );
 }
