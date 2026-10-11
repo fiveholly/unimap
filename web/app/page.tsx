@@ -53,7 +53,7 @@ function HomeView() {
       {tip != null && <LuckyStrip tip={tip} />}
       {error && <p className="error">{t("连不上 unimap 服务：{error}", { error })}</p>}
       {tip == null && !error && <div className="city-skeleton" aria-label={t("地图加载中")} />}
-      {tip != null && <CityMap tip={tip} focus={focus} />}
+      {tip != null && <CityMap tip={tip} focus={focus} overview={!search.get("b")} />}
       <section className="home-feed">
         <h2 className="section-title">{t("我的动态")}</h2>
         {token ? <Feed token={token} /> : <p className="muted">{t("连接钱包并关注街区后，这里会出现它们的帖子和地块变动。")}</p>}
