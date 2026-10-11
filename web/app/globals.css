@@ -2909,3 +2909,54 @@ span.act.tip-btn {
   flex-direction: column;
   gap: 6px;
 }
+
+/* 指标 */
+.metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.metric-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+.metric-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.metric-big {
+  font-size: 26px;
+  line-height: 1.2;
+}
+.metric-big .muted {
+  font-size: 16px;
+}
+.metric-table-wrap {
+  overflow-x: auto;
+}
+.metric-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.metric-table th,
+.metric-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: right;
+}
+.metric-table th:first-child,
+.metric-table td:first-child {
+  text-align: left;
+}
+.metric-table th {
+  font-weight: 500;
+  color: var(--fg-2);
+}
+.metric-hit {
+  color: var(--accent);
+  font-weight: 600;
+}

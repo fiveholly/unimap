@@ -3,7 +3,7 @@
 // here from deterministic fake data; what the visitor does (posts, likes, follows, profile
 // edits) is kept in localStorage, and "重置演示数据" clears it.
 
-import type { MarketOffer, OfferQuote, Agent, AgentDraft, AgentGrant, AgentInfo, AgentTask, AgentView, Application, Badge, Contest, MarketListing, ContestMetric, District, DistrictGame, Draw, Game, Season, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, ShopBought, ShopItem, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
+import type { MarketOffer, OfferQuote, Agent, AgentDraft, AgentGrant, AgentInfo, AgentTask, AgentView, Application, Badge, Contest, MarketListing, ContestMetric, District, DistrictGame, Draw, Game, Season, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Metrics, ShopBought, ShopItem, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
 import { CLAIM_BLOCKS, pick, rarityOf, ROUND, roundOf, SEASON, seasonOf, sha256, type Rarity } from "./game";
 import { connected } from "./parks";
 import { MAX_SHOWN, PET_KEYS, PETS, type Pet, type PetKey } from "./pets";
@@ -1651,6 +1651,19 @@ function route(path: string, opts: Opts): unknown {
     for (const r of s.reports ?? []) if (r.post_id === id) r.resolved = true;
     save();
     return { ok: true };
+  }
+  if (p === "/v1/admin/metrics") {
+    // Twelve made-up weeks that grow, with tips past the first gate lately, so the page has something to show.
+    const n = Math.max(2, Math.min(52, Number(url.searchParams.get("weeks") ?? 12)));
+    const today = new Date(), monday = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - ((today.getUTCDay() + 6) % 7)));
+    const weeks = Array.from({ length: n }, (_, i) => {
+      const k = n - 1 - i, grow = 1 + i / 3, part = k === 0 ? (((today.getUTCDay() + 6) % 7) + 1) / 7 : 1, jig = 0.85 + hash(i + 77) * 0.3;
+      const f = (x: number) => Math.round(x * grow * part * jig);
+      const active = f(60), returning = Math.round(active * (0.35 + i * 0.03)), trades = f(0.6);
+      return { week: new Date(monday.getTime() - k * 7 * DAY * 1000).toISOString().slice(0, 10), tipped_districts: f(14), tippers: f(30), tip_sats: f(42_000),
+        active, returning, new: active - returning, trades, trade_sats: trades * Math.round(180_000 + hash(i) * 400_000), shop_orders: f(3), shop_sats: f(3) * 1800 };
+    });
+    return { weeks, gates: { tipped_districts: 50 } } satisfies Metrics;
   }
   if (p === "/v1/admin/bans") {
     const a = needMe();
