@@ -14,7 +14,7 @@ import psycopg2.extras
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import bip322, game, holdings, moderation, nostr, notify, parks, prosperity, recruit, roles, seasons, style, tips, wallets, xlink
+from api import bip322, game, holdings, moderation, nostr, notify, parks, pets, prosperity, recruit, roles, seasons, style, tips, tour, wallets, xlink
 from api.auth import current_address, normalize_address, optional_address
 from api.db import cursor
 from api.land import EVENT_SELECT, _event
@@ -58,7 +58,9 @@ POST_COLUMNS = (
     "(select k.pubkey from social.nostr_keys k where k.address = coalesce("
     "(select w.main_address from social.wallet_links w where w.address = p.author_address), p.author_address)) "
     "as author_nostr, p.nostr_event_id, "
-    "p.agent_id, (select a.agent_key from social.agents a where a.id = p.agent_id) as agent_key "
+    "p.agent_id, (select a.agent_key from social.agents a where a.id = p.agent_id) as agent_key, "
+    "(select json_build_object('kind', b.kind, 'rarity', b.rarity) from social.worn_badges w "
+    "join social.badges b on b.id = w.badge_id where w.address = p.author_address) as author_badge "
 )
 
 
@@ -75,6 +77,7 @@ def _post(row):
             "x": row["author_x"],  # linked X @username, if any
             "tippable": row["author_tippable"],  # has a Lightning address for tips
             "nostr": row["author_nostr"],  # linked Nostr public key (hex), if any
+            "badge": row["author_badge"],  # the badge they wear (api/game.py): {kind, rarity}
         },
         "reply_to": row["reply_to"],
         "body": None if removed else row["body"],
@@ -170,6 +173,7 @@ def person(address: str, before_id: int | None = None, limit: int = 20, viewer: 
         cur.execute("select count(*) from social.follows where address = %s;", (address,))
         follows = cur.fetchone()[0]
         badges = game.badges_of(cur, address)
+        shown_pets = pets.public_pets(cur, address, viewer)
         # Score held districts a run at a time, so two far-apart districts don't score everything between.
         levels, park_of, run = {}, {}, []
         for n in districts + [None]:
@@ -190,6 +194,7 @@ def person(address: str, before_id: int | None = None, limit: int = 20, viewer: 
         "follows": follows,
         "first_post_at": first_post.isoformat() if first_post else None,
         "badges": badges,
+        "pets": shown_pets,
         "posts": posts,
     }
 
@@ -222,7 +227,11 @@ def district(bitmap_number: int, tasks: BackgroundTasks, viewer: str | None = De
         prosper = prosperity.of(cur, bitmap_number)
         levels, park_of = parks.scored(cur, bitmap_number, bitmap_number)
         notice = recruit.get(cur, bitmap_number, viewer)
-        pets = holdings.shown(cur, bitmap_number, owner)
+        patted = pets.pats(cur, owner, viewer) if owner else {}
+        shown = [{**p, **patted.get(p["asset"], {"pats": 0, "patted": False})} for p in holdings.shown(cur, bitmap_number, owner)]
+        parcel_pets = holdings.parcel_pets(cur, bitmap_number)
+        for resident in holdings.stale_parcel_holders(cur, bitmap_number)[:5]:
+            tasks.add_task(holdings.refresh_group, resident, 0, True)
         owner_x = xlink.of(cur, owner)
         tipped = tips.district_tips(cur, bitmap_number)
         beat = game.district_view(cur, bitmap_number, viewer)
@@ -247,7 +256,8 @@ def district(bitmap_number: int, tasks: BackgroundTasks, viewer: str | None = De
         "level": levels[bitmap_number],
         "park": park_of.get(bitmap_number),
         "recruit": notice,
-        "pets": pets,
+        "pets": shown,  # with today's pats (api/pets.py)
+        "parcel_pets": parcel_pets,  # {tx_index: "dog:2"}: the pet each resident shows on their parcel
         "tips": tipped,  # confirmed Lightning tips on the district and its posts, last 30 days
         "owner_tippable": owner_tippable,
         "game": {**beat, "crown": crown and {"rank": crown, "season": tip // seasons.SEASON - 1}},  # api/game.py, api/seasons.py
@@ -285,7 +295,7 @@ def checkin(bitmap_number: int, address: str = Depends(current_address)):
         )
         if cur.rowcount == 0:
             raise HTTPException(409, "already checked in today")
-        badges = game.on_checkin(cur, address, bitmap_number)
+        badges = game.on_checkin(cur, address, bitmap_number) + tour.on_checkin(cur, address, bitmap_number)
     return {"ok": True, "badges": badges}
 
 

@@ -286,6 +286,69 @@ class SocialApi(unittest.TestCase):
         self.assertEqual(self.client.delete(f"/v1/districts/{DISTRICT}/recruit", headers=self.h(ALICE)).status_code, 200)
         self.assertIsNone(self.client.get(f"/v1/districts/{DISTRICT}").json()["recruit"])
 
+    def test_tenants(self):
+        self.client.put(f"/v1/districts/{DISTRICT}/recruit", json={"message": "找邻居"}, headers=self.h(ALICE))
+        let = lambda who, w=ALICE: self.client.post(f"/v1/districts/{DISTRICT}/tenants", json={"address": who.address}, headers=self.h(w))
+        try:
+            self.assertEqual(let(CAROL).status_code, 404)  # hasn't applied
+            self.client.put(f"/v1/districts/{DISTRICT}/application", json={"note": "让我住吧"}, headers=self.h(CAROL))
+            self.assertEqual(let(CAROL, BOB).status_code, 403)  # only the owner
+            self.assertEqual(self.post(CAROL, "还不能发").status_code, 403)
+            r = let(CAROL)
+            self.assertEqual(r.status_code, 201, r.text)
+            self.assertEqual([t["address"] for t in r.json()["tenants"]], [CAROL.address])
+            self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}/applications", headers=self.h(ALICE)).json()["applications"], [])
+            page = self.client.get(f"/v1/districts/{DISTRICT}", headers=self.h(CAROL)).json()
+            self.assertEqual((page["viewer"]["role"], page["viewer"]["parcel"]), ("tenant", None))
+            mine = self.post(CAROL, "我搬进来了")
+            self.assertEqual(mine.status_code, 201, mine.text)
+            self.assertEqual(mine.json()["author"]["role"], "tenant")
+            told = self.client.get("/v1/notifications", headers=self.h(CAROL)).json()["notifications"]
+            self.assertIn(("tenant", ALICE.address, DISTRICT), [(n["kind"], n["actor"], n["bitmap_number"]) for n in told])
+            self.assertEqual(self.client.put(f"/v1/districts/{DISTRICT}/application", json={}, headers=self.h(CAROL)).status_code, 400)
+            # The stay ends when the district changes hands.
+            with self.conn.cursor() as cur:
+                cur.execute("update inscription_owners set address = 'bcrt1qbuyer' where inscription_id = 'd100i0';")
+            try:
+                self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}/tenants").json()["tenants"], [])
+                self.assertEqual(self.post(CAROL, "还在吗").status_code, 403)
+            finally:
+                with self.conn.cursor() as cur:
+                    cur.execute("update inscription_owners set address = %s where inscription_id = 'd100i0';", (ALICE.address,))
+            self.assertEqual(self.client.delete(f"/v1/districts/{DISTRICT}/tenants/{CAROL.address}", headers=self.h(BOB)).status_code, 403)
+            gone = self.client.delete(f"/v1/districts/{DISTRICT}/tenants/{CAROL.address}", headers=self.h(CAROL))
+            self.assertEqual(gone.json()["tenants"], [])
+            self.assertEqual(self.post(CAROL, "走了").status_code, 403)
+        finally:
+            self.client.delete(f"/v1/districts/{DISTRICT}/recruit", headers=self.h(ALICE))
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.tenants; delete from social.posts where author_address = %s; delete from social.notifications where kind = 'tenant';", (CAROL.address,))
+
+    def test_opening(self):
+        clean = "delete from social.posts where bitmap_number = 105; delete from social.profiles where bitmap_number = 105; delete from social.recruitments where bitmap_number = 105; delete from social.badges where kind = 'opening';"
+        with self.conn.cursor() as cur:
+            cur.execute(clean)
+        try:
+            get = lambda w=CAROL: self.client.get(f"/v1/districts/{OTHER}/opening", headers=self.h(w))
+            self.assertEqual(get(ALICE).status_code, 403)
+            self.assertEqual(get().json()["steps"], {"bio": False, "post": False, "recruit": False})
+            self.client.put(f"/v1/districts/{OTHER}/profile", json={"bio": "新开的小街"}, headers=self.h(CAROL))
+            self.assertEqual(self.post(CAROL, "开张啦", district=OTHER).status_code, 201)
+            r = get().json()
+            self.assertEqual((r["steps"], r["opened"]), ({"bio": True, "post": True, "recruit": False}, False))
+            self.assertEqual(self.client.get("/v1/opened").json()["districts"], [])
+            self.client.put(f"/v1/districts/{OTHER}/recruit", json={"message": "来住"}, headers=self.h(CAROL))
+            r = get().json()
+            self.assertEqual((r["opened"], r["new"], r["badge"]["kind"]), (True, True, "opening"))
+            self.assertFalse(get().json()["new"])  # earned once
+            listed = self.client.get("/v1/opened").json()["districts"]
+            self.assertEqual([(d["bitmap_number"], d["bio"], d["posts"]) for d in listed], [(OTHER, "新开的小街", 1)])
+            kinds = [b["kind"] for b in self.client.get(f"/v1/people/{CAROL.address}").json()["badges"]]
+            self.assertIn("opening", kinds)
+        finally:
+            with self.conn.cursor() as cur:
+                cur.execute(clean)
+
     def test_polls(self):
         new = lambda w, **kw: self.client.post(f"/v1/districts/{DISTRICT}/polls", json={"question": "修个广场？", "options": ["好", "不好"], **kw}, headers=self.h(w))
         self.assertEqual(new(BOB).status_code, 403)
@@ -491,7 +554,7 @@ class SocialApi(unittest.TestCase):
                 put = self.client.put(f"/v1/districts/{DISTRICT}/showcase", json={"assets": ["dog", "cat"]}, headers=self.h(ALICE))
                 self.assertEqual(put.status_code, 200, put.text)
                 self.assertEqual([p["asset"] for p in put.json()["shown"]], ["dog", "cat"])
-                self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}").json()["pets"][0], {"asset": "dog", "tier": 2, "amount": "2500000.5"})
+                self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}").json()["pets"][0], {"asset": "dog", "tier": 2, "amount": "2500000.5", "face": None, "pats": 0, "patted": False})
                 tiles = {t["bitmap_number"]: t for t in self.client.get(f"/v1/land?start={DISTRICT}&end={OTHER}").json()["tiles"]}
                 self.assertEqual((tiles[DISTRICT]["pets"], tiles[OTHER]["pets"]), (["dog:2", "cat:1"], []))
                 # 刷新 is rate limited; a provider failure keeps the old cache.
@@ -576,6 +639,122 @@ class SocialApi(unittest.TestCase):
                     "delete from social.wallet_links; delete from social.showcase; delete from social.holdings; "
                     "delete from social.holdings_checked;"
                 )
+
+    def test_parcel_pets(self):
+        from decimal import Decimal
+
+        from api import holdings
+
+        class Fake:
+            def rune_balances(self, address):
+                return {"DOGGOTOTHEMOON": Decimal(600000)} if address == BOB.address else {}
+
+            def inscription_ids(self, address):
+                return iter([])
+
+        holdings.provider = Fake()
+        url = f"/v1/districts/{DISTRICT}/parcels/1/showcase"
+        try:
+            # Only the parcel's holder picks its pet, and only from what they hold.
+            self.assertEqual(self.client.get(url, headers=self.h(ALICE)).status_code, 403)
+            self.assertEqual(self.client.put(url, json={"asset": "dog"}, headers=self.h(ALICE)).status_code, 403)
+            view = self.client.get(url, headers=self.h(BOB)).json()
+            self.assertEqual(({h["asset"]: h["tier"] for h in view["held"]}["dog"], view["chosen"], view["shown"]), (1, None, None))
+            self.assertEqual(self.client.put(url, json={"asset": "unicorn"}, headers=self.h(BOB)).status_code, 400)
+            self.assertEqual(self.client.put(url, json={"asset": "dog"}, headers=self.h(BOB)).json()["shown"], "dog:1")
+            self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}").json()["parcel_pets"], {"1": "dog:1"})
+            # A pet they don't hold isn't drawn; a parcel that changes hands drops the choice.
+            self.client.put(url, json={"asset": "cat"}, headers=self.h(BOB))
+            self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}").json()["parcel_pets"], {})
+            self.client.put(url, json={"asset": "dog"}, headers=self.h(BOB))
+            with self.conn.cursor() as cur:
+                cur.execute(f"update inscription_owners set address = '{CAROL.address}' where inscription_id = 'p1i0';")
+            self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}").json()["parcel_pets"], {})
+            with self.conn.cursor() as cur:
+                cur.execute(f"update inscription_owners set address = '{BOB.address}' where inscription_id = 'p1i0';")
+            self.assertEqual(self.client.put(url, json={"asset": None}, headers=self.h(BOB)).json()["shown"], None)
+        finally:
+            holdings.provider = None
+            with self.conn.cursor() as cur:
+                cur.execute(f"update inscription_owners set address = '{BOB.address}' where inscription_id = 'p1i0'; "
+                            "delete from social.parcel_showcase; delete from social.holdings; delete from social.holdings_checked;")
+
+    def test_pet_care(self):
+        from datetime import datetime, timedelta, timezone
+        from decimal import Decimal
+
+        from api import holdings, pets
+
+        class Fake:
+            def rune_balances(self, address):
+                return {"DOGGOTOTHEMOON": Decimal(600000)} if address == BOB.address else {}
+
+            def inscription_ids(self, address):
+                return iter(["f1i0", "zzi0", "f2i0"] if address == BOB.address else [])
+
+        import json
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        (holdings.Path(d) / "bitcoin-frogs.json").write_text(json.dumps(["f1i0", "f2i0"]))
+        old_dir, holdings.COLLECTIONS_DIR = holdings.COLLECTIONS_DIR, holdings.Path(d)
+        holdings.collection.cache_clear()
+        holdings.provider = Fake()
+        try:
+            # A collection's pet looks like one of the wallet's own inscriptions, the first by default.
+            frog = next(p for p in self.client.get("/v1/me/pets", headers=self.h(BOB)).json()["pets"] if p["asset"] == "frog")
+            self.assertEqual((frog["items"], frog["face"]), (["f1i0", "f2i0"], None))  # its logo until one is picked
+            self.assertEqual(self.client.put("/v1/me/pets/frog", json={"face": "zzi0"}, headers=self.h(BOB)).status_code, 400)
+            frog = self.client.put("/v1/me/pets/frog", json={"face": "f2i0"}, headers=self.h(BOB)).json()
+            self.assertEqual(frog["face"], "f2i0")
+            # Naming leaves the face as it is.
+            self.assertEqual(self.client.put("/v1/me/pets/frog", json={"name": "呱呱"}, headers=self.h(BOB)).json()["face"], "f2i0")
+            # Pets stay off the public page until shown there, and then without their care details.
+            page = f"/v1/people/{BOB.address}"
+            self.assertEqual(self.client.get(page).json()["pets"], [])
+            self.assertTrue(self.client.put("/v1/me/pets/frog", json={"public": True}, headers=self.h(BOB)).json()["public"])
+            [shown] = self.client.get(page).json()["pets"]
+            self.assertEqual((shown["asset"], shown["name"], shown["face"]), ("frog", "呱呱", "f2i0"))
+            self.assertNotIn("fed_at", shown)
+            self.assertEqual(holdings.faces(self.conn.cursor(), BOB.address), {"frog": "f2i0"})
+            self.assertIsNone(self.client.put("/v1/me/pets/frog", json={"face": None}, headers=self.h(BOB)).json()["face"])
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.pet_care;")
+            holdings.collection.cache_clear()
+            holdings.COLLECTIONS_DIR = old_dir
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.holdings; delete from social.holdings_checked; delete from social.holding_items;")
+            # Only what the wallet holds is a pet; a new one is hungry and level 1.
+            self.assertEqual(self.client.get("/v1/me/pets", headers=self.h(ALICE)).json()["pets"], [])
+            [dog] = self.client.get("/v1/me/pets", headers=self.h(BOB)).json()["pets"]
+            self.assertEqual((dog["asset"], dog["tier"], dog["level"], dog["affection"], dog["mood"]), ("dog", 1, 1, 0, "hungry"))
+            self.assertEqual(self.client.post("/v1/me/pets/cat/feed", headers=self.h(BOB)).status_code, 404)
+            self.assertEqual(self.client.post("/v1/me/pets/dog/feed", headers=self.h(ALICE)).status_code, 404)
+            # A feed fills it up until FEED_HOURS have passed.
+            dog = self.client.post("/v1/me/pets/dog/feed", headers=self.h(BOB)).json()
+            self.assertEqual((dog["affection"], dog["streak"], dog["mood"]), (pets.AFFECTION, 1, "full"))
+            self.assertEqual(self.client.post("/v1/me/pets/dog/feed", headers=self.h(BOB)).status_code, 409)
+            # Fed yesterday, it comes back hungry, and today's feed keeps the streak going.
+            with self.conn.cursor() as cur:
+                cur.execute("update social.pet_care set fed_at = now() - interval '30 hours', last_day = current_date - 1;")
+            self.assertEqual(self.client.get("/v1/me/pets", headers=self.h(BOB)).json()["pets"][0]["mood"], "hungry")
+            dog = self.client.post("/v1/me/pets/dog/feed", headers=self.h(BOB)).json()
+            self.assertEqual((dog["affection"], dog["streak"]), (2 * pets.AFFECTION + 1, 2))
+            # Names are trimmed and can be cleared.
+            self.assertEqual(self.client.put("/v1/me/pets/dog", json={"name": "  旺财 "}, headers=self.h(BOB)).json()["name"], "旺财")
+            self.assertEqual(self.client.put("/v1/me/pets/dog", json={"name": "x" * 21}, headers=self.h(BOB)).status_code, 422)
+            self.assertIsNone(self.client.put("/v1/me/pets/dog", json={"name": ""}, headers=self.h(BOB)).json()["name"])
+            # Levels and moods.
+            self.assertEqual([pets.level(a) for a in (0, 29, 30, 119, 120, 10**6)], [1, 1, 2, 2, 3, pets.MAX_LEVEL])
+            now = datetime.now(timezone.utc)
+            self.assertEqual([pets.mood(now - timedelta(hours=h), now) for h in (1, 10, 30, 100)], ["full", "ok", "hungry", "starving"])
+        finally:
+            holdings.provider = None
+            holdings.COLLECTIONS_DIR = old_dir
+            holdings.collection.cache_clear()
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.pet_care; delete from social.holdings; delete from social.holdings_checked; "
+                            "delete from social.holding_items;")
 
     def test_search(self):
         with self.conn.cursor() as cur:
@@ -893,6 +1072,160 @@ class SocialApi(unittest.TestCase):
                     (dave.address,),
                 )
 
+
+    def test_tour(self):
+        from datetime import date, timedelta
+
+        from api import tour
+
+        erin = Wallet(10)
+        self.tokens[erin.address] = self.login(erin)
+        with self.conn.cursor() as cur:
+            cur.execute("delete from social.tour_days; delete from social.badges where kind = 'tour';")
+        try:
+            # Three different inscribed districts; the day's stops stay put.
+            t = self.client.get("/v1/tour").json()
+            stops = [s["bitmap_number"] for s in t["stops"]]
+            with self.conn.cursor() as cur:
+                cur.execute("select bitmap_number from bitmaps;")
+                inscribed = {r[0] for r in cur.fetchall()}
+            self.assertEqual(len(set(stops) & inscribed), 3)
+            self.assertNotIn("done", t)
+            self.assertEqual([s["bitmap_number"] for s in self.client.get("/v1/tour").json()["stops"]], stops)
+            # The first stops are districts posted in this week; a stored day is kept as it is.
+            self.post(CAROL, "热闹一下", district=OTHER)
+            with self.conn.cursor() as cur:
+                day = date(2026, 1, 2)
+                cur.execute("insert into social.tour_days (day, stops) values (%s, %s);", (day - timedelta(days=1), [1]))
+                cur.execute(
+                    "select distinct p.bitmap_number from social.posts p join bitmaps b using (bitmap_number) "
+                    "where p.reply_to is null and p.removed_at is null and p.created_at > now() - interval '7 days';"
+                )
+                active = {r[0] for r in cur.fetchall()}
+                picked = tour.stops(cur, day)
+                self.assertEqual((len(picked), len(set(picked))), (3, 3))
+                self.assertTrue(set(picked[: min(tour.ACTIVE, len(active))]) <= active)
+                self.assertEqual(tour.stops(cur, day - timedelta(days=1)), [1])
+            # Checking in at each stop; the last one earns the badge.
+            for n in stops[:-1]:
+                self.assertEqual(self.client.post(f"/v1/districts/{n}/checkin", headers=self.h(erin)).json()["badges"], [])
+            mine = self.client.get("/v1/tour", headers=self.h(erin)).json()
+            self.assertEqual(([s["visited"] for s in mine["stops"]], mine["done"], mine["streak"]), ([True, True, False], False, 0))
+            won = self.client.post(f"/v1/districts/{stops[-1]}/checkin", headers=self.h(erin)).json()["badges"]
+            today = tour.day_number(tour.today())
+            self.assertEqual(won, [{"kind": "tour", "height": today, "bitmap_number": stops[-1], "rarity": "common", "streak": 1}])
+            mine = self.client.get("/v1/tour", headers=self.h(erin)).json()
+            self.assertEqual((mine["done"], mine["streak"]), (True, 1))
+            self.assertIn("tour", [b["kind"] for b in self.client.get(f"/v1/people/{erin.address}").json()["badges"]])
+            # Days in a row make the badge rarer; a missed day starts over.
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "insert into social.badges (address, kind, height, bitmap_number, rarity) "
+                    "select %s, 'tour', h, 100, 'common' from unnest(%s::int[]) h;",
+                    (erin.address, [today - 1, today - 2, today - 4]),
+                )
+                self.assertEqual(tour.streak(cur, erin.address, tour.today()), 3)
+                self.assertEqual(tour.streak(cur, erin.address, tour.today() + timedelta(days=1)), 3)  # tomorrow, not done yet
+                self.assertEqual(tour.streak(cur, erin.address, tour.today() + timedelta(days=2)), 0)
+            self.assertEqual([tour.rarity(n) for n in (1, 3, 7, 30)], ["common", "rare", "epic", "legendary"])
+        finally:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "delete from social.tour_days; delete from social.badges where kind = 'tour'; delete from social.checkins where address = %s;",
+                    (erin.address,),
+                )
+
+    def test_rewards(self):
+        from api import pets
+
+        frank = Wallet(11)
+        self.tokens[frank.address] = self.login(frank)
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "insert into social.badges (address, kind, height, bitmap_number, rarity) values "
+                    "(%s, 'lucky_visit', 1, 100, 'common'), (%s, 'tour', 2, 100, 'epic'), (%s, 'tour', 2, 100, 'rare') returning id;",
+                    (frank.address, frank.address, ALICE.address),
+                )
+                common, epic, alices = [r[0] for r in cur.fetchall()]
+            # A badge you wear shows beside your name on your posts; only your own badges.
+            self.assertEqual(self.client.put("/v1/me/badge", json={"id": alices}, headers=self.h(frank)).status_code, 404)
+            self.assertEqual(self.client.put("/v1/me/badge", json={"id": epic}, headers=self.h(frank)).json()["worn"], {"id": epic, "kind": "tour", "rarity": "epic"})
+            top = self.post(CAROL, "欢迎来逛", district=OTHER).json()["id"]
+            self.assertEqual(self.post(frank, "戴着徽章来逛逛", district=OTHER, reply_to=top).status_code, 201)
+            self.assertEqual(self.client.get(f"/v1/people/{frank.address}").json()["posts"][0]["author"]["badge"], {"kind": "tour", "rarity": "epic"})
+            badges = {b["id"]: b["worn"] for b in self.client.get(f"/v1/people/{frank.address}").json()["badges"]}
+            self.assertEqual(badges, {common: False, epic: True})
+            self.client.put("/v1/me/badge", json={"id": common}, headers=self.h(frank))
+            self.assertEqual(self.client.get(f"/v1/people/{frank.address}").json()["posts"][0]["author"]["badge"]["kind"], "lucky_visit")
+            self.assertIsNone(self.client.put("/v1/me/badge", json={"id": None}, headers=self.h(frank)).json()["worn"])
+            self.assertIsNone(self.client.get(f"/v1/people/{frank.address}").json()["posts"][0]["author"]["badge"])
+            # The pets an owner shows add their levels above 1 to the district's prosperity, while held.
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "insert into social.showcase (bitmap_number, assets, updated_by) values (100, %s, %s);"
+                    "insert into social.holdings (address, asset, amount) values (%s, 'dog', 5);"
+                    "insert into social.pet_care (address, asset, affection) values (%s, 'dog', 270), (%s, 'cat', 9999);",
+                    (["dog", "cat"], ALICE.address, ALICE.address, ALICE.address, ALICE.address),
+                )
+                self.assertEqual(pets.care_points(cur, 0, 2000), {100: pets.level(270) - 1})
+            self.assertEqual(self.client.get("/v1/districts/100").json()["prosperity"]["parts"]["pets"], 3)
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.holdings;")
+                self.assertEqual(pets.care_points(cur, 0, 2000), {})
+        finally:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "delete from social.worn_badges; delete from social.badges where address in (%s, %s); delete from social.showcase; "
+                    "delete from social.holdings; delete from social.pet_care;",
+                    (frank.address, ALICE.address),
+                )
+
+    def test_pet_pats(self):
+        from api import pets
+
+        gina = Wallet(12)
+        self.tokens[gina.address] = self.login(gina)
+        pat = lambda w, a, asset="dog": self.client.post(f"/v1/people/{a}/pets/{asset}/pat", headers=self.h(w))
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("insert into social.holdings (address, asset, amount) values (%s, 'dog', 5), (%s, 'frog', 1);", (BOB.address, BOB.address))
+            # A pet nobody can see can't be patted; nor your own.
+            self.assertEqual(pat(gina, BOB.address).status_code, 404)
+            self.client.put("/v1/me/pets/dog", json={"public": True}, headers=self.h(BOB))
+            self.assertEqual(pat(BOB, BOB.address).status_code, 400)
+            self.assertEqual(pat(gina, BOB.address, "cat").status_code, 404)
+            # Once a day each; the owner hears about it and the pet gets a little affection.
+            dog = pat(gina, BOB.address).json()
+            self.assertEqual((dog["asset"], dog["pats"], dog["patted"]), ("dog", 1, True))
+            self.assertEqual(pat(gina, BOB.address).status_code, 409)
+            self.assertEqual(self.client.get("/v1/me/pets", headers=self.h(BOB)).json()["pets"][0]["affection"], pets.PAT_AFFECTION)
+            n = self.client.get("/v1/notifications", headers=self.h(BOB)).json()["notifications"][0]
+            self.assertEqual((n["kind"], n["actor"]), ("pat", gina.address))
+            page = {p["asset"]: p for p in self.client.get(f"/v1/people/{BOB.address}", headers=self.h(gina)).json()["pets"]}
+            self.assertEqual((page["dog"]["pats"], page["dog"]["patted"]), (1, True))
+            self.assertFalse(self.client.get(f"/v1/people/{BOB.address}", headers=self.h(CAROL)).json()["pets"][0]["patted"])
+            # Pats stop adding affection past PAT_CAP a day, though they still count.
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "insert into social.pet_pats (day, owner, asset, patter) select (now() at time zone 'utc')::date, %s, 'dog', 'x' || i from generate_series(1, 9) i;",
+                    (BOB.address,),
+                )
+            self.assertEqual(pat(CAROL, BOB.address).json()["pats"], 11)
+            self.assertEqual(self.client.get("/v1/me/pets", headers=self.h(BOB)).json()["pets"][0]["affection"], pets.PAT_AFFECTION)
+            # A pet shown on a district its owner holds can be patted there too.
+            with self.conn.cursor() as cur:
+                cur.execute("insert into social.holdings (address, asset, amount) values (%s, 'frog', 1);", (ALICE.address,))
+                cur.execute("insert into social.showcase (bitmap_number, assets, updated_by) values (100, %s, %s);", (["frog"], ALICE.address))
+            self.assertEqual(pat(gina, ALICE.address, "frog").status_code, 200)
+            shown = self.client.get("/v1/districts/100", headers=self.h(gina)).json()["pets"]
+            self.assertEqual([(p["asset"], p["pats"], p["patted"]) for p in shown], [("frog", 1, True)])
+        finally:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "delete from social.pet_pats; delete from social.pet_care; delete from social.holdings; delete from social.showcase; "
+                    "delete from social.notifications where kind = 'pat';"
+                )
 
     def test_seasons(self):
         from api import seasons
