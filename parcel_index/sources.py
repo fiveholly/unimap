@@ -79,6 +79,19 @@ class OrdServer:
         outpoint = info["satpoint"].rsplit(":", 1)[0]
         return outpoint, info.get("address"), info.get("value")
 
+    def satpoint(self, inscription_id):
+        """"txid:vout:offset" of the inscription's sat, or None."""
+        info = self._get(f"/inscription/{inscription_id}")
+        return info["satpoint"] if info else None
+
+    def output(self, outpoint):
+        """ord's view of an output: {"value", "inscriptions": [...], "runes", "spent", ...}, or None."""
+        return self._get(f"/output/{outpoint}")
+
+    def cardinal_outputs(self, address):
+        """Unspent outputs of address that hold no inscriptions or runes. Needs ord's --index-addresses."""
+        return self._get(f"/outputs/{address}?type=cardinal") or []
+
 
 class Bitcoind:
     def __init__(self, url, user, password):
@@ -112,6 +125,27 @@ class Bitcoind:
             if "txid" in vin
         ]
         return block["time"], spent
+
+    def txout(self, outpoint):
+        """(value in sats, scriptPubKey bytes) of an unspent output, counting the mempool; None once spent."""
+        txid, vout = outpoint.rsplit(":", 1)
+        out = _call(self.url, "gettxout", [txid, int(vout), True], self.auth)
+        if not out:
+            return None
+        return round(out["value"] * 100_000_000), bytes.fromhex(out["scriptPubKey"]["hex"])
+
+    def fee_rate(self, blocks=3):
+        """Estimated sats per vbyte to confirm within blocks, or None without enough data."""
+        est = _call(self.url, "estimatesmartfee", [blocks], self.auth) or {}
+        return est["feerate"] * 100_000 if est.get("feerate") else None
+
+    def test_accept(self, raw_hex):
+        """(allowed, reject reason) for a signed transaction."""
+        r = _call(self.url, "testmempoolaccept", [[raw_hex]], self.auth)[0]
+        return bool(r.get("allowed")), r.get("reject-reason")
+
+    def send(self, raw_hex):
+        return _call(self.url, "sendrawtransaction", [raw_hex], self.auth)
 
     def tx_values(self, block_hash):
         """Total output value in sats of each transaction, in block order."""
