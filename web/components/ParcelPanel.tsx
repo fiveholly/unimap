@@ -10,7 +10,7 @@ import { btc } from "@/lib/format";
 import { t } from "@/lib/i18n";
 import { PETS, type Pet, type PetKey } from "@/lib/pets";
 
-type Role = "owner" | "resident" | "visitor";
+type Role = "owner" | "resident" | "tenant" | "visitor";
 
 /** What you can do with the parcel you clicked on the district's map. */
 export function ParcelPanel({
@@ -101,6 +101,8 @@ export function ParcelPanel({
             </div>
           ) : !token ? (
             <p className="muted small">{t("连接钱包后，可以申请入住或关注这个街区。")}</p>
+          ) : role === "tenant" ? (
+            <p className="muted small">{t("你是这里的暂住居民。想要这块地，可以跟街区主人说，由主人铭刻后转给你。")}</p>
           ) : recruit ? (
             recruit.applied ? (
               <p className="muted small">{t("你已经申请入住，等街区主人联系你。")}</p>

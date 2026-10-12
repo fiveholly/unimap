@@ -286,6 +286,44 @@ class SocialApi(unittest.TestCase):
         self.assertEqual(self.client.delete(f"/v1/districts/{DISTRICT}/recruit", headers=self.h(ALICE)).status_code, 200)
         self.assertIsNone(self.client.get(f"/v1/districts/{DISTRICT}").json()["recruit"])
 
+    def test_tenants(self):
+        self.client.put(f"/v1/districts/{DISTRICT}/recruit", json={"message": "找邻居"}, headers=self.h(ALICE))
+        let = lambda who, w=ALICE: self.client.post(f"/v1/districts/{DISTRICT}/tenants", json={"address": who.address}, headers=self.h(w))
+        try:
+            self.assertEqual(let(CAROL).status_code, 404)  # hasn't applied
+            self.client.put(f"/v1/districts/{DISTRICT}/application", json={"note": "让我住吧"}, headers=self.h(CAROL))
+            self.assertEqual(let(CAROL, BOB).status_code, 403)  # only the owner
+            self.assertEqual(self.post(CAROL, "还不能发").status_code, 403)
+            r = let(CAROL)
+            self.assertEqual(r.status_code, 201, r.text)
+            self.assertEqual([t["address"] for t in r.json()["tenants"]], [CAROL.address])
+            self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}/applications", headers=self.h(ALICE)).json()["applications"], [])
+            page = self.client.get(f"/v1/districts/{DISTRICT}", headers=self.h(CAROL)).json()
+            self.assertEqual((page["viewer"]["role"], page["viewer"]["parcel"]), ("tenant", None))
+            mine = self.post(CAROL, "我搬进来了")
+            self.assertEqual(mine.status_code, 201, mine.text)
+            self.assertEqual(mine.json()["author"]["role"], "tenant")
+            told = self.client.get("/v1/notifications", headers=self.h(CAROL)).json()["notifications"]
+            self.assertIn(("tenant", ALICE.address, DISTRICT), [(n["kind"], n["actor"], n["bitmap_number"]) for n in told])
+            self.assertEqual(self.client.put(f"/v1/districts/{DISTRICT}/application", json={}, headers=self.h(CAROL)).status_code, 400)
+            # The stay ends when the district changes hands.
+            with self.conn.cursor() as cur:
+                cur.execute("update inscription_owners set address = 'bcrt1qbuyer' where inscription_id = 'd100i0';")
+            try:
+                self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}/tenants").json()["tenants"], [])
+                self.assertEqual(self.post(CAROL, "还在吗").status_code, 403)
+            finally:
+                with self.conn.cursor() as cur:
+                    cur.execute("update inscription_owners set address = %s where inscription_id = 'd100i0';", (ALICE.address,))
+            self.assertEqual(self.client.delete(f"/v1/districts/{DISTRICT}/tenants/{CAROL.address}", headers=self.h(BOB)).status_code, 403)
+            gone = self.client.delete(f"/v1/districts/{DISTRICT}/tenants/{CAROL.address}", headers=self.h(CAROL))
+            self.assertEqual(gone.json()["tenants"], [])
+            self.assertEqual(self.post(CAROL, "走了").status_code, 403)
+        finally:
+            self.client.delete(f"/v1/districts/{DISTRICT}/recruit", headers=self.h(ALICE))
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.tenants; delete from social.posts where author_address = %s; delete from social.notifications where kind = 'tenant';", (CAROL.address,))
+
     def test_polls(self):
         new = lambda w, **kw: self.client.post(f"/v1/districts/{DISTRICT}/polls", json={"question": "修个广场？", "options": ["好", "不好"], **kw}, headers=self.h(w))
         self.assertEqual(new(BOB).status_code, 403)

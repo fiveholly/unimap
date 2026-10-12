@@ -3,7 +3,7 @@
 // here from deterministic fake data; what the visitor does (posts, likes, follows, profile
 // edits) is kept in localStorage, and "重置演示数据" clears it.
 
-import type { MarketOffer, OfferQuote, Agent, AgentDraft, AgentGrant, AgentInfo, AgentTask, AgentView, Application, Badge, CaredPet, Contest, MarketListing, ContestMetric, District, DistrictGame, Draw, Game, Season, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Metrics, ShopBought, ShopItem, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
+import type { MarketOffer, OfferQuote, Agent, AgentDraft, AgentGrant, AgentInfo, AgentTask, AgentView, Application, Tenant, Badge, CaredPet, Contest, MarketListing, ContestMetric, District, DistrictGame, Draw, Game, Season, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Metrics, ShopBought, ShopItem, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
 import { CLAIM_BLOCKS, pick, rarityOf, ROUND, roundOf, SEASON, seasonOf, sha256, type Rarity } from "./game";
 import { connected } from "./parks";
 import { MAX_SHOWN, PET_KEYS, PETS, type Pet, type PetKey } from "./pets";
@@ -138,6 +138,7 @@ type State = {
   styles?: Record<number, DistrictStyle>;
   recruits?: Record<number, { message: string; parcels: number[]; updated_at: string; by: string }>;
   applications?: Record<number, Application[]>;
+  tenants?: Record<number, Tenant[]>; // 暂住居民 (api/tenants.py)
   polls?: DemoPoll[];
   parks?: { id: number; name: string; owner: string; members: number[] }[];
   showcase?: Record<number, PetKey[]>; // what the visitor chose to show on their districts
@@ -182,8 +183,15 @@ function seedExtras(s: State) {
     840002: { message: "减半旁边的街区，欢迎新邻居。地块不多，先到先得。", parcels: [3, 8, 12], updated_at: iso(0.5), by: ownerOf(840002)! },
     839998: { message: "CBD 招商：想在手续费最高的那几天留个名字的，来这里。", parcels: [1, 2], updated_at: iso(1.2), by: ownerOf(839998)! },
     839941: { message: "矿工新村招居民，园区里七个街区隔着马路一起热闹。", parcels: [4, 9], updated_at: iso(2), by: SEED_PARK.owner },
+    840008: { message: "找几个常来聊天的邻居，先暂住，熟了再给地块。", parcels: [], updated_at: iso(0.8), by: DEMO_ADDRESS },
   };
-  s.applications ??= {};
+  // Two people waiting on the visitor's own notice, so "let them stay" can be tried.
+  s.applications ??= {
+    840008: [
+      { address: fakeAddress(4101), note: "每天都来巡城，想在这儿发帖", created_at: iso(0.6) },
+      { address: fakeAddress(4102), note: "", created_at: iso(0.2) },
+    ],
+  };
   s.polls ??= [
     { id: 1, n: 840001, question: "街区要不要在 coinbase 那块地上修一个广场？", options: ["修广场", "保持原样", "改成公园"], by: ownerOf(840001)!,
       created_at: iso(1), closes_at: iso(-6), closed_at: null, votes: { a: 0, b: 0, c: 2, d: 0, e: 1 } },
@@ -880,6 +888,7 @@ function events(n: number): LandEvent[] {
 function roleOf(address: string | null, n: number): [Role, number | null] {
   if (address && ownerOf(n) === address) return ["owner", null];
   if (address === DEMO_ADDRESS && n === OWN_PARCEL.bitmap_number) return ["resident", OWN_PARCEL.tx_index];
+  if (address && load().tenants?.[n]?.some((x) => x.address === address)) return ["tenant", null];
   return ["visitor", null];
 }
 function profile(n: number): District["profile"] {
@@ -1226,9 +1235,37 @@ function route(path: string, opts: Opts): unknown {
       if (!recruitAt(n, a)) fail(404, "这个街区没有在招募");
       if (roleOf(a, n)[0] !== "visitor") fail(400, "你已经住在这里了");
       s.applications![n] = [...list.filter((x) => x.address !== a), { address: a, note: String(body.note ?? "").trim(), created_at: new Date().toISOString() }];
+      // The demo's made-up owners say yes at once, so the visitor sees what being a tenant is like.
+      const o = ownerOf(n);
+      if (o && o !== a) {
+        s.applications![n] = s.applications![n].filter((x) => x.address !== a);
+        s.tenants = { ...s.tenants, [n]: [{ address: a, since: new Date().toISOString() }, ...(s.tenants?.[n] ?? [])] };
+        const ids = (s.notifications ?? []).map((x) => x.id);
+        s.notifications = [{ id: Math.max(0, ...ids) + 1, kind: "tenant", actor: o, bitmap_number: n, post_id: null, created_at: new Date().toISOString(), read: false, snippet: null }, ...(s.notifications ?? [])];
+      }
     }
     save();
     return { ok: true };
+  }
+  if ((m = p.match(/^\/v1\/districts\/(\d+)\/tenants(?:\/([^/]+))?$/))) {
+    const n = +m[1], max = 20;
+    const list = () => ({ tenants: s.tenants?.[n] ?? [], max });
+    if (method === "GET") return list();
+    const a = needMe();
+    if (method === "DELETE") {
+      const who = decodeURIComponent(m[2] ?? "");
+      if (who !== a) owns(n);
+      s.tenants = { ...s.tenants, [n]: (s.tenants?.[n] ?? []).filter((x) => x.address !== who) };
+    } else {
+      owns(n);
+      const who = String(body.address ?? "");
+      if (!(s.applications![n] ?? []).some((x) => x.address === who)) fail(404, "they haven't applied here");
+      if ((s.tenants?.[n] ?? []).length >= max) fail(409, `at most ${max} tenants a district`);
+      s.applications![n] = s.applications![n].filter((x) => x.address !== who);
+      s.tenants = { ...s.tenants, [n]: [{ address: who, since: new Date().toISOString() }, ...(s.tenants?.[n] ?? [])] };
+    }
+    save();
+    return list();
   }
   if ((m = p.match(/^\/v1\/districts\/(\d+)\/polls$/))) {
     const n = +m[1];

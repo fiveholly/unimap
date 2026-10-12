@@ -243,6 +243,18 @@ function DistrictView() {
             )}
             {land.claimed && district.owner && viewer && viewer.address !== district.owner && <OfferButton n={n} label={t("出价买下")} />}
             {viewer && <RoleBadge role={viewer.role} parcel={viewer.parcel} />}
+            {viewer?.role === "tenant" && (
+              <button
+                type="button"
+                className="link-btn small"
+                onClick={() =>
+                  confirm(t("搬出这个街区？之后就不能在这里发帖了，想回来要重新申请。")) &&
+                  api(`/v1/districts/${n}/tenants/${encodeURIComponent(viewer.address)}`, { method: "DELETE", token }).then(() => loadDistrict(), () => {})
+                }
+              >
+                {t("搬走")}
+              </button>
+            )}
             {viewer?.muted && <span className="badge muted-badge">{t("你在这里被禁言了")}</span>}
           </div>
           {tipNote && <p className="muted small">{tipNote}</p>}
@@ -459,7 +471,7 @@ function DistrictView() {
               )}
               {token && viewer?.role === "visitor" && (
                 <p className="muted small hint">
-                  {district.profile.visitor_comments_on ? t("访客可以回复帖子。持有这里的地块后就能发帖。") : t("街区主人关闭了访客回复。")}
+                  {district.profile.visitor_comments_on ? t("访客可以回复帖子。申请入住、主人同意后就能发帖。") : t("街区主人关闭了访客回复。")}
                 </p>
               )}
               {district.pinned_post && (

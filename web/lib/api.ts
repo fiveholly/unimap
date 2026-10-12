@@ -142,7 +142,7 @@ export type LandEvent = {
   to_address: string | null;
 };
 
-export type Role = "owner" | "resident" | "visitor";
+export type Role = "owner" | "resident" | "tenant" | "visitor"; // tenant: 暂住居民, let in by the owner (api/tenants.py)
 
 export type Post = {
   id: number;
@@ -213,6 +213,7 @@ export type Recruiting = {
 /** A parcel for sale city-wide, with what its district is like. */
 export type ParcelForSale = MarketListing & { level: number; residents: number; recruiting: boolean; zone: string | null };
 export type Application = { address: string; note: string; created_at: string };
+export type Tenant = { address: string; since: string };
 export type Poll = {
   id: number;
   bitmap_number: number;
@@ -301,7 +302,7 @@ export type FeedItem = { type: "post"; time: number; post: Post } | { type: "eve
 /** The owner's view of what their wallet holds and what the district shows. */
 export type Showcase = { chosen: PetKey[]; held: Pet[]; wallets?: number; checked_at: string | null; error: string | null; shown: Pet[] };
 
-export type NotificationKind = "reply" | "like" | "post" | "follow" | "apply" | "tip" | "treasure" | "lucky" | "crown" | "event_win" | "sold" | "offer" | "offer_accepted" | "agent_draft" | "agent_posted" | "agent_alert" | "shop_sold" | "pat";
+export type NotificationKind = "reply" | "like" | "post" | "follow" | "apply" | "tip" | "treasure" | "lucky" | "crown" | "event_win" | "sold" | "offer" | "offer_accepted" | "agent_draft" | "agent_posted" | "agent_alert" | "shop_sold" | "pat" | "tenant";
 export type Notification = {
   id: number;
   kind: NotificationKind;

@@ -150,6 +150,8 @@ function sentence(item: Item): [React.ReactNode, string] {
           : tn("你的街区 agent 发现 {place} 在售，价格在你设的范围内", { place }),
         `/district/${n.bitmap_number}`,
       ];
+    case "tenant":
+      return [tn("{who} 同意你暂住在 {place}，现在可以在那里发帖和投票了", { who, place }), `/district/${n.bitmap_number}`];
     case "pat":
       return [tn("{who} 来摸了摸你的宠物", { who }), "/me"];
     case "lucky":
