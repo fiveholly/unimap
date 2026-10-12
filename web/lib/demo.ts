@@ -1157,7 +1157,7 @@ function route(path: string, opts: Opts): unknown {
   if (p === "/v1/me/wallets/nonce") {
     needMe();
     if (body.address === DEMO_ADDRESS || s.linked?.includes(String(body.address))) fail(409, "already in your wallets");
-    return { nonce: "demo", message: `Link this wallet on unimap\naddress: ${body.address}\nto: ${DEMO_ADDRESS}` };
+    return { nonce: "demo", message: `${location.host} wants you to link this wallet on unimap\naddress: ${body.address}\nto: ${DEMO_ADDRESS}\nURI: ${location.origin}\nNetwork: demo` };
   }
   if ((m = p.match(/^\/v1\/me\/wallets\/(\w+)$/)) && method === "DELETE") {
     needMe();
