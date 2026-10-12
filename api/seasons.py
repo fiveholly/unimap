@@ -88,7 +88,7 @@ def scores(cur, since, until):
     )
     add(cur.fetchall(), "checkins")
     cur.execute(
-        "select bitmap_number, count(distinct tipper) from social.tips where status = 'settled' "
+        "select bitmap_number, count(distinct tipper) from social.tips where status = 'settled' and event_id is null "
         "and settled_at >= %s and settled_at < %s group by 1;",
         (since, until),
     )
