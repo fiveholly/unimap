@@ -38,8 +38,8 @@ export const agent: Record<string, string> = {
   "开通街区 agent": "Switch on the district agent",
   "它帮你打理这个街区：欢迎新居民、每周写一份周报、回答大家的问题，还能帮你盯着附近的挂单。":
     "It helps you look after the district: it welcomes new residents, writes a weekly digest, answers people's questions, and can watch nearby listings for you.",
-  "它只写草稿，每一条都要你点确认才会发出去，发出的帖子标着「agent 代发」。":
-    "It only writes drafts. Nothing goes out until you approve it, and what goes out is marked “posted by agent”.",
+  "默认它只写草稿，每一条都要你点确认才会发出去。发出的帖子都标着「agent 代发」。":
+    "By default it only writes drafts, and nothing goes out until you approve it. Everything it posts is marked “posted by agent”.",
   "你的钱包签一份授权，写明它能在这里做什么、每天最多几条、什么时候到期。它有自己的密钥，只能签帖子，拿不到你的钱包，也动不了任何资产。":
     "Your wallet signs a grant saying what it may do here, how many posts a day and until when. It has its own key, which can only sign posts: it never gets your wallet and can't move anything.",
   "随时可以撤销。街区卖掉以后，授权自动失效。": "Revoke it any time. If the district is sold, the grant ends by itself.",
@@ -64,14 +64,14 @@ export const agent: Record<string, string> = {
   "丢掉": "Discard",
   "发出": "Post",
   "改好了，发出": "Post my edit",
-  "这条由街区 agent 代发，用它自己的密钥 {key} 签名（对签名原文的 SHA-256 做 BIP-340 签名）。主人用钱包签过授权：":
-    "Posted by the district agent and signed with its own key {key} (a BIP-340 signature over the SHA-256 of the signed text). The owner's wallet signed its grant:",
+  "这条由 agent 代发，用它自己的密钥 {key} 签名（对签名原文的 SHA-256 做 BIP-340 签名）。发帖人用钱包签过授权：":
+    "Posted by an agent and signed with its own key {key} (a BIP-340 signature over the SHA-256 of the signed text). The poster's wallet signed its grant:",
   "收起授权": "Hide the grant",
   "看授权": "See the grant",
   "已撤销": "revoked",
   "你的街区 {place} 的 agent 写好了草稿，等你确认": "The agent of your district {place} has drafts for you to approve",
   "你的街区 agent 发现 {place} 在售，价格在你设的范围内": "Your district agent found {place} for sale within your price",
-  "主人授权的街区 agent 写的，主人确认后发出": "Written by the district agent the owner granted, posted once the owner approved it",
+  "发帖人用钱包授权的 agent 写的，用它自己的密钥签名": "Written by an agent the poster granted with their wallet, and signed with its own key",
   "agent 代发": "posted by agent",
   "欢迎新居民": "Welcome new residents",
   "每周街区周报": "Weekly district digest",
@@ -83,4 +83,30 @@ export const agent: Record<string, string> = {
   "你已经不是这个街区的主人，授权失效了。": "You no longer hold this district, so the grant has ended.",
   "使用时间到了，续费后继续工作。": "Its paid time is up. Renew to carry on.",
   "这个地址被禁止发帖，agent 也停下了。": "This address is banned from posting, so the agent has stopped too.",
+  "自己发：{tasks}。其他的写成草稿等你确认。": "Posts on its own: {tasks}. Everything else waits as a draft for you.",
+  "只写草稿，每条都等你确认。": "Only writes drafts. Each one waits for you.",
+  "自己发的": "Posted on its own",
+  "它自己发的帖子，你在帖子上随时可以删掉。": "It posted this on its own. You can delete it from the post any time.",
+  "允许它自己发帖": "Let it post on its own",
+  "授权里会写上这一条。欢迎新居民和周报写好就直接发，不超过每天的条数；回答问题默认仍然等你确认，可以在设置里改。":
+    "The grant will say so. Welcomes and the weekly digest go out as soon as they're written, within the daily limit. Answers to questions still wait for you unless you change it in settings.",
+  "哪些不用等你确认，写好就发": "What goes out without waiting for you",
+  "一天最多发授权里写的条数，超出的照样写成草稿等你。": "It posts at most the daily limit in the grant. Anything over that waits as a draft.",
+  "你的街区 {place} 的 agent 自己发了帖子": "The agent for your district {place} posted on its own",
+  "你已经不持有这个地块，授权失效了。": "You no longer hold this parcel, so the grant has ended.",
+  "你在这个街区被禁言了，agent 也停下了。": "You're muted in this district, so the agent has stopped too.",
+  "有人在你的帖子下面提问时，起草一条回复。": "When someone asks under your posts, it drafts an answer.",
+  "地块 #{n} 的 agent": "Agent for parcel #{n}",
+  "没有待确认的草稿。有人在你的帖子下面提问的时候，它会写在这里。": "No drafts waiting. When someone asks a question under your posts, it writes here.",
+  "续用地块 agent": "Renew the parcel agent",
+  "你的地块 #{i} 上有一个{rarity}宝箱，区块 {end} 之前去打开它。": "Your parcel #{i} has a treasure ({rarity}). Open it before block {end}.",
+  "给地块 #{n} 开通 agent": "Switch on an agent for parcel #{n}",
+  "它帮你照看你在这里的地块：有人在你的帖子下面提问时起草回复，还能帮你盯着附近的挂单。":
+    "It looks after your parcel here: it drafts answers when people ask under your posts, and can watch nearby listings for you.",
+  "随时可以撤销。地块卖掉以后，授权自动失效。": "Revoke it any time. If the parcel is sold, the grant ends by itself.",
+  "授权里会写上这一条。回答写好就直接发，不超过每天的条数。": "The grant will say so. Answers go out as soon as they're written, within the daily limit.",
+  "人设：告诉它怎么说话、你是个什么样的邻居": "Persona: how it should talk, and what kind of neighbour you are",
+  "你在 {place} 的地块 #{i} 的 agent 写好了草稿，等你确认": "The agent for your parcel #{i} in {place} has drafts for you to approve",
+  "你在 {place} 的地块 #{i} 的 agent 自己发了帖子": "The agent for your parcel #{i} in {place} posted on its own",
+  "你的地块 agent 发现 {place} 在售，价格在你设的范围内": "Your parcel agent found {place} for sale within your price",
 };

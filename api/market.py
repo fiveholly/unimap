@@ -41,7 +41,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import btc, game, notify, parks, wallets
+from api import btc, game, notify, parks, prosperity, recruit, wallets
 from api.auth import current_address, optional_address
 from api.db import cursor
 from api.land import _bitcoind
@@ -349,6 +349,44 @@ def market_listings(bitmap_number: int | None = None, limit: int = 50):
             {"n": bitmap_number, "limit": limit},
         )
         return {"listings": [_view(r) for r in cur.fetchall()]}
+
+
+@router.get("/v1/market/parcels")
+def parcels_for_sale(limit: int = 50):
+    """Parcels listed in unimap across the city, for someone looking for a place to live: districts that are
+    recruiting first, then the liveliest, then the cheapest. Whoever buys one is a resident there."""
+    if network() is None:
+        return {"parcels": []}
+    limit = max(1, min(limit, 200))
+    with cursor() as cur:
+        cur.execute(
+            f"select {LISTING_COLUMNS}, exists(select 1 {recruit.ACTIVE} where r.bitmap_number = m.bitmap_number) {LISTING_FROM} "
+            "where m.status = 'active' and o.outpoint = m.outpoint and m.tx_index is not null order by m.price_sats, m.id limit 200;"
+        )
+        rows = cur.fetchall()
+        numbers = list({r[2] for r in rows})
+        cur.execute("select block_height, zone from block_zones where block_height = any(%s);", (numbers,))
+        zones = dict(cur.fetchall())
+        districts = {}
+        for n in numbers:
+            levels, _ = parks.scored(cur, n, n)
+            parts = prosperity.parts_for(cur, n, n).get(n) or prosperity.empty_parts()
+            districts[n] = {"level": levels[n], "residents": parts["residents"], "zone": zones.get(n)}
+    out = [{**_view(r[:-1]), **districts[r[2]], "recruiting": r[-1]} for r in rows]
+    out.sort(key=lambda p: (not p["recruiting"], -p["level"], p["price_sats"]))
+    return {"parcels": out[:limit]}
+
+
+def parcels_listed(cur, bitmap_number):
+    """[{listing_id, tx_index, price_sats, seller}] of the district's parcels listed in unimap, cheapest first."""
+    if network() is None:
+        return []
+    cur.execute(
+        f"select m.id, m.tx_index, m.price_sats, m.seller {LISTING_FROM} where m.bitmap_number = %s and m.tx_index is not null "
+        "and m.status = 'active' and o.outpoint = m.outpoint order by m.price_sats, m.id;",
+        (bitmap_number,),
+    )
+    return [{"listing_id": i, "tx_index": x, "price_sats": p, "seller": who} for i, x, p, who in cur.fetchall()]
 
 
 @router.get("/v1/market/listings/{listing_id}")

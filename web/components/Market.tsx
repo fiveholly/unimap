@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { useSession } from "./Session";
-import { api, type MarketInfo, type MarketListing, type MarketOffer, type OfferQuote, type ParkMove, type ParkSale, type Quote } from "@/lib/api";
+import { api, type MarketInfo, type MarketListing, type MarketOffer, type OfferQuote, type ParcelListed, type ParkMove, type ParkSale, type Quote } from "@/lib/api";
 import { btc, short } from "@/lib/format";
 import { t } from "@/lib/i18n";
 import { walletById, type PsbtSigner } from "@/lib/wallets";
@@ -52,8 +52,8 @@ function TxLink({ txid, network }: { txid: string; network: string | null }) {
   );
 }
 
-/** The owner's side: list the district in unimap, or take a listing down. */
-export function SellCard({ n, token }: { n: number; token: string }) {
+/** The holder's side: list the district (or one of its parcels) in unimap, or take a listing down. */
+export function SellCard({ n, token, txIndex = null }: { n: number; token: string; txIndex?: number | null }) {
   const market = useMarket();
   const { address } = useSession();
   const [signer, signerError] = useSigner();
@@ -64,12 +64,12 @@ export function SellCard({ n, token }: { n: number; token: string }) {
   const [error, setError] = useState<string | null>(null);
   const load = () =>
     api<{ listings: MarketListing[] }>(`/v1/market/listings?bitmap_number=${n}`)
-      .then((r) => setMine(r.listings.find((l) => l.tx_index == null && l.park_id == null && l.seller === address) ?? null))
+      .then((r) => setMine(r.listings.find((l) => l.tx_index === txIndex && l.park_id == null && l.seller === address) ?? null))
       .catch(() => setMine(null));
   useEffect(() => {
     if (market?.open) load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [market?.open, n, address]);
+  }, [market?.open, n, txIndex, address]);
   if (!market?.open || mine === undefined) return null;
 
   const list = async () => {
@@ -83,10 +83,10 @@ export function SellCard({ n, token }: { n: number; token: string }) {
       const prep = await api<{ psbt: string; postage_sats: number }>("/v1/market/listings/prepare", {
         method: "POST",
         token,
-        body: { bitmap_number: n, price_sats: p, pay_to: acc.payment_address, public_key: acc.receive_public_key },
+        body: { bitmap_number: n, tx_index: txIndex, price_sats: p, pay_to: acc.payment_address, public_key: acc.receive_public_key },
       });
       const signed = await signer.sign(prep.psbt, [{ index: 0, address: address!, sighash: SINGLE_ACP }]);
-      await api("/v1/market/listings", { method: "POST", token, body: { psbt: signed, bitmap_number: n } });
+      await api("/v1/market/listings", { method: "POST", token, body: { psbt: signed, bitmap_number: n, tx_index: txIndex } });
       setOpen(false);
       await load();
     } catch (e) {
@@ -104,7 +104,7 @@ export function SellCard({ n, token }: { n: number; token: string }) {
   return (
     <div className="sell-card">
       <div className="row between">
-        <b>{t("在 unimap 出售")}</b>
+        <b>{txIndex == null ? t("在 unimap 出售") : t("出售地块 #{n}", { n: String(txIndex) })}</b>
         <NetworkTag network={market.network} />
       </div>
       {mine ? (
@@ -120,7 +120,11 @@ export function SellCard({ n, token }: { n: number; token: string }) {
         </>
       ) : !open ? (
         <>
-          <p className="muted small">{t("挂在 unimap，买家看得到这条街的居民和帖子，在这里就能买。钱和铭文都不经过 unimap。")}</p>
+          <p className="muted small">
+            {txIndex == null
+              ? t("挂在 unimap，买家看得到这条街的居民和帖子，在这里就能买。钱和铭文都不经过 unimap。")
+              : t("挂在 unimap，想搬进这条街的人在招募页和这里都看得到，买下就成了这里的居民。钱和铭文都不经过 unimap。")}
+          </p>
           <div className="row end">
             <button type="button" className="sm" onClick={() => setOpen(true)}>
               {t("挂单出售")}
@@ -622,6 +626,29 @@ export function ParkSaleCard({ parkId, owner }: { parkId: number; owner: string 
         </>
       )}
       {error && <p className="error small">{error}</p>}
+    </div>
+  );
+}
+
+/** 地块交易: a district's parcels listed in unimap, each a way to move in by buying it. */
+export function ParcelsOnSale({ items, intro, onPick }: { items: ParcelListed[]; intro: string; onPick: (i: number) => void }) {
+  const { address } = useSession();
+  const rows = items.filter((l) => l.seller !== address);
+  if (rows.length === 0) return null;
+  return (
+    <div className="recruit-sale">
+      <span className="small">{intro}</span>
+      {rows.slice(0, 5).map((l) => (
+        <div key={l.listing_id} className="row between small">
+          <button type="button" className="link-btn mono" onClick={() => onPick(l.tx_index)}>
+            {t("地块 #{n}", { n: l.tx_index })}
+          </button>
+          <span className="row">
+            <b className="mono sale-price">{btc(l.price_sats)}</b>
+            <BuyButton listingId={l.listing_id} price={l.price_sats} label={t("买下入住")} doneText={t("交易已发出。确认后这块地就是你的了，你也就成了这里的居民。")} />
+          </span>
+        </div>
+      ))}
     </div>
   );
 }
