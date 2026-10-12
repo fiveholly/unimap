@@ -8,6 +8,7 @@ district that goes quiet falls back. Landmarks are always at the top level.
 import math
 import time
 
+from api import game, pets
 from parcel_index.zones import LANDMARKS
 
 WEIGHTS = {
@@ -18,6 +19,8 @@ WEIGHTS = {
     "checkins30": 1,
     "neighbors30": 0.3,
     "tippers30": 2,
+    "lucky": 30,  # 1 while it is the lucky district (api/game.py)
+    "pets": 1,  # levels above 1 of the pets its owner shows here (api/pets.py care_points)
 }
 THRESHOLDS = (0, 25, 80, 200, 450)
 TOP = len(THRESHOLDS)
@@ -77,11 +80,15 @@ def parts_for(cur, lo, hi):
     # People who tipped sats here (confirmed), each counted once, so a district can't buy its level
     # with many small tips from one wallet.
     cur.execute(
-        "select bitmap_number, count(distinct tipper) from social.tips where status = 'settled' "
+        "select bitmap_number, count(distinct tipper) from social.tips where status = 'settled' and event_id is null "
         "and settled_at > now() - make_interval(days => %s) and bitmap_number between %s and %s group by 1;",
         (WINDOW_DAYS, lo, hi),
     )
     add(cur.fetchall(), "tippers30")
+    add(pets.care_points(cur, lo, hi).items(), "pets")
+    lucky, _ = game.lucky_now(cur)
+    if lucky is not None:
+        add([(lucky, 1)], "lucky")
     cur.execute(
         "select bitmap_number, count(*) filter (where reply_to is null), count(*) filter (where reply_to is not null) "
         "from social.posts where removed_at is null and created_at > now() - make_interval(days => %s) "

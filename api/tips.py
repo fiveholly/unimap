@@ -20,7 +20,7 @@ import requests
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import notify, wallets
+from api import events, nostr, notify, wallets
 from api.auth import current_address
 from api.db import cursor
 
@@ -100,8 +100,9 @@ def invoice_msat(invoice):
     return amount // 10 if unit == "p" else amount * _UNIT[unit]
 
 
-def ask_invoice(lightning_address, amount_sats, comment):
-    """(invoice, verify url or None) for amount_sats from the address's wallet."""
+def ask_invoice(lightning_address, amount_sats, comment, zap=None):
+    """(invoice, verify url or None) for amount_sats from the address's wallet. zap: a NIP-57 zap
+    request as JSON, for a wallet that takes them."""
     p = pay_request(lightning_address)
     msat = amount_sats * 1000
     if not (int(p.get("minSendable", 1)) <= msat <= int(p.get("maxSendable", msat))):
@@ -112,6 +113,8 @@ def ask_invoice(lightning_address, amount_sats, comment):
     allowed = int(p.get("commentAllowed") or 0)
     if comment and allowed:
         params["comment"] = comment[:allowed]
+    if zap:
+        params["nostr"] = zap
     callback = p["callback"]
     js = _get(callback + ("&" if "?" in callback else "?") + urlencode(params))
     invoice = js.get("pr")
@@ -184,12 +187,23 @@ def clear_lightning(address: str = Depends(current_address)):
 class TipBody(BaseModel):
     post_id: int | None = None
     bitmap_number: int | None = None  # with no post: a tip to the district's owner
+    event_id: int | None = None  # with place: the host paying a prize of a 街区活动 (api/events.py)
+    place: int | None = None
     amount_sats: int = Field(ge=MIN_SATS, le=MAX_SATS)
     comment: str = Field(default="", max_length=MAX_COMMENT)
+    zap_request: dict | None = None  # NIP-57, signed by the tipper's Nostr extension (api/nostr.py)
 
 
-def _target(cur, req):
+def takes_zaps(p):
+    """True if a Lightning address's pay request accepts NIP-57 zap requests."""
+    return bool(p.get("allowsNostr")) and isinstance(p.get("nostrPubkey"), str) and bool(nostr.HEX64.match(p["nostrPubkey"]))
+
+
+def _target(cur, req, tipper):
     """(recipient, bitmap_number, post_id) for a tip."""
+    if req.event_id is not None:
+        recipient, n = events.prize_target(cur, req.event_id, req.place or 0, tipper, req.amount_sats)
+        return recipient, n, None
     if req.post_id is not None:
         cur.execute("select author_address, bitmap_number from social.posts where id = %s and removed_at is null;",
                     (req.post_id,))
@@ -214,7 +228,7 @@ def _target(cur, req):
 def create_tip(req: TipBody, address: str = Depends(current_address)):
     """Ask the recipient's wallet for an invoice. Returns it with the tip's id to check on."""
     with cursor() as cur:
-        recipient, n, post_id = _target(cur, req)
+        recipient, n, post_id = _target(cur, req, address)
         if wallets.main_of(cur, recipient) == wallets.main_of(cur, address):
             raise HTTPException(400, "you can't tip yourself")
         to = lightning_of(cur, recipient)
@@ -226,20 +240,51 @@ def create_tip(req: TipBody, address: str = Depends(current_address)):
         )
         if cur.fetchone()[0] >= TIPS_PER_10_MINUTES:
             raise HTTPException(429, "too many tips at once, try again in a few minutes")
+        zap = None
+        if req.zap_request is not None and req.event_id is None:
+            zap = nostr.zap_request(req.zap_request, nostr.of(cur, recipient), req.amount_sats * 1000, _note_of(cur, post_id))
     comment = req.comment.strip()
     try:
-        invoice, verify = lnurl.ask_invoice(to, req.amount_sats, comment)
+        invoice, verify = lnurl.ask_invoice(to, req.amount_sats, comment, **({"zap": zap} if zap else {}))
     except LnurlError as e:
         raise HTTPException(502, str(e)) from e
     with cursor() as cur:
         cur.execute(
-            "insert into social.tips (tipper, recipient, bitmap_number, post_id, amount_sats, comment, invoice, verify_url) "
-            "values (%s, %s, %s, %s, %s, %s, %s, %s) returning id;",
-            (address, recipient, n, post_id, req.amount_sats, comment, invoice, verify),
+            "insert into social.tips (tipper, recipient, bitmap_number, post_id, amount_sats, comment, invoice, verify_url, "
+            "event_id, event_place, zap) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) returning id;",
+            (address, recipient, n, post_id, req.amount_sats, comment, invoice, verify, req.event_id,
+             req.place if req.event_id is not None else None, zap is not None),
         )
         tip_id = cur.fetchone()[0]
     return {"id": tip_id, "invoice": invoice, "amount_sats": req.amount_sats, "verifiable": verify is not None,
-            "status": "pending"}
+            "status": "pending", "zap": zap is not None}
+
+
+def _note_of(cur, post_id):
+    if post_id is None:
+        return None
+    cur.execute("select nostr_event_id from social.posts where id = %s;", (post_id,))
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+@router.get("/v1/tips/zap")
+def zap_target(post_id: int | None = None, bitmap_number: int | None = None, address: str = Depends(current_address)):
+    """What a tipper's Nostr extension signs to send this tip as a zap: the recipient's key and,
+    for a post that is on Nostr too, its note. {"zap": null} when the recipient can't take zaps."""
+    with cursor() as cur:
+        recipient, _, post_id = _target(cur, TipBody(post_id=post_id, bitmap_number=bitmap_number, amount_sats=MIN_SATS), address)
+        pubkey = nostr.of(cur, recipient)
+        to = lightning_of(cur, recipient)
+        note = _note_of(cur, post_id)
+    if pubkey is None or to is None:
+        return {"zap": None}
+    try:
+        if not takes_zaps(lnurl.pay_request(to)):
+            return {"zap": None}
+    except LnurlError:
+        return {"zap": None}
+    return {"zap": {"pubkey": pubkey, "event_id": note}}
 
 
 @router.get("/v1/tips/top")
@@ -263,7 +308,7 @@ def top(days: int = 7):
             posts = {r["id"]: _post(r) for r in cur.fetchall()}
         cur.execute(
             "select bitmap_number, sum(amount_sats) as sats, count(distinct tipper) as tippers from social.tips "
-            "where status = 'settled' and settled_at > now() - make_interval(days => %s) "
+            "where status = 'settled' and event_id is null and settled_at > now() - make_interval(days => %s) "
             "group by bitmap_number order by sum(amount_sats) desc, bitmap_number limit 20;",
             (days,),
         )
@@ -323,7 +368,7 @@ def district_tips(cur, n):
     """{sats30, tippers30} in confirmed tips on district n and its posts, last 30 days."""
     cur.execute(
         "select coalesce(sum(amount_sats), 0), count(distinct tipper) from social.tips "
-        "where status = 'settled' and bitmap_number = %s and settled_at > now() - interval '30 days';",
+        "where status = 'settled' and event_id is null and bitmap_number = %s and settled_at > now() - interval '30 days';",
         (n,),
     )
     sats, tippers = cur.fetchone()
