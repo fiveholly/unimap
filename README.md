@@ -48,4 +48,6 @@ TEST_PGURL=postgresql://.../unimap_test python3 -m unittest discover -s tests -t
 BITCOIND=... BITCOIN_CLI=... ORD=... OPI_ORD=... OPI_DIR=... PGURL=postgresql://... scripts/regtest/e2e.sh
 ```
 
+前端：在 `web/` 里跑 `npm run typecheck`、`npm test` 和 `npm run build`。每个 PR 和推到 main 的提交都会在 GitHub Actions 里自动跑上面的后端测试（带一个 Postgres）和这三项前端检查，见 `.github/workflows/test.yml`。端到端的 regtest 脚本要比特币节点和 ord，不在里面。
+
 `ORD` 是原版 ord 0.23.2（只用来在 regtest 上铭刻测试数据），`OPI_ORD` 是 `setup_opi.sh` 编译出的 OPI 版 ord。
