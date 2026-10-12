@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
 import { BadgeList, WornBadgeMark } from "@/components/Badge";
-import { PetFace } from "@/components/Pets";
+import { PatButton, PetFace } from "@/components/Pets";
 import { PostCard } from "@/components/PostCard";
 import { useSession } from "@/components/Session";
 import { ShareMenu } from "@/components/ShareMenu";
@@ -148,6 +148,7 @@ export default function AddressPage() {
                 <b className="small">{p.name || t(PETS[p.asset].name)}</b>
                 <span className="muted small">{PETS[p.asset].asset}</span>
                 <span className="muted small">{t("等级 {n}", { n: p.level })}</span>
+                <PatButton owner={person.address} pet={p} />
               </li>
             ))}
           </ul>

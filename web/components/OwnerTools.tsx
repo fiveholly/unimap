@@ -8,14 +8,14 @@ import { ShareMenu } from "@/components/ShareMenu";
 import { TileThumb } from "@/components/TileThumb";
 import { PetPicture } from "@/components/Pets";
 import { locale, t } from "@/lib/i18n";
-import { api, type Application, type District, type Land, type Showcase } from "@/lib/api";
+import { api, type Application, type District, type Land, type Showcase, type Tenant } from "@/lib/api";
 import { connected, reach } from "@/lib/parks";
 import { amountText, MAX_SHOWN, nextTier, PET_KEYS, PETS, type PetKey } from "@/lib/pets";
 import { parkText, recruitText } from "@/lib/share";
 import { COLORS, DECOS, MAX_DECOS, type DistrictStyle } from "@/lib/style";
 import type { Zone } from "@/lib/zones";
 
-type Section = "profile" | "look" | "pets" | "recruit" | "park";
+export type Section = "profile" | "look" | "pets" | "recruit" | "park";
 const SECTIONS = (): [Section, string][] => [
   ["profile", t("资料")],
   ["look", t("外观")],
@@ -35,6 +35,7 @@ export function OwnerTools({
   txCount,
   onDone,
   onUnpin,
+  initial = "profile",
 }: {
   n: number;
   district: District;
@@ -45,8 +46,10 @@ export function OwnerTools({
   txCount: number | null;
   onDone: () => Promise<unknown>;
   onUnpin: () => void;
+  initial?: Section;
 }) {
-  const [section, setSection] = useState<Section>("profile");
+  const [section, setSection] = useState<Section>(initial);
+  useEffect(() => setSection(initial), [initial]);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const save = async (path: string, method: string, body?: unknown) => {
@@ -188,6 +191,28 @@ function RecruitForm({
   const [message, setMessage] = useState(r?.message ?? t("欢迎新邻居！持有这里的地块就能在街区发帖。"));
   const [plots, setPlots] = useState((r?.parcels ?? []).join(", "));
   const [apps, setApps] = useState<Application[] | null>(null);
+  const [tenants, setTenants] = useState<{ tenants: Tenant[]; max: number } | null>(null);
+  const [tenantError, setTenantError] = useState<string | null>(null);
+  const loadApps = () =>
+    api<{ applications: Application[] }>(`/v1/districts/${n}/applications`, { token })
+      .then((x) => setApps(x.applications))
+      .catch(() => setApps([]));
+  useEffect(() => {
+    api<{ tenants: Tenant[]; max: number }>(`/v1/districts/${n}/tenants`).then(setTenants).catch(() => {});
+  }, [n]);
+  const tenancy = (method: "POST" | "DELETE", who: string) => {
+    setTenantError(null);
+    api<{ tenants: Tenant[]; max: number }>(method === "POST" ? `/v1/districts/${n}/tenants` : `/v1/districts/${n}/tenants/${encodeURIComponent(who)}`, {
+      method,
+      token,
+      body: method === "POST" ? { address: who } : undefined,
+    })
+      .then((x) => {
+        setTenants(x);
+        if (method === "POST") loadApps();
+      })
+      .catch((e) => setTenantError(e.message));
+  };
   const claimed = useMemo(() => new Set(land.parcels.map((p) => p.tx_index)), [land]);
   const free = useMemo(() => {
     const out: number[] = [];
@@ -201,9 +226,8 @@ function RecruitForm({
   const bad = parsed.some((i) => !Number.isInteger(i) || i < 0 || (txCount != null && i >= txCount) || claimed.has(i));
   useEffect(() => {
     if (!r) return setApps(null);
-    api<{ applications: Application[] }>(`/v1/districts/${n}/applications`, { token })
-      .then((x) => setApps(x.applications))
-      .catch(() => setApps([]));
+    loadApps();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [n, token, r]);
   return (
     <>
@@ -254,12 +278,35 @@ function RecruitForm({
                 </span>
                 <span className="grow">{a.note || <span className="dim">{t("没有留言")}</span>}</span>
                 <span className="dim small">{new Date(a.created_at).toLocaleDateString(locale())}</span>
+                <button type="button" className="ghost sm" onClick={() => tenancy("POST", a.address)}>
+                  {t("同意暂住")}
+                </button>
               </li>
             ))}
           </ul>
-          <p className="dim small">{t("选好人后，把地块铭刻成 {n}.bitmap 的子铭文转到对方地址，链上确认后对方就是居民了。", { n })}</p>
+          <p className="dim small">{t("同意暂住后，对方马上能在这里发帖和投票。要给对方正式的地块，把地块铭刻成 {n}.bitmap 的子铭文转到对方地址，链上确认后就是居民了。", { n })}</p>
         </div>
       )}
+      {!!tenants?.tenants.length && (
+        <div>
+          <h3 className="section-title">{t("暂住居民（{n}/{max}）", { n: tenants.tenants.length, max: tenants.max })}</h3>
+          <ul className="applications">
+            {tenants.tenants.map((x) => (
+              <li key={x.address}>
+                <Link className="mono grow" href={`/address/${x.address}`} title={x.address}>
+                  {short(x.address)}
+                </Link>
+                <span className="dim small">{t("{date} 起", { date: new Date(x.since).toLocaleDateString(locale()) })}</span>
+                <button type="button" className="link-btn small" onClick={() => confirm(t("请他搬走？他就不能在这里发帖了。")) && tenancy("DELETE", x.address)}>
+                  {t("请他搬走")}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <p className="dim small">{t("街区转手后，暂住就结束了。")}</p>
+        </div>
+      )}
+      {tenantError && <p className="error small">{tenantError}</p>}
     </>
   );
 }
