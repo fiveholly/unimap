@@ -4,10 +4,15 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
+import { Feed } from "@/components/Feed";
+import { PetCareSection } from "@/components/PetCare";
+import { Delivered } from "@/components/Shop";
 import { useSession } from "@/components/Session";
 import { Bolt } from "@/components/Tip";
+import { NostrIcon } from "@/components/Nostr";
 import { XIcon } from "@/components/X";
-import { api, ApiError, type LinkedWallet, type Me, type XAccount } from "@/lib/api";
+import { api, ApiError, type LinkedWallet, type Me, type ShopBought, type XAccount } from "@/lib/api";
+import { LINK_KIND, linkText, nostrExtension, now, profileUrl, shortNpub } from "@/lib/nostr";
 import { LINK_WALLETS, type Wallet } from "@/lib/wallets";
 import { t } from "@/lib/i18n";
 
@@ -46,8 +51,10 @@ export default function MePage() {
         </div>
       </section>
       {me.banned && <p className="notice small">{t("这个地址已被站点管理员禁止发帖。")}</p>}
+      <PetCareSection token={token} />
       <XSection token={token} />
       <LightningSection token={token} />
+      <NostrSection token={token} address={me.address} />
       {me.wallets && <WalletsSection token={token} initial={me.wallets} />}
       <Group title={t("街区")} count={me.districts.length} empty={t("这个地址没有持有街区。")}>
         {me.districts.map((n) => (
@@ -63,6 +70,7 @@ export default function MePage() {
           </Link>
         ))}
       </Group>
+      <BoughtSection token={token} />
       <Group title={t("关注#following")} count={me.follows.length} empty={t("还没有关注街区。")}>
         {me.follows.map((n) => (
           <Link key={n} className="chip mono" href={`/district/${n}`}>
@@ -70,6 +78,10 @@ export default function MePage() {
           </Link>
         ))}
       </Group>
+      <section className="me-group">
+        <h2 className="section-title">{t("关注的动态")}</h2>
+        <Feed token={token} />
+      </section>
     </div>
   );
 }
@@ -81,6 +93,37 @@ function Group({ title, count, empty, children }: { title: string; count: number
         {title} <span className="mono">{count}</span>
       </h2>
       {count === 0 ? <p className="muted">{empty}</p> : <div className="chips">{children}</div>}
+    </section>
+  );
+}
+
+/** What this address bought in shops, with what each one gave. Hidden until something was bought. */
+function BoughtSection({ token }: { token: string }) {
+  const [bought, setBought] = useState<ShopBought[]>([]);
+  useEffect(() => {
+    api<{ bought: ShopBought[] }>("/v1/me/shop", { token })
+      .then((r) => setBought(r.bought))
+      .catch(() => {});
+  }, [token]);
+  if (bought.length === 0) return null;
+  return (
+    <section className="me-group">
+      <h2 className="section-title">
+        {t("买到的东西")} <span className="mono">{bought.length}</span>
+      </h2>
+      <ul className="me-bought">
+        {bought.map((b) => (
+          <li key={b.order_id}>
+            <div className="row between small">
+              <b>{b.title}</b>
+              <Link className="mono" href={`/district/${b.bitmap_number}?tab=shop`}>
+                {b.bitmap_number}.bitmap
+              </Link>
+            </div>
+            <Delivered content={b.content} />
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }
@@ -148,6 +191,75 @@ function LightningSection({ token }: { token: string }) {
             )}
           </div>
         </>
+      )}
+      {error && <p className="error small">{error}</p>}
+    </section>
+  );
+}
+
+/** Nostr: link a key with the browser's Nostr extension, so posts can go to Nostr too and tips arrive as zaps. */
+function NostrSection({ token, address }: { token: string; address: string }) {
+  const [pubkey, setPubkey] = useState<string | null | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [hasExt, setHasExt] = useState(false);
+  useEffect(() => {
+    setHasExt(!!nostrExtension());
+    api<{ pubkey: string | null }>("/v1/me/nostr", { token })
+      .then((r) => setPubkey(r.pubkey))
+      .catch((e) => (e instanceof ApiError && e.status === 404 ? setPubkey(undefined) : setError(e.message)));
+  }, [token]);
+  if (pubkey === undefined) return error ? <p className="error small">{error}</p> : null;
+  const run = async (fn: () => Promise<{ pubkey: string | null }>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      setPubkey((await fn()).pubkey);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const link = () =>
+    run(async () => {
+      const ext = nostrExtension();
+      if (!ext) throw new Error(t("没有找到 Nostr 插件"));
+      const event = await ext.signEvent({ kind: LINK_KIND, created_at: now(), tags: [], content: linkText(address) });
+      return api("/v1/me/nostr", { method: "PUT", token, body: { event } });
+    });
+  const unlink = () => confirm(t("解除绑定后，新帖子不再同步到 Nostr，打赏也不再作为 zap 发出。")) && run(() => api("/v1/me/nostr", { method: "DELETE", token }));
+  return (
+    <section className="me-group nostr">
+      <h2 className="section-title">Nostr</h2>
+      {pubkey ? (
+        <div className="x-card">
+          <span className="x-avatar">
+            <NostrIcon size={22} />
+          </span>
+          <div className="grow">
+            <a className="mono break" href={profileUrl(pubkey)} target="_blank" rel="noopener noreferrer">
+              {shortNpub(pubkey)}
+            </a>
+            <span className="muted small">{t("发帖时可以勾选「同步到 Nostr」；别人打赏你时，也会作为 zap 出现在 Nostr 上。")}</span>
+          </div>
+          <button type="button" className="ghost sm" onClick={unlink} disabled={busy}>
+            {t("解除绑定")}
+          </button>
+        </div>
+      ) : (
+        <div className="x-card">
+          <p className="grow muted small">
+            {hasExt
+              ? t("Nostr 是比特币圈常用的开放社交网络。绑定后，你的帖子可以同时发到 Nostr，打赏也会变成 zap。签名都在你的 Nostr 插件里完成，unimap 拿不到你的私钥。")
+              : t("Nostr 是比特币圈常用的开放社交网络。要绑定，先在浏览器里装一个 Nostr 插件（比如 Alby 或 nos2x），再回到这里。")}
+          </p>
+          {hasExt && (
+            <button type="button" className="primary" onClick={link} disabled={busy}>
+              <NostrIcon /> {busy ? t("等待插件签名…") : t("绑定 Nostr")}
+            </button>
+          )}
+        </div>
       )}
       {error && <p className="error small">{error}</p>}
     </section>

@@ -1,5 +1,26 @@
 // English for 站内交易 (buying and selling in unimap with PSBTs): components/Market.tsx.
 export const market: Record<string, string> = {
+  "出价": "Offer",
+  "出价买下": "Make an offer",
+  "给 {what} 出价": "Make an offer for {what}",
+  "你出的价（聪）": "Your offer (sats)",
+  "有效期": "Good for",
+  "你的钱包会签好整笔买卖，只差持有人那一个签名：钱付到持有人现在的地址，铭文到你的地址。持有人点接受就成交，钱在那之前一直在你的钱包里。":
+    "Your wallet signs the whole sale except the holder's one signature: the sats go to the holder's current address, the inscription to yours. It goes through when the holder accepts; until then the sats stay in your wallet.",
+  "在 unimap 撤回后，unimap 不再把它交给持有人。想万无一失，就把这笔出价用到的币花掉，比如转给自己。":
+    "Once you withdraw it on unimap, unimap won't hand it to the holder any more. To be completely sure, spend the coins it uses, for example by sending them to yourself.",
+  "签名出价": "Sign the offer",
+  "出价已发给持有人。对方接受后交易会直接发出，你会收到通知。": "Your offer went to the holder. If they accept, the sale goes out straight away and you get a notification.",
+  "收到的出价": "Offers for you",
+  "成交了，交易已发出。": "Sold. The transaction is out.",
+  "{who} 出价，{date} 前有效": "from {who}, good until {date}",
+  "你的出价，{date} 前有效": "your offer, good until {date}",
+  "拒绝": "Decline",
+  "接受": "Accept",
+  "撤回": "Withdraw",
+  "接受 {price} 的出价？签名后交易会立刻发出，铭文会转给买家。": "Accept the offer of {price}? Once you sign, the sale goes out and the inscription goes to the buyer.",
+  "{who} 给你的 {place} 出了价，去看看": "{who} made an offer for your {place}. Take a look",
+  "{who} 接受了你对 {place} 的出价，交易已经发出": "{who} accepted your offer for {place}. The sale is out",
   "{wallet} 不能签交易，换 UniSat、Xverse 或 OKX 连接": "{wallet} can't sign transactions. Connect with UniSat, Xverse or OKX instead",
   "测试网 {net}": "Test network {net}",
   "价格至少 1,000 聪": "The price is at least 1,000 sats",
@@ -32,4 +53,38 @@ export const market: Record<string, string> = {
   "准备小额 UTXO": "Make the small outputs",
   "签名购买": "Sign and buy",
   "{who} 在 unimap 买下了你的 {place}，钱已经随交易付到你的地址": "{who} bought your {place} on unimap. The money was paid to your address in the same transaction",
+  // 园区打包卖
+  "整体在售": "Whole park for sale",
+  "{n} 个街区一起卖，一笔交易全部到手，园区跟着换主人": "{n} districts sold together, all in one transaction, and the park changes hands with them",
+  "整体买下": "Buy the whole park",
+  "交易已发出。打包确认后，整个园区就是你的了。": "The transaction is out. Once it confirms, the whole park is yours.",
+  "在 unimap 下架？你签过的挂单在铭文转走之前仍然有效，想彻底作废就把园区拆开，或者把铭文转到你自己的另一个地址。":
+    "Take it down on unimap? The listing you signed stays good until the inscriptions move. To void it for sure, split the park or send the inscriptions to another address of yours.",
+  "整个园区一起卖": "Sell the whole park",
+  "打包交易已发出。确认后（大约 10 分钟）就能整体挂单。": "The packing transaction is out. Once it confirms (about 10 minutes), you can list the park.",
+  "拆开的交易已发出。确认后每个街区又各在一个输出里，可以单独卖了。": "The split is out. Once it confirms, each district is in its own output again and can be sold on its own.",
+  "你把 {n} 个街区一起挂了 {price}。买家一笔交易全部买走，园区跟着换主人。": "You listed {n} districts together for {price}. A buyer takes them all in one transaction, and the park changes hands.",
+  "一笔交易卖掉整个园区，园区跟着换主人。先把 {n} 个街区放进同一个输出：这是一笔转给你自己的交易，铭文不离开你的地址，只花一点矿工费。":
+    "Sell the whole park in one transaction, and it changes hands with its districts. First put the {n} districts into one output: a transaction to yourself, so the inscriptions never leave your address. It costs only a small network fee.",
+  "打包": "Pack",
+  "{n} 个街区已经在同一个输出里，可以整体挂单了。想单独卖其中一个，就先拆开。": "The {n} districts are in one output, ready to list together. To sell one on its own, split them first.",
+  "拆开": "Split",
+  "整体挂单": "List the park",
+  "整个园区的价格（聪）": "Price for the whole park (sats)",
+  "和单个街区挂单一样，你的钱包签一个半成品交易：装着 {n} 个街区的这个输出，换一笔付到你地址的钱。只有付够钱的交易能用这个签名。":
+    "Just like listing one district, your wallet signs a half-made transaction: this output holding {n} districts, for a payment to your address. Only a transaction that pays in full can use the signature.",
+  // 地块交易
+  "出售地块 #{n}": "Sell parcel #{n}",
+  "挂在 unimap，想搬进这条街的人在招募页和这里都看得到，买下就成了这里的居民。钱和铭文都不经过 unimap。":
+    "List it on unimap. People looking to move onto this street see it here and on the recruiting page, and whoever buys it becomes a resident. Neither the money nor the inscription passes through unimap.",
+  "买下入住": "Buy and move in",
+  "交易已发出。确认后这块地就是你的了，你也就成了这里的居民。": "The transaction is out. Once it confirms, the parcel is yours and you're a resident here.",
+  "也可以直接买这里在售的地块，买下就是居民：": "Or buy a parcel here that's for sale and become a resident right away:",
+  "{n} 块地在售": "Parcels for sale: {n}",
+  "在售地块：买下就是居民": "Parcels for sale: buy one and move in",
+  "这些地块的持有人在 unimap 挂了单。买下后地块直接到你的地址，你就成了那条街的居民，不用等街区主人。在招募的街区排在前面。":
+    "Their holders listed these parcels on unimap. Buy one and it goes straight to your address, making you a resident of that street without waiting for the owner. Districts that are recruiting come first.",
+  "这些地块在 unimap 挂了单，买下就是这里的居民：": "These parcels are listed on unimap. Buy one to become a resident here:",
+  "{n} 位居民": "Residents: {n}",
+  "在招募": "Recruiting",
 };
