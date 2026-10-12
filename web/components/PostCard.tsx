@@ -3,12 +3,15 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
+import { AgentGrantNote } from "./Agent";
+import { WornBadgeMark } from "./Badge";
 import { Avatar } from "./Avatar";
 import { Composer } from "./Composer";
 import { ReportDialog } from "./Report";
 import { short, useSession } from "./Session";
 import { ShareMenu } from "./ShareMenu";
 import { TipButton } from "./Tip";
+import { NostrNoteLink } from "./Nostr";
 import { TweetEmbed, XHandle } from "./X";
 import { tweetsIn } from "@/lib/tweets";
 import { api, type Post } from "@/lib/api";
@@ -25,7 +28,7 @@ export type PostActions = {
 };
 
 export function roleLabel(role: string, parcel: number | null): string {
-  return role === "owner" ? t("街区主人") : role === "resident" ? t("居民 · 地块 #{n}", { n: String(parcel) }) : t("访客");
+  return role === "owner" ? t("街区主人") : role === "resident" ? t("居民 · 地块 #{n}", { n: String(parcel) }) : role === "tenant" ? t("暂住居民") : t("访客");
 }
 
 export function RoleBadge({ role, parcel }: { role: string; parcel: number | null }) {
@@ -128,8 +131,14 @@ export function PostCard({
               {name}
             </Link>
           )}
+          {a.badge && <WornBadgeMark badge={a.badge} />}
           {a.x && <XHandle username={a.x} />}
-          <span className={`badge ${a.role}`}>{a.role === "owner" ? t("街区主人") : a.role === "resident" ? t("居民#one") : t("访客")}</span>
+          <span className={`badge ${a.role}`}>{a.role === "owner" ? t("街区主人") : a.role === "resident" ? t("居民#one") : a.role === "tenant" ? t("暂住") : t("访客")}</span>
+          {post.agent && (
+            <span className="badge agent" title={t("发帖人用钱包授权的 agent 写的，用它自己的密钥签名")}>
+              {t("agent 代发")}
+            </span>
+          )}
           <button type="button" className="signed" onClick={() => setShowSig(!showSig)} aria-expanded={showSig} title={t("这条帖子由作者的比特币钱包签名，点击查看")}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
               <path d="M20 6 9 17l-5-5" />
@@ -189,10 +198,15 @@ export function PostCard({
             <TipButton target={{ post_id: post.id }} to={name} sats={post.tips_sats ?? 0} token={token} canTip={!!post.author.tippable} onError={setError} />
           )}
           {!post.removed && <ShareMenu path={`/post/${post.id}`} text={postText(post)} label="" className="act" align="left" />}
+          {post.nostr_event_id && <NostrNoteLink id={post.nostr_event_id} />}
         </div>
         {showSig && (
           <div className="sig">
-            <p className="muted small">{t("签名地址 {address}", { address: post.author.address })}</p>
+            {post.agent ? (
+              <AgentGrantNote grantId={post.agent.grant_id} agentKey={post.agent.key} />
+            ) : (
+              <p className="muted small">{t("签名地址 {address}", { address: post.author.address })}</p>
+            )}
             <pre className="message">{post.signed_message}</pre>
             <code className="small break">{post.signature}</code>
           </div>
