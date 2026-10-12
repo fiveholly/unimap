@@ -7,9 +7,22 @@ export const map: Record<string, string> = {
   "最新区块 {n}": "Latest block {n}",
   "连不上 unimap 服务：{error}": "Can't reach the unimap service: {error}",
   "地图加载中": "Loading map",
-  "我的动态": "My feed",
-  "连接钱包并关注街区后，这里会出现它们的帖子和地块变动。":
-    "Connect a wallet and follow some districts to see their posts and parcel changes here.",
+  "地图位置": "Where you are on the map",
+  "世界地图": "World map",
+  "每一次减半是一块大陆，大陆上每一小格是 64 个区块，越靠中间越早。点地图上任意一处，进入那里的城区。":
+    "Every halving is a continent. Each small square on it is 64 blocks, the oldest in the middle. Click anywhere on the map to go into the city there.",
+  "区块 {a} 起": "Blocks from {a}",
+  "区块 {a} – {b}": "Blocks {a} – {b}",
+  "还没出现": "Not yet",
+  "还在长": "Growing",
+  "关注的动态": "From districts you follow",
+
+  // World map (components/WorldMap.tsx)
+  "约 {y} 年出现": "Arrives around {y}",
+  "点击进入这里的城区": "Click to go into the city here",
+  "世界地图：每一次减半是一块大陆，一共 {n} 个区块。用右边的列表进入各个大陆。":
+    "World map: every halving is a continent, {n} blocks in all. Use the list beside it to go into each continent.",
+  "最热闹的街区": "Busiest districts",
   "加载中…": "Loading…",
   "关注一个街区，动态就会出现在这里。": "Follow a district and its updates will show up here.",
 

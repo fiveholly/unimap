@@ -5,7 +5,8 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
-import { BadgeList } from "@/components/Badge";
+import { BadgeList, WornBadgeMark } from "@/components/Badge";
+import { PatButton, PetFace } from "@/components/Pets";
 import { PostCard } from "@/components/PostCard";
 import { useSession } from "@/components/Session";
 import { ShareMenu } from "@/components/ShareMenu";
@@ -13,6 +14,7 @@ import { XHandle } from "@/components/X";
 import { api, type Person, type Post } from "@/lib/api";
 import { short } from "@/lib/format";
 import { locale, t } from "@/lib/i18n";
+import { PETS } from "@/lib/pets";
 import { LEVEL_NAMES, type Level } from "@/lib/prosperity";
 
 /** Someone's page: the land an address holds, its X account and what it posted. */
@@ -52,6 +54,7 @@ export default function AddressPage() {
     } catch {}
   };
   const who = person.x ? `@${person.x.username}` : short(person.address);
+  const worn = person.badges?.find((b) => b.worn);
   const since = person.first_post_at ? new Date(person.first_post_at).toLocaleDateString(locale()) : null;
 
   return (
@@ -59,7 +62,10 @@ export default function AddressPage() {
       <section className="me-head">
         <Avatar seed={person.address} size={56} />
         <div className="grow">
-          <h1>{person.x ? person.x.name : short(person.address)}</h1>
+          <h1>
+            {person.x ? person.x.name : short(person.address)}
+            {worn && <WornBadgeMark badge={worn} size={26} />}
+          </h1>
           <div className="person-ids">
             {person.x && <XHandle username={person.x.username} />}
             <button type="button" className="link-btn mono small break" onClick={copy} title={t("复制地址")}>
@@ -128,6 +134,24 @@ export default function AddressPage() {
               </Link>
             ))}
           </div>
+        </section>
+      )}
+      {!!person.pets?.length && (
+        <section className="me-group">
+          <h2 className="section-title">
+            {t("宠物")} <span className="mono">{person.pets.length}</span>
+          </h2>
+          <ul className="person-pets">
+            {person.pets.map((p) => (
+              <li key={p.asset}>
+                <PetFace asset={p.asset} tier={p.tier} face={p.face} size={72} />
+                <b className="small">{p.name || t(PETS[p.asset].name)}</b>
+                <span className="muted small">{PETS[p.asset].asset}</span>
+                <span className="muted small">{t("等级 {n}", { n: p.level })}</span>
+                <PatButton owner={person.address} pet={p} />
+              </li>
+            ))}
+          </ul>
         </section>
       )}
       {!!person.badges?.length && (

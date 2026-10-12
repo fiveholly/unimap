@@ -31,6 +31,7 @@ export function Composer({
   asOptions = [],
   onPosted,
   speakingAs,
+  draft,
 }: {
   district: number;
   replyTo?: number | null;
@@ -38,9 +39,14 @@ export function Composer({
   onPosted: (p: Post) => void;
   /** How the poster appears by default, e.g. "地块 #88" or "街区主人". */
   speakingAs?: string;
+  /** Text to put in the box, e.g. a starter post the owner picked; replaced each time it changes. */
+  draft?: string;
 }) {
   const { token, sign } = useSession();
   const [body, setBody] = useState("");
+  useEffect(() => {
+    if (draft) setBody(draft);
+  }, [draft]);
   const [media, setMedia] = useState("");
   const [showMedia, setShowMedia] = useState(false);
   const [asBitmap, setAsBitmap] = useState<number | null>(null);
