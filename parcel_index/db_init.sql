@@ -51,6 +51,8 @@ CREATE TABLE IF NOT EXISTS public.inscription_owners (
 );
 CREATE INDEX IF NOT EXISTS inscription_owners_outpoint_idx ON public.inscription_owners USING btree (outpoint);
 CREATE INDEX IF NOT EXISTS inscription_owners_address_idx ON public.inscription_owners USING btree (address);
+-- address prefix search (api/search.py): `like 'bc1p…%'` needs pattern ops under a non-C collation
+CREATE INDEX IF NOT EXISTS inscription_owners_address_prefix_idx ON public.inscription_owners USING btree (address text_pattern_ops);
 CREATE INDEX IF NOT EXISTS inscription_owners_created_height_idx ON public.inscription_owners USING btree (created_height);
 
 CREATE TABLE IF NOT EXISTS public.owner_block_hashes (

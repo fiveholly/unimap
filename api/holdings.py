@@ -1,7 +1,10 @@
 """Wallet holdings on the map (藏品): a district's owner can show some of what their wallet
-holds as pets living on the district, a dog for DOG•GO•TO•THE•MOON, a cat for a Quantum Cat.
+holds as pets living on the district: a dog for DOG•GO•TO•THE•MOON, a cat for a Quantum Cat,
+a puppet for a Bitcoin Puppet, a monkey for a NodeMonke, a frog for a Bitcoin Frog and a
+standing stone for a Runestone. Up to MAX_SHOWN at once.
 
-ASSETS lists what can be shown and the amounts each tier starts at. Nothing shows until the
+ASSETS lists what can be shown and the amounts each tier starts at. Amounts count every wallet
+linked to the owner's address (api/wallets.py). Nothing shows until the
 owner picks it (social.showcase), and a pick only counts while the address that made it still
 holds the district, so a new owner's wallet is never shown without their say.
 
@@ -23,7 +26,7 @@ import requests
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import roles
+from api import roles, wallets
 from api.auth import current_address
 from api.db import cursor
 
@@ -33,10 +36,16 @@ router = APIRouter()
 ASSETS = {
     "dog": {"kind": "rune", "rune": "DOGGOTOTHEMOON", "tiers": (1, 1_000_000, 100_000_000)},
     "cat": {"kind": "collection", "collection": "quantum-cats", "tiers": (1, 3, 10)},
+    "puppet": {"kind": "collection", "collection": "bitcoin-puppets", "tiers": (1, 3, 10)},
+    "monkey": {"kind": "collection", "collection": "nodemonkes", "tiers": (1, 3, 10)},
+    "frog": {"kind": "collection", "collection": "bitcoin-frogs", "tiers": (1, 5, 20)},
+    "runestone": {"kind": "collection", "collection": "runestone", "tiers": (1, 3, 10)},
 }
+MAX_SHOWN = 3  # pets one district can show at once; the tile has room for three
 REFRESH_HOURS = 6
 MIN_REFRESH_MINUTES = 10  # an owner's 刷新 can't ask the provider more often than this
 COLLECTIONS_DIR = Path(os.getenv("HOLDINGS_COLLECTIONS_DIR") or Path(__file__).parent / "collections")
+ITEMS = 12  # inscriptions kept per asset and address, for the pet's picture (api/pets.py)
 PAGE = 60
 MAX_PAGES = 20  # inscriptions looked at per address: PAGE * MAX_PAGES
 
@@ -108,9 +117,10 @@ def _provider():
 
 
 def fetch(address):
-    """{asset: amount} the address holds now, asking the provider."""
+    """({asset: amount}, {asset: [inscription id]}) the address holds now, asking the provider.
+    The ids are the first ITEMS of each collection held."""
     p = _provider()
-    out = {}
+    out, items = {}, {}
     runes = [a for a, spec in ASSETS.items() if spec["kind"] == "rune"]
     if runes:
         balances = p.rune_balances(address)
@@ -123,8 +133,10 @@ def fetch(address):
             for a in collections:
                 if inscription_id in collection(ASSETS[a]["collection"]):
                     counts[a] += 1
+                    if counts[a] <= ITEMS:
+                        items.setdefault(a, []).append(inscription_id)
         out.update(counts)
-    return out
+    return out, items
 
 
 def refresh(address, min_age_minutes=0):
@@ -139,11 +151,11 @@ def refresh(address, min_age_minutes=0):
         if min_age_minutes and row and row[0]:
             return False
     try:
-        amounts = fetch(address)
+        amounts, items = fetch(address)
         error = None
     except Exception as e:  # the provider is outside our control; keep serving the old cache
         log.warning("holdings for %s: %s", address, e)
-        amounts, error = None, str(e)[:300]
+        amounts, items, error = None, {}, str(e)[:300]
     with cursor() as cur:
         if amounts is not None:
             cur.execute("delete from social.holdings where address = %s;", (address,))
@@ -152,6 +164,14 @@ def refresh(address, min_age_minutes=0):
                     cur.execute(
                         "insert into social.holdings (address, asset, amount) values (%s, %s, %s);",
                         (address, asset, amount),
+                    )
+            cur.execute("delete from social.holding_items where address = %s;", (address,))
+            for asset, ids in items.items():
+                for i, inscription_id in enumerate(ids):
+                    cur.execute(
+                        "insert into social.holding_items (address, asset, inscription_id, position) values (%s, %s, %s, %s) "
+                        "on conflict do nothing;",
+                        (address, asset, inscription_id, i),
                     )
         cur.execute(
             "insert into social.holdings_checked (address, checked_at, error) values (%s, now(), %s) "
@@ -170,12 +190,47 @@ def stale(cur, address):
     return row is None or row[0]
 
 
-def _amounts(cur, addresses):
-    cur.execute("select address, asset, amount from social.holdings where address = any(%s);", (list(addresses),))
+def _amounts(cur, owners):
+    """{owner: {asset: amount}}, summed over each owner's linked wallets."""
+    members = wallets.groups(cur, owners)
+    by_address = {}
+    for owner, addresses in members.items():
+        for a in addresses:
+            by_address.setdefault(a, []).append(owner)
+    cur.execute("select address, asset, amount from social.holdings where address = any(%s);", (list(by_address),))
     out = {}
     for address, asset, amount in cur.fetchall():
-        out.setdefault(address, {})[asset] = amount
+        for owner in by_address[address]:
+            held = out.setdefault(owner, {})
+            held[asset] = held.get(asset, 0) + amount
     return out
+
+
+def held_items(cur, owner):
+    """{asset: [inscription id]} held across owner's linked wallets, main address first."""
+    addresses = wallets.group(cur, owner)
+    cur.execute(
+        "select asset, inscription_id from social.holding_items where address = any(%s) "
+        "order by array_position(%s, address), position;",
+        (addresses, addresses),
+    )
+    out = {}
+    for asset, inscription_id in cur.fetchall():
+        out.setdefault(asset, []).append(inscription_id)
+    return out
+
+
+def refresh_group(owner, min_age_minutes=0, only_stale=False):
+    """refresh() each wallet linked to owner; True if any was asked anew."""
+    with cursor() as cur:
+        addresses = wallets.group(cur, owner)
+        if only_stale:
+            addresses = [a for a in addresses if stale(cur, a)]
+    return any([refresh(a, min_age_minutes) for a in addresses])
+
+
+def stale_group(cur, owner):
+    return any(stale(cur, a) for a in wallets.group(cur, owner))
 
 
 def _choices(cur, lo, hi, owners):
@@ -214,18 +269,34 @@ def shown(cur, n, owner):
         return []
     assets = _choices(cur, n, n, {n: owner}).get(n, [])
     held = _amounts(cur, [owner]).get(owner, {})
-    return [_view(a, held[a]) for a in assets if tier(a, held.get(a, 0)) > 0]
+    looks = faces(cur, owner)
+    return [{**_view(a, held[a]), "face": looks.get(a)} for a in assets if tier(a, held.get(a, 0)) > 0]
+
+
+def faces(cur, owner):
+    """{asset: inscription id} of owner's collection pets that look like one of their own
+    inscriptions, picked on 我的土地 (api/pets.py); the others show their logo."""
+    items = held_items(cur, owner)
+    cur.execute("select asset, face from social.pet_care where address = %s;", (wallets.main_of(cur, owner),))
+    picked = dict(cur.fetchall())
+    return {a: picked[a] for a, ids in items.items() if picked.get(a) in ids}
 
 
 def _owner_view(cur, n, owner):
     held = _amounts(cur, [owner]).get(owner, {})
-    cur.execute("select checked_at, error from social.holdings_checked where address = %s;", (owner,))
-    checked = cur.fetchone()
+    addresses = wallets.group(cur, owner)
+    # The oldest check among the wallets, and any failure, since the sum is only as fresh as that.
+    cur.execute(
+        "select min(checked_at), string_agg(error, '; ') from social.holdings_checked where address = any(%s);",
+        (addresses,),
+    )
+    checked_at, error = cur.fetchone()
     return {
         "chosen": _choices(cur, n, n, {n: owner}).get(n, []),
         "held": [_view(a, held.get(a, 0)) for a in ASSETS],
-        "checked_at": checked[0].isoformat() if checked else None,
-        "error": checked[1] if checked else None,
+        "wallets": len(addresses),
+        "checked_at": checked_at.isoformat() if checked_at else None,
+        "error": error,
         "shown": shown(cur, n, owner),
     }
 
@@ -235,13 +306,15 @@ def showcase(bitmap_number: int, tasks: BackgroundTasks, address: str = Depends(
     """The owner's view: what their wallet holds and what they chose to show."""
     with cursor() as cur:
         roles.require_owner(cur, bitmap_number, address)
-        cur.execute("select 1 from social.holdings_checked where address = %s;", (address,))
-        first = cur.fetchone() is None
-        old = not first and stale(cur, address)
-    if first:
-        refresh(address)  # the first look waits, so the owner sees their holdings at once
-    elif old:
-        tasks.add_task(refresh, address)
+        addresses = wallets.group(cur, address)
+        cur.execute("select address from social.holdings_checked where address = any(%s);", (addresses,))
+        checked = {r[0] for r in cur.fetchall()}
+        old = stale_group(cur, address)
+    for a in addresses:
+        if a not in checked:
+            refresh(a)  # the first look waits, so the owner sees their holdings at once
+    if old:
+        tasks.add_task(refresh_group, address, 0, True)
     with cursor() as cur:
         return _owner_view(cur, bitmap_number, address)
 
@@ -254,6 +327,8 @@ class ShowcaseBody(BaseModel):
 def set_showcase(bitmap_number: int, req: ShowcaseBody, address: str = Depends(current_address)):
     if any(a not in ASSETS for a in req.assets) or len(set(req.assets)) != len(req.assets):
         raise HTTPException(400, f"assets are some of {', '.join(ASSETS)}")
+    if len(req.assets) > MAX_SHOWN:
+        raise HTTPException(400, f"show at most {MAX_SHOWN}")
     with cursor() as cur:
         roles.require_owner(cur, bitmap_number, address)
         cur.execute(
@@ -269,6 +344,88 @@ def set_showcase(bitmap_number: int, req: ShowcaseBody, address: str = Depends(c
 def refresh_showcase(bitmap_number: int, address: str = Depends(current_address)):
     with cursor() as cur:
         roles.require_owner(cur, bitmap_number, address)
-    refresh(address, MIN_REFRESH_MINUTES)
+    refresh_group(address, MIN_REFRESH_MINUTES)
     with cursor() as cur:
         return _owner_view(cur, bitmap_number, address)
+
+
+# --- a resident's pet on their parcel ----------------------------------------------------------
+# The parcel map draws one pet on a parcel when the resident who holds it chose one and still
+# holds enough of it. Like a district's showcase, a choice lapses when the parcel changes hands.
+
+
+def parcel_pets(cur, n):
+    """{tx_index: "dog:2"} for the district's parcels whose holder shows a pet."""
+    cur.execute("select tx_index, asset, updated_by from social.parcel_showcase where bitmap_number = %s;", (n,))
+    chosen_ = cur.fetchall()
+    if not chosen_:
+        return {}
+    holders = roles.parcel_holders(cur, n)
+    picks = {tx: (asset, by) for tx, asset, by in chosen_ if asset in ASSETS and holders.get(tx) == by}
+    amounts = _amounts(cur, {by for _, by in picks.values()})
+    out = {}
+    for tx, (asset, by) in picks.items():
+        level = tier(asset, amounts.get(by, {}).get(asset, 0))
+        if level > 0:
+            out[tx] = f"{asset}:{level}"
+    return out
+
+
+def stale_parcel_holders(cur, n):
+    """Holders showing a pet in district n whose balances want a refresh."""
+    cur.execute("select tx_index, updated_by from social.parcel_showcase where bitmap_number = %s;", (n,))
+    holders = roles.parcel_holders(cur, n)
+    return [by for tx, by in cur.fetchall() if holders.get(tx) == by and stale_group(cur, by)]
+
+
+def _parcel_view(cur, n, tx, address):
+    held = _amounts(cur, [address]).get(address, {})
+    cur.execute("select asset, updated_by from social.parcel_showcase where bitmap_number = %s and tx_index = %s;", (n, tx))
+    row = cur.fetchone()
+    return {
+        "chosen": row[0] if row and row[1] == address else None,
+        "held": [_view(a, held.get(a, 0)) for a in ASSETS],
+        "shown": parcel_pets(cur, n).get(tx),
+    }
+
+
+def _require_parcel(cur, n, tx, address):
+    if roles.parcel_holder(cur, n, tx) != address:
+        raise HTTPException(403, f"only the holder of parcel #{tx} can do this")
+
+
+@router.get("/v1/districts/{bitmap_number}/parcels/{tx_index}/showcase")
+def parcel_showcase(bitmap_number: int, tx_index: int, address: str = Depends(current_address)):
+    """The resident's view: what their wallet holds and the pet they show on the parcel."""
+    with cursor() as cur:
+        _require_parcel(cur, bitmap_number, tx_index, address)
+        addresses = wallets.group(cur, address)
+        cur.execute("select address from social.holdings_checked where address = any(%s);", (addresses,))
+        checked = {r[0] for r in cur.fetchall()}
+    for a in addresses:
+        if a not in checked:
+            refresh(a)
+    with cursor() as cur:
+        return _parcel_view(cur, bitmap_number, tx_index, address)
+
+
+class ParcelShowcaseBody(BaseModel):
+    asset: str | None = None  # null: show none
+
+
+@router.put("/v1/districts/{bitmap_number}/parcels/{tx_index}/showcase")
+def set_parcel_showcase(bitmap_number: int, tx_index: int, req: ParcelShowcaseBody, address: str = Depends(current_address)):
+    if req.asset is not None and req.asset not in ASSETS:
+        raise HTTPException(400, f"asset is one of {', '.join(ASSETS)}")
+    with cursor() as cur:
+        _require_parcel(cur, bitmap_number, tx_index, address)
+        if req.asset is None:
+            cur.execute("delete from social.parcel_showcase where bitmap_number = %s and tx_index = %s;", (bitmap_number, tx_index))
+        else:
+            cur.execute(
+                "insert into social.parcel_showcase (bitmap_number, tx_index, asset, updated_by) values (%s, %s, %s, %s) "
+                "on conflict (bitmap_number, tx_index) do update set asset = excluded.asset, updated_by = excluded.updated_by, "
+                "updated_at = now();",
+                (bitmap_number, tx_index, req.asset, address),
+            )
+        return _parcel_view(cur, bitmap_number, tx_index, address)
