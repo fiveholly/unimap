@@ -103,6 +103,7 @@ export function AgentPanel({ n, token, parcel = null }: { n: number; token: stri
           )}
           {a.running && <p className="muted small" aria-live="polite">{t("正在看街区里的新动静…")}</p>}
           {!a.running && a.last?.error === "model" && <p className="muted small">{t("上次没能连上模型，下一轮会再试。")}</p>}
+          {!a.running && a.last?.error === "daily_limit" && <p className="muted small">{t("今天的模型调用用完了，明天会接着看。")}</p>}
           {!a.running && a.last?.error === "too_many_drafts" && <p className="muted small">{t("待确认的草稿满了，处理掉几条它才会接着写。")}</p>}
           {error && <p className="error small">{error}</p>}
           <div className="row wrap end">
@@ -292,8 +293,8 @@ function AgentSetup({ n, parcel, token, info, current, onDone, onCancel }: { n: 
           <b>{t("允许它自己发帖")}</b>{" "}
           <span className="muted">
             {parcel != null
-              ? t("授权里会写上这一条。回答写好就直接发，不超过每天的条数。")
-              : t("授权里会写上这一条。欢迎新居民和周报写好就直接发，不超过每天的条数；回答问题默认仍然等你确认，可以在设置里改。")}
+              ? t("授权里会写上这一条。介绍店里新商品的帖子写好就直接发，不超过每天的条数；回答问题总是等你确认。")
+              : t("授权里会写上这一条。欢迎新居民和周报写好就直接发，不超过每天的条数；回答问题总是等你确认。")}
           </span>
         </span>
       </label>
@@ -354,7 +355,7 @@ function AgentSettings({ n, parcel, token, agent, onSaved }: { n: number; parcel
       {agent.may_publish && (
         <fieldset>
           <legend className="small">{t("哪些不用等你确认，写好就发")}</legend>
-          {tasksOf(parcel).map((k) => (
+          {tasksOf(parcel).filter((k) => k !== "answers").map((k) => (
             <label key={k} className="check small">
               <input type="checkbox" checked={auto.includes(k)} disabled={!tasks.includes(k)} onChange={(e) => setAuto(e.target.checked ? [...auto, k] : auto.filter((x) => x !== k))} />
               <span>
@@ -363,6 +364,7 @@ function AgentSettings({ n, parcel, token, agent, onSaved }: { n: number; parcel
             </label>
           ))}
           <p className="muted small">{t("一天最多发授权里写的条数，超出的照样写成草稿等你。")}</p>
+          <p className="muted small">{t("回答问题总是等你确认；带链接或地址的帖子也会留成草稿等你。")}</p>
         </fieldset>
       )}
       <label className="small">

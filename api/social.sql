@@ -645,3 +645,10 @@ CREATE TABLE IF NOT EXISTS social.tenants (
 	created_at timestamptz NOT NULL DEFAULT now(),
 	CONSTRAINT tenants_pk PRIMARY KEY (bitmap_number, address)
 );
+-- Model calls the agents made each day, per owner (main wallet of their group), against AGENT_DAILY_CALLS_*.
+CREATE TABLE IF NOT EXISTS social.agent_calls (
+	day date NOT NULL,
+	owner text NOT NULL,
+	calls int4 NOT NULL DEFAULT 0,
+	CONSTRAINT agent_calls_pk PRIMARY KEY (day, owner)
+);
