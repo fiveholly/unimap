@@ -769,7 +769,7 @@ function seasonView(): Season {
   const winners = crowned().map((b, i) => ({ bitmap_number: b, owner: ownerOf(b), score: [412, 356, 298][i] }));
   return {
     number: n, since, until, tip, started_at: new Date(Date.now() - (tip - since) * 600_000).toISOString(), standings,
-    last: { number: n - 1, winners }, weights: { posts: 4, replies: 1.5, checkins: 1, tippers: 2 },
+    last: { number: n - 1, winners }, weights: { posts: 4, replies: 1.5, checkins: 1 },
     pool_sats: 210_000, pool_split: [105_000, 63_000, 42_000],
   };
 }

@@ -1,6 +1,7 @@
 """难度调整赛季: Bitcoin retargets its mining difficulty every 2016 blocks (about two weeks), and
 the city's seasons follow it. A season ranks districts by what happened in them since its first
-block: posts, replies, check-ins and the people who tipped there. When it ends, the top PODIUM
+block: posts, replies and check-ins. Tips don't count: whether one was paid is only the recipient's
+wallet's word, and the prize is real money. When it ends, the top PODIUM
 are frozen as its winners: their owners get a crown badge, and the districts wear a crown on the
 map through the next season. A prize pool (GAME_SEASON_POOL_SATS) is shown when the project puts
 one up; it is paid by the project over Lightning, not by unimap's code.
@@ -21,7 +22,7 @@ router = APIRouter()
 SEASON = 2016
 PODIUM = 3
 STANDINGS = 10
-WEIGHTS = {"posts": 4, "replies": 1.5, "checkins": 1, "tippers": 2}
+WEIGHTS = {"posts": 4, "replies": 1.5, "checkins": 1}
 CROWN_RARITY = ("legendary", "epic", "rare")  # 1st, 2nd, 3rd
 POOL_SPLIT = (50, 30, 20)  # percent of the pool for 1st, 2nd, 3rd
 BLOCK_SECONDS = 600
@@ -87,12 +88,6 @@ def scores(cur, since, until):
         (since, until),
     )
     add(cur.fetchall(), "checkins")
-    cur.execute(
-        "select bitmap_number, count(distinct tipper) from social.tips where status = 'settled' and event_id is null "
-        "and settled_at >= %s and settled_at < %s group by 1;",
-        (since, until),
-    )
-    add(cur.fetchall(), "tippers")
     cur.execute("select bitmap_number from bitmaps where bitmap_number = any(%s);", (list(out),))
     claimed = {r[0] for r in cur.fetchall()}
     ranked = [

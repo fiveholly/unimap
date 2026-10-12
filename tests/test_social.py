@@ -1008,6 +1008,72 @@ class SocialApi(unittest.TestCase):
             with self.conn.cursor() as cur:
                 cur.execute("delete from social.tips; delete from social.lightning_addresses; delete from social.notifications where kind = 'tip';")
 
+    def test_tip_verify_url_and_expiry(self):
+        from api import tips
+
+        # A verify URL only counts on the Lightning address's own domain or its callback's host.
+        answers = {}
+        saved_get = tips._get
+
+        def fake_get(url, params=None):
+            if "/.well-known/lnurlp/" in url:
+                return {"tag": "payRequest", "callback": "https://cb.wallet.test/pay", "minSendable": 1000, "maxSendable": 10**9}
+            return {"pr": "lnbc5000n1x", "verify": answers["verify"]}
+
+        tips._get = fake_get
+        try:
+            for verify, kept in (("https://wallet.test/v/1", True), ("https://cb.wallet.test/v/1", True),
+                                 ("https://evil.test/v/1", False), ("https://wallet.test.evil.test/v", False)):
+                answers["verify"] = verify
+                self.assertEqual(tips.ask_invoice("bob@wallet.test", 500, ""), ("lnbc5000n1x", verify if kept else None))
+        finally:
+            tips._get = saved_get
+
+        # A pending tip past the hour is asked once more before it is marked expired.
+        class Fake:
+            paid = set()
+            pay_request = staticmethod(lambda a: {"tag": "payRequest", "callback": "https://wallet.test/cb"})
+            ask_invoice = staticmethod(lambda a, sats, comment: (f"lnbc{sats * 10}n1late", f"https://wallet.test/late/{sats}"))
+            settled = staticmethod(lambda url: url in Fake.paid)
+
+        old = tips.lnurl
+        tips.lnurl = Fake
+        try:
+            post = self.post(BOB, "late tips").json()
+            self.client.put("/v1/me/lightning", json={"lightning_address": "bob@wallet.test"}, headers=self.h(BOB))
+            tip = lambda sats: self.client.post("/v1/tips", json={"post_id": post["id"], "amount_sats": sats}, headers=self.h(ALICE)).json()
+            late, never = tip(300), tip(400)
+            Fake.paid.add("https://wallet.test/late/300")
+            with self.conn.cursor() as cur:
+                cur.execute("update social.tips set created_at = now() - interval '2 hours', checked_at = null;")
+            status = lambda i: self.client.get(f"/v1/tips/{i}", headers=self.h(ALICE)).json()["status"]
+            self.assertEqual((status(late["id"]), status(never["id"])), ("settled", "expired"))
+        finally:
+            tips.lnurl = old
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.tips; delete from social.lightning_addresses; delete from social.notifications where kind = 'tip';")
+
+    def test_tips_dont_score_seasons(self):
+        import datetime as dt
+
+        from api import seasons
+
+        # Whether a tip was paid is the recipient's wallet's word, so even many "settled" tips don't move a season.
+        until = dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=1)
+        since = until - dt.timedelta(days=1)
+        with self.conn.cursor() as cur:
+            before = seasons.scores(cur, since, until)
+            cur.execute(
+                "insert into social.tips (tipper, recipient, bitmap_number, amount_sats, invoice, verify_url, status, settled_at) "
+                "select 'sybil' || g, %s, %s, 1000000, 'lnbc', 'https://self.test/v', 'settled', now() - interval '1 hour' "
+                "from generate_series(1, 50) g;",
+                (CAROL.address, OTHER),
+            )
+            try:
+                self.assertEqual(seasons.scores(cur, since, until), before)
+            finally:
+                cur.execute("delete from social.tips where tipper like 'sybil%';")
+
     def test_game(self):
         import hashlib
 
@@ -2071,6 +2137,28 @@ class SocialApi(unittest.TestCase):
             Lnurl.verify = False
             self.assertEqual(post(CAROL, f"/v1/shop/items/{card['id']}/buy").status_code, 502)
             Lnurl.verify = True
+            # Editing the item after the sale doesn't change what the buyer got.
+            put(ALICE, f"/v1/shop/items/{mine['id']}", {"content": "something else"})
+            self.assertEqual(get(CAROL, f"/v1/shop/orders/{order['id']}").json()["content"], item["content"])
+            self.assertEqual(get(CAROL, "/v1/me/shop").json()["bought"][0]["content"], item["content"])
+            # Another buyer's unpaid order holds the last one; once it is an hour old it doesn't, and it is
+            # asked once more before it expires, so a late payment still delivers.
+            last = post(ALICE, f"/v1/districts/{DISTRICT}/shop", {**item, "price_sats": 777}).json()
+            first = post(CAROL, f"/v1/shop/items/{last['id']}/buy").json()
+            self.assertEqual(post(BOB, f"/v1/shop/items/{last['id']}/buy").status_code, 409)
+            self.assertEqual(post(CAROL, f"/v1/shop/items/{last['id']}/buy").status_code, 200)  # their own order doesn't block them
+            with self.conn.cursor() as cur:
+                cur.execute("update social.shop_orders set created_at = now() - interval '2 hours', checked_at = null where item_id = %s;", (last["id"],))
+            self.assertEqual(post(BOB, f"/v1/shop/items/{last['id']}/buy").status_code, 200)
+            Lnurl.paid.add("https://wallet.test/shop/777")
+            st = get(CAROL, f"/v1/shop/orders/{first['id']}").json()
+            self.assertEqual((st["status"], st["content"]), ("settled", item["content"]))
+            Lnurl.paid.discard("https://wallet.test/shop/777")
+            with self.conn.cursor() as cur:
+                cur.execute("select id from social.shop_orders where item_id = %s and buyer = %s and status = 'pending';", (last["id"], CAROL.address))
+                again = cur.fetchone()[0]
+            self.assertEqual(get(CAROL, f"/v1/shop/orders/{again}").json()["status"], "expired")
+            self.client.delete(f"/v1/shop/items/{last['id']}", headers=self.h(ALICE))
 
             # Its seller edits it; nobody else can. Selling the parcel takes its items down.
             self.assertEqual(put(BOB, f"/v1/shop/items/{card['id']}", {"price_sats": 600}).json()["price_sats"], 600)
