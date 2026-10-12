@@ -324,6 +324,31 @@ class SocialApi(unittest.TestCase):
             with self.conn.cursor() as cur:
                 cur.execute("delete from social.tenants; delete from social.posts where author_address = %s; delete from social.notifications where kind = 'tenant';", (CAROL.address,))
 
+    def test_opening(self):
+        clean = "delete from social.posts where bitmap_number = 105; delete from social.profiles where bitmap_number = 105; delete from social.recruitments where bitmap_number = 105; delete from social.badges where kind = 'opening';"
+        with self.conn.cursor() as cur:
+            cur.execute(clean)
+        try:
+            get = lambda w=CAROL: self.client.get(f"/v1/districts/{OTHER}/opening", headers=self.h(w))
+            self.assertEqual(get(ALICE).status_code, 403)
+            self.assertEqual(get().json()["steps"], {"bio": False, "post": False, "recruit": False})
+            self.client.put(f"/v1/districts/{OTHER}/profile", json={"bio": "新开的小街"}, headers=self.h(CAROL))
+            self.assertEqual(self.post(CAROL, "开张啦", district=OTHER).status_code, 201)
+            r = get().json()
+            self.assertEqual((r["steps"], r["opened"]), ({"bio": True, "post": True, "recruit": False}, False))
+            self.assertEqual(self.client.get("/v1/opened").json()["districts"], [])
+            self.client.put(f"/v1/districts/{OTHER}/recruit", json={"message": "来住"}, headers=self.h(CAROL))
+            r = get().json()
+            self.assertEqual((r["opened"], r["new"], r["badge"]["kind"]), (True, True, "opening"))
+            self.assertFalse(get().json()["new"])  # earned once
+            listed = self.client.get("/v1/opened").json()["districts"]
+            self.assertEqual([(d["bitmap_number"], d["bio"], d["posts"]) for d in listed], [(OTHER, "新开的小街", 1)])
+            kinds = [b["kind"] for b in self.client.get(f"/v1/people/{CAROL.address}").json()["badges"]]
+            self.assertIn("opening", kinds)
+        finally:
+            with self.conn.cursor() as cur:
+                cur.execute(clean)
+
     def test_polls(self):
         new = lambda w, **kw: self.client.post(f"/v1/districts/{DISTRICT}/polls", json={"question": "修个广场？", "options": ["好", "不好"], **kw}, headers=self.h(w))
         self.assertEqual(new(BOB).status_code, 403)

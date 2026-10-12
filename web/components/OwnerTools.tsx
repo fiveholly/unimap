@@ -15,7 +15,7 @@ import { parkText, recruitText } from "@/lib/share";
 import { COLORS, DECOS, MAX_DECOS, type DistrictStyle } from "@/lib/style";
 import type { Zone } from "@/lib/zones";
 
-type Section = "profile" | "look" | "pets" | "recruit" | "park";
+export type Section = "profile" | "look" | "pets" | "recruit" | "park";
 const SECTIONS = (): [Section, string][] => [
   ["profile", t("资料")],
   ["look", t("外观")],
@@ -35,6 +35,7 @@ export function OwnerTools({
   txCount,
   onDone,
   onUnpin,
+  initial = "profile",
 }: {
   n: number;
   district: District;
@@ -45,8 +46,10 @@ export function OwnerTools({
   txCount: number | null;
   onDone: () => Promise<unknown>;
   onUnpin: () => void;
+  initial?: Section;
 }) {
-  const [section, setSection] = useState<Section>("profile");
+  const [section, setSection] = useState<Section>(initial);
+  useEffect(() => setSection(initial), [initial]);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const save = async (path: string, method: string, body?: unknown) => {

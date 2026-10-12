@@ -6,7 +6,7 @@ import { t } from "@/lib/i18n";
 
 const LUCKY_GOLD = "#F2B544";
 
-/** A badge's medal: a chest for a treasure, a star for a lucky round, a flag for a visit, a crown for a season's podium, a pin for a day's tour, ringed in its rarity's colour. */
+/** A badge's medal: a chest for a treasure, a star for a lucky round, a flag for a visit, a crown for a season's podium, a pin for a day's tour, an awning for opening a district, ringed in its rarity's colour. */
 export function BadgeIcon({ kind, rarity, size = 32 }: { kind: BadgeKind; rarity: Rarity; size?: number }) {
   const c = kind === "lucky" ? LUCKY_GOLD : RARITY_COLORS[rarity];
   return (
@@ -26,6 +26,12 @@ export function BadgeIcon({ kind, rarity, size = 32 }: { kind: BadgeKind; rarity
           <>
             <path d="M16 24s-6-6.2-6-10.5a6 6 0 0 1 12 0C22 17.8 16 24 16 24z" />
             <circle cx="16" cy="13.5" r="2" />
+          </>
+        ) : kind === "opening" ? (
+          <>
+            <path d="M9 13.5 10.5 9h11l1.5 4.5z" />
+            <path d="M10 13.5V23h12v-9.5" />
+            <path d="M14 23v-5h4v5" />
           </>
         ) : kind === "lucky" ? (
           <path d="m16 8.5 2.3 4.8 5.2.7-3.8 3.6.9 5.2-4.6-2.5-4.6 2.5.9-5.2-3.8-3.6 5.2-.7z" />
@@ -63,7 +69,7 @@ export function BadgeList({ badges, onWear }: { badges: Badge[]; onWear?: (id: n
               {b.bitmap_number}.bitmap{b.tx_index != null ? ` #${b.tx_index}` : ""}
             </Link>
             <span className="mono dim block">
-              {b.kind === "tour" ? new Date(b.height * 86_400_000).toISOString().slice(0, 10) : t("区块 {n}", { n: b.height.toLocaleString("en-US") })}
+              {b.kind === "tour" || b.kind === "opening" ? new Date(b.kind === "tour" ? b.height * 86_400_000 : b.created_at).toISOString().slice(0, 10) : t("区块 {n}", { n: b.height.toLocaleString("en-US") })}
             </span>
             {onWear && b.id != null && (
               <button type="button" className="link-btn small" aria-pressed={!!b.worn} onClick={() => onWear(b.worn ? null : b.id!)}>

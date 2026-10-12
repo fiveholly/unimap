@@ -1208,6 +1208,40 @@ function route(path: string, opts: Opts): unknown {
       .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
     return { districts: out };
   }
+  // 开张 (api/opening.py)
+  if ((m = p.match(/^\/v1\/districts\/(\d+)\/opening$/))) {
+    const n = +m[1], a = owns(n);
+    const steps = {
+      bio: !!profile(n).bio,
+      post: s.posts.some((x) => x.bitmap_number === n && x.author.address === a && x.reply_to == null && !x.removed),
+      recruit: s.recruits?.[n]?.by === a,
+    };
+    let badge = (s.badges ?? []).find((x) => x.kind === "opening" && x.height === n) ?? null;
+    let fresh = false;
+    if (!badge && steps.bio && steps.post && steps.recruit) {
+      badge = { kind: "opening", height: n, bitmap_number: n, tx_index: null, rarity: "rare", created_at: new Date().toISOString() };
+      (s.badges ??= []).unshift(badge);
+      fresh = true;
+      save();
+    }
+    return { steps, opened: !!badge, badge, new: fresh };
+  }
+  if (p === "/v1/opened") {
+    // The visitor's own, and two the made-up owners opened lately.
+    const mine = (s.badges ?? []).filter((x) => x.kind === "opening" && Date.now() - Date.parse(x.created_at) < 7 * DAY * 1000).map((x) => ({ n: x.bitmap_number, at: x.created_at }));
+    const seeded = [
+      { n: 840001, at: iso(1.5), bio: "减半之后挖出的第一个街区，每周六晚上在这里聊天。" },
+      { n: 839998, at: iso(4), bio: "CBD 的老街区，手续费最高那几天的见证。" },
+    ];
+    return {
+      districts: [...mine, ...seeded].map(({ n, at, bio }: { n: number; at: string; bio?: string }) => ({
+        bitmap_number: n,
+        opened_at: at,
+        bio: (profile(n).bio || bio || "").slice(0, 80),
+        posts: s.posts.filter((x) => x.bitmap_number === n && x.reply_to == null && !x.removed).length,
+      })),
+    };
+  }
   if ((m = p.match(/^\/v1\/districts\/(\d+)\/recruit$/))) {
     const n = +m[1], a = owns(n);
     if (method === "DELETE") {
