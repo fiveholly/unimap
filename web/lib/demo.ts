@@ -150,6 +150,7 @@ type State = {
   petCare?: Partial<Record<PetKey, DemoCare>>; // 我的宠物: feeding and names (api/pets.py)
   nostr?: string | null; // the visitor's linked Nostr key
   parcelPet?: PetKey | null; // the pet the visitor shows on their parcel
+  pats?: Record<string, string>; // "owner:asset" -> the day the visitor last patted that pet (串门摸宠物)
   tips?: DemoTip[];
   boot?: number; // when this demo began: a new block is "mined" every DEMO_BLOCK_MS after it
   badges?: Badge[]; // the visitor's
@@ -544,7 +545,15 @@ function petsAt(n: number): Pet[] {
   const held = holdingsOf(owner, n);
   const chosen = owner === DEMO_ADDRESS ? load().showcase?.[n] ?? [] : (Object.keys(held) as PetKey[]);
   const face = (k: PetKey) => (owner === DEMO_ADDRESS ? caredPet(k).face : null);
-  return chosen.flatMap((k) => (petTier(k, held[k] ?? 0) ? [{ asset: k, tier: petTier(k, held[k]!), amount: String(held[k]), face: face(k) }] : []));
+  return chosen.flatMap((k) => (petTier(k, held[k] ?? 0) ? [{ asset: k, tier: petTier(k, held[k]!), amount: String(held[k]), face: face(k), ...patsOf(owner, k) }] : []));
+}
+/** Today's pats on someone's pet, as api/pets.py: a made-up few from others, plus the visitor's. */
+function patsOf(owner: string | null, k: PetKey) {
+  if (!owner) return { pats: 0, patted: false };
+  const day = dayOf(Date.now());
+  const patted = owner !== DEMO_ADDRESS && load().pats?.[`${owner}:${k}`] === day;
+  const others = owner === DEMO_ADDRESS ? 0 : strHash(`${owner}:${k}:${day}`) % 4;
+  return { pats: others + (patted ? 1 : 0), patted };
 }
 /** {tx_index: "dog:2"}: residents' pets on their parcels; a made-up quarter of them show one. */
 function parcelPetsAt(n: number): Record<string, string> {
@@ -1431,6 +1440,18 @@ function route(path: string, opts: Opts): unknown {
     s.petCare = { ...s.petCare, [k]: c };
     save();
     return caredPet(k);
+  }
+  if ((m = p.match(/^\/v1\/people\/([^/]+)\/pets\/(\w+)\/pat$/))) {
+    const me = needMe();
+    const owner = decodeURIComponent(m[1]), k = m[2] as PetKey;
+    if (owner === me) fail(400, "that's your own pet");
+    // The demo's owners hold pets district by district, so any known pet is taken as shown.
+    if (!PET_KEYS.includes(k)) fail(404, "this pet isn't shown anywhere");
+    const day = dayOf(Date.now());
+    if (s.pats?.[`${owner}:${k}`] === day) fail(409, "you already patted it today");
+    s.pats = { ...s.pats, [`${owner}:${k}`]: day };
+    save();
+    return { asset: k, ...patsOf(owner, k) };
   }
   if (p === "/v1/me/lightning") {
     needMe();

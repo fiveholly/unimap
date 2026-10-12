@@ -173,7 +173,7 @@ def person(address: str, before_id: int | None = None, limit: int = 20, viewer: 
         cur.execute("select count(*) from social.follows where address = %s;", (address,))
         follows = cur.fetchone()[0]
         badges = game.badges_of(cur, address)
-        shown_pets = pets.public_pets(cur, address)
+        shown_pets = pets.public_pets(cur, address, viewer)
         # Score held districts a run at a time, so two far-apart districts don't score everything between.
         levels, park_of, run = {}, {}, []
         for n in districts + [None]:
@@ -227,7 +227,8 @@ def district(bitmap_number: int, tasks: BackgroundTasks, viewer: str | None = De
         prosper = prosperity.of(cur, bitmap_number)
         levels, park_of = parks.scored(cur, bitmap_number, bitmap_number)
         notice = recruit.get(cur, bitmap_number, viewer)
-        pets = holdings.shown(cur, bitmap_number, owner)
+        patted = pets.pats(cur, owner, viewer) if owner else {}
+        shown = [{**p, **patted.get(p["asset"], {"pats": 0, "patted": False})} for p in holdings.shown(cur, bitmap_number, owner)]
         parcel_pets = holdings.parcel_pets(cur, bitmap_number)
         for resident in holdings.stale_parcel_holders(cur, bitmap_number)[:5]:
             tasks.add_task(holdings.refresh_group, resident, 0, True)
@@ -255,7 +256,7 @@ def district(bitmap_number: int, tasks: BackgroundTasks, viewer: str | None = De
         "level": levels[bitmap_number],
         "park": park_of.get(bitmap_number),
         "recruit": notice,
-        "pets": pets,
+        "pets": shown,  # with today's pats (api/pets.py)
         "parcel_pets": parcel_pets,  # {tx_index: "dog:2"}: the pet each resident shows on their parcel
         "tips": tipped,  # confirmed Lightning tips on the district and its posts, last 30 days
         "owner_tippable": owner_tippable,

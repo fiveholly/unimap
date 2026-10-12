@@ -499,7 +499,7 @@ function DistrictView() {
               onChanged={() => loadDistrict()}
             />
           )}
-          <PetsCard pets={district.pets ?? []} />
+          <PetsCard pets={district.pets ?? []} owner={district.owner} />
           <section>
             <h2 className="section-title">{t("最近变动")}</h2>
             <ul className="events">

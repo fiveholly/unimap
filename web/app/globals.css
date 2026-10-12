@@ -3492,3 +3492,37 @@ h1 .worn-badge {
 .today li.done .today-check {
   border-color: var(--accent);
 }
+
+/* 摸一摸 */
+.pet-pat {
+  position: relative;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px 8px;
+  margin-top: 4px;
+}
+.pet-pat-heart {
+  position: absolute;
+  top: -6px;
+  left: 50%;
+  color: #ff6b8a;
+  animation: pet-pat-rise 1.2s ease-out forwards;
+  pointer-events: none;
+}
+@keyframes pet-pat-rise {
+  from {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, -28px) scale(1.5);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pet-pat-heart {
+    animation: none;
+  }
+}

@@ -186,7 +186,7 @@ CREATE TABLE IF NOT EXISTS social.holdings_checked (
 CREATE TABLE IF NOT EXISTS social.notifications (
 	id bigserial NOT NULL,
 	address text NOT NULL,
-	kind text NOT NULL, -- reply | like | post | follow | apply | tip | treasure | lucky | crown | event_win | sold | offer | offer_accepted | agent_draft | agent_alert
+	kind text NOT NULL, -- reply | like | post | follow | apply | tip | treasure | lucky | crown | event_win | sold | offer | offer_accepted | agent_draft | agent_alert | pat
 	actor text NOT NULL,
 	bitmap_number int4 NOT NULL,
 	post_id int8 NULL, -- the reply, the liked post or the new post
@@ -624,4 +624,14 @@ CREATE TABLE IF NOT EXISTS social.worn_badges (
 	address text NOT NULL,
 	badge_id int8 NOT NULL REFERENCES social.badges (id) ON DELETE CASCADE,
 	CONSTRAINT worn_badges_pk PRIMARY KEY (address)
+);
+
+-- 摸一摸 (api/pets.py): a visitor patting someone else's pet, once a day each.
+CREATE TABLE IF NOT EXISTS social.pet_pats (
+	day date NOT NULL,
+	owner text NOT NULL, -- the pet's wallet group's main address
+	asset text NOT NULL,
+	patter text NOT NULL, -- the visitor's wallet group's main address
+	created_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT pet_pats_pk PRIMARY KEY (day, owner, asset, patter)
 );

@@ -491,7 +491,7 @@ class SocialApi(unittest.TestCase):
                 put = self.client.put(f"/v1/districts/{DISTRICT}/showcase", json={"assets": ["dog", "cat"]}, headers=self.h(ALICE))
                 self.assertEqual(put.status_code, 200, put.text)
                 self.assertEqual([p["asset"] for p in put.json()["shown"]], ["dog", "cat"])
-                self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}").json()["pets"][0], {"asset": "dog", "tier": 2, "amount": "2500000.5", "face": None})
+                self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}").json()["pets"][0], {"asset": "dog", "tier": 2, "amount": "2500000.5", "face": None, "pats": 0, "patted": False})
                 tiles = {t["bitmap_number"]: t for t in self.client.get(f"/v1/land?start={DISTRICT}&end={OTHER}").json()["tiles"]}
                 self.assertEqual((tiles[DISTRICT]["pets"], tiles[OTHER]["pets"]), (["dog:2", "cat:1"], []))
                 # 刷新 is rate limited; a provider failure keeps the old cache.
@@ -1116,6 +1116,52 @@ class SocialApi(unittest.TestCase):
                     "delete from social.worn_badges; delete from social.badges where address in (%s, %s); delete from social.showcase; "
                     "delete from social.holdings; delete from social.pet_care;",
                     (frank.address, ALICE.address),
+                )
+
+    def test_pet_pats(self):
+        from api import pets
+
+        gina = Wallet(12)
+        self.tokens[gina.address] = self.login(gina)
+        pat = lambda w, a, asset="dog": self.client.post(f"/v1/people/{a}/pets/{asset}/pat", headers=self.h(w))
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("insert into social.holdings (address, asset, amount) values (%s, 'dog', 5), (%s, 'frog', 1);", (BOB.address, BOB.address))
+            # A pet nobody can see can't be patted; nor your own.
+            self.assertEqual(pat(gina, BOB.address).status_code, 404)
+            self.client.put("/v1/me/pets/dog", json={"public": True}, headers=self.h(BOB))
+            self.assertEqual(pat(BOB, BOB.address).status_code, 400)
+            self.assertEqual(pat(gina, BOB.address, "cat").status_code, 404)
+            # Once a day each; the owner hears about it and the pet gets a little affection.
+            dog = pat(gina, BOB.address).json()
+            self.assertEqual((dog["asset"], dog["pats"], dog["patted"]), ("dog", 1, True))
+            self.assertEqual(pat(gina, BOB.address).status_code, 409)
+            self.assertEqual(self.client.get("/v1/me/pets", headers=self.h(BOB)).json()["pets"][0]["affection"], pets.PAT_AFFECTION)
+            n = self.client.get("/v1/notifications", headers=self.h(BOB)).json()["notifications"][0]
+            self.assertEqual((n["kind"], n["actor"]), ("pat", gina.address))
+            page = {p["asset"]: p for p in self.client.get(f"/v1/people/{BOB.address}", headers=self.h(gina)).json()["pets"]}
+            self.assertEqual((page["dog"]["pats"], page["dog"]["patted"]), (1, True))
+            self.assertFalse(self.client.get(f"/v1/people/{BOB.address}", headers=self.h(CAROL)).json()["pets"][0]["patted"])
+            # Pats stop adding affection past PAT_CAP a day, though they still count.
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "insert into social.pet_pats (day, owner, asset, patter) select (now() at time zone 'utc')::date, %s, 'dog', 'x' || i from generate_series(1, 9) i;",
+                    (BOB.address,),
+                )
+            self.assertEqual(pat(CAROL, BOB.address).json()["pats"], 11)
+            self.assertEqual(self.client.get("/v1/me/pets", headers=self.h(BOB)).json()["pets"][0]["affection"], pets.PAT_AFFECTION)
+            # A pet shown on a district its owner holds can be patted there too.
+            with self.conn.cursor() as cur:
+                cur.execute("insert into social.holdings (address, asset, amount) values (%s, 'frog', 1);", (ALICE.address,))
+                cur.execute("insert into social.showcase (bitmap_number, assets, updated_by) values (100, %s, %s);", (["frog"], ALICE.address))
+            self.assertEqual(pat(gina, ALICE.address, "frog").status_code, 200)
+            shown = self.client.get("/v1/districts/100", headers=self.h(gina)).json()["pets"]
+            self.assertEqual([(p["asset"], p["pats"], p["patted"]) for p in shown], [("frog", 1, True)])
+        finally:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "delete from social.pet_pats; delete from social.pet_care; delete from social.holdings; delete from social.showcase; "
+                    "delete from social.notifications where kind = 'pat';"
                 )
 
     def test_seasons(self):

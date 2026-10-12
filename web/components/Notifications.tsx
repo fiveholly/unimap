@@ -150,6 +150,8 @@ function sentence(item: Item): [React.ReactNode, string] {
           : tn("你的街区 agent 发现 {place} 在售，价格在你设的范围内", { place }),
         `/district/${n.bitmap_number}`,
       ];
+    case "pat":
+      return [tn("{who} 来摸了摸你的宠物", { who }), "/me"];
     case "lucky":
       return [
         tn("区块 {h} 抽中你的街区 {place} 做今日幸运街区，你得到一枚徽章", { h: <span className="mono">{(n.block_height ?? 0).toLocaleString("en-US")}</span>, place }),
