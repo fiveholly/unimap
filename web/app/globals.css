@@ -321,6 +321,11 @@ label.check input {
   color: var(--resident);
   border-color: rgba(134, 199, 168, 0.35);
 }
+.badge.tenant {
+  color: var(--resident);
+  border-style: dashed;
+  border-color: rgba(134, 199, 168, 0.35);
+}
 .chips {
   display: flex;
   flex-wrap: wrap;
@@ -3525,4 +3530,51 @@ h1 .worn-badge {
   .pet-pat-heart {
     animation: none;
   }
+}
+
+/* 开张 */
+.opening {
+  margin: 0 0 12px;
+}
+.opening ul.today {
+  margin: 8px 0 0;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.opening .chips {
+  gap: 6px;
+}
+.opening.done {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.opening.done p {
+  margin: 4px 0 0;
+}
+.opened {
+  margin: 12px 0;
+}
+.opened ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 8px;
+}
+.opened a {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: inherit;
+  text-decoration: none;
+}
+.opened a:hover {
+  border-color: var(--accent);
 }
