@@ -210,7 +210,9 @@ def district(bitmap_number: int, tasks: BackgroundTasks, viewer: str | None = De
             "select (select count(*) from social.follows where bitmap_number = %(n)s) as followers, "
             "(select count(*) from social.posts where bitmap_number = %(n)s and reply_to is null "
             "and removed_at is null) as posts, "
-            "exists(select 1 from social.mutes where bitmap_number = %(n)s and address = %(me)s) as muted, "
+            "exists(select 1 from social.mutes m join bitmaps b on b.bitmap_number = m.bitmap_number "
+            "join inscription_owners o on o.inscription_id = b.inscription_id and o.address = m.by_address "
+            "where m.bitmap_number = %(n)s and m.address = %(me)s) as muted, "
             "exists(select 1 from social.follows where bitmap_number = %(n)s and address = %(me)s) as following, "
             "exists(select 1 from social.checkins where bitmap_number = %(n)s and address = %(me)s "
             "and day = (now() at time zone 'utc')::date) as checked_in;",
@@ -392,11 +394,11 @@ class NewPost(BaseModel):
     reply_to: int | None = None
     as_bitmap: int | None = None
     signed_at: int
-    signature: str
+    signature: str = Field(max_length=2000)
 
 
 @router.post("/v1/districts/{bitmap_number}/posts", status_code=201)
-def create_post(bitmap_number: int, req: NewPost, address: str = Depends(current_address)):
+def create_post(bitmap_number: int, req: NewPost, address: str = Depends(moderation.writer_address)):
     if any(not url.startswith("https://") or len(url) > 500 or "\n" in url for url in req.media):
         raise HTTPException(400, "media must be https URLs")
     if "\r" in req.body:
@@ -412,12 +414,7 @@ def create_post(bitmap_number: int, req: NewPost, address: str = Depends(current
 
     with cursor(dict_rows=True) as cur:
         role, parcel = roles.role_in(cur, address, bitmap_number)
-        if moderation.banned(cur, address):
-            raise HTTPException(403, "this address is banned from posting")
-        cur.execute(
-            "select 1 from social.mutes where bitmap_number = %s and address = %s;", (bitmap_number, address)
-        )
-        if cur.fetchone() is not None:
+        if moderation.muted(cur, bitmap_number, address):
             raise HTTPException(403, "muted in this district")
         if req.reply_to is None:
             if role == roles.VISITOR:
@@ -504,7 +501,7 @@ class ProfileUpdate(BaseModel):
 
 
 @router.put("/v1/districts/{bitmap_number}/profile")
-def update_profile(bitmap_number: int, req: ProfileUpdate, address: str = Depends(current_address)):
+def update_profile(bitmap_number: int, req: ProfileUpdate, address: str = Depends(moderation.writer_address)):
     if req.cover is not None and req.cover and not req.cover.startswith("https://"):
         raise HTTPException(400, "cover must be an https URL")
     with cursor(dict_rows=True) as cur:
@@ -570,8 +567,9 @@ def list_mutes(bitmap_number: int, address: str = Depends(current_address)):
     with cursor(dict_rows=True) as cur:
         _require_owner(cur, bitmap_number, address)
         cur.execute(
-            "select address, by_address, created_at from social.mutes where bitmap_number = %s order by created_at;",
-            (bitmap_number,),
+            "select address, by_address, created_at from social.mutes where bitmap_number = %s and by_address = %s "
+            "order by created_at;",
+            (bitmap_number, address),
         )
         return {"mutes": [{**r, "created_at": r["created_at"].isoformat()} for r in cur.fetchall()]}
 
@@ -584,7 +582,9 @@ def mute(bitmap_number: int, target: str, address: str = Depends(current_address
         if target == address:
             raise HTTPException(400, "you can't mute yourself")
         cur.execute(
-            "insert into social.mutes (bitmap_number, address, by_address) values (%s, %s, %s) on conflict do nothing;",
+            # A mute only holds while the owner who set it holds the district (moderation.muted).
+            "insert into social.mutes (bitmap_number, address, by_address) values (%s, %s, %s) "
+            "on conflict (bitmap_number, address) do update set by_address = excluded.by_address, created_at = now();",
             (bitmap_number, target, address),
         )
         _log(cur, bitmap_number, "mute", address, target)

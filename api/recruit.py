@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from api import notify, parks, roles
 from api.auth import current_address
 from api.db import cursor
+from api.moderation import writer_address
 
 router = APIRouter()
 
@@ -102,7 +103,7 @@ class Notice(BaseModel):
 
 
 @router.put("/v1/districts/{bitmap_number}/recruit")
-def set_notice(bitmap_number: int, req: Notice, address: str = Depends(current_address)):
+def set_notice(bitmap_number: int, req: Notice, address: str = Depends(writer_address)):
     plots = sorted(set(req.parcels))
     with cursor() as cur:
         roles.require_owner(cur, bitmap_number, address)
@@ -140,7 +141,7 @@ class Application(BaseModel):
 
 
 @router.put("/v1/districts/{bitmap_number}/application")
-def apply(bitmap_number: int, req: Application, address: str = Depends(current_address)):
+def apply(bitmap_number: int, req: Application, address: str = Depends(writer_address)):
     with cursor() as cur:
         if get(cur, bitmap_number) is None:
             raise HTTPException(404, "this district isn't recruiting")

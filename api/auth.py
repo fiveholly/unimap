@@ -6,7 +6,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from api import bip322
 from api.db import cursor
@@ -38,13 +38,13 @@ def _hash_token(token):
 
 
 class NonceRequest(BaseModel):
-    address: str
+    address: str = Field(max_length=100)
 
 
 class LoginRequest(BaseModel):
-    address: str
-    nonce: str
-    signature: str
+    address: str = Field(max_length=100)
+    nonce: str = Field(max_length=100)
+    signature: str = Field(max_length=2000)
 
 
 @router.post("/v1/auth/nonce")

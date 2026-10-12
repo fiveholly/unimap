@@ -160,8 +160,7 @@ def problem(cur, a):
         return "unpaid"
     if moderation.banned(cur, a["owner"]):
         return "banned"
-    cur.execute("select 1 from social.mutes where bitmap_number = %s and address = %s;", (a["bitmap_number"], a["owner"]))
-    if cur.fetchone() is not None:
+    if moderation.muted(cur, a["bitmap_number"], a["owner"]):
         return "muted"
     return None
 
@@ -314,7 +313,7 @@ def prepare(bitmap_number: int, req: GrantTerms, parcel: int | None = None, addr
 
 class Grant(BaseModel):
     id: int
-    signature: str
+    signature: str = Field(max_length=2000)
 
 
 @router.post("/v1/districts/{bitmap_number}/agent")

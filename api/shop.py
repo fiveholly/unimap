@@ -96,15 +96,14 @@ def _check_seller(cur, n, tx_index, address):
         raise HTTPException(403, "only the district owner can sell here" if tx_index is None else f"only the holder of parcel #{tx_index} can sell here")
     if moderation.banned(cur, address):
         raise HTTPException(403, "this address is banned")
-    cur.execute("select 1 from social.mutes where bitmap_number = %s and address = %s;", (n, address))
-    if cur.fetchone() is not None:
+    if moderation.muted(cur, n, address):
         raise HTTPException(403, "muted in this district")
     if tips.lightning_of(cur, address) is None:
         raise HTTPException(409, "set a Lightning address first, so buyers can pay you")
 
 
 @router.post("/v1/districts/{bitmap_number}/shop", status_code=201)
-def add_item(bitmap_number: int, req: ItemBody, address: str = Depends(current_address)):
+def add_item(bitmap_number: int, req: ItemBody, address: str = Depends(moderation.writer_address)):
     with cursor() as cur:
         _check_seller(cur, bitmap_number, req.parcel, address)
         cur.execute("select count(*) from social.shop_items where bitmap_number = %s and tx_index is not distinct from %s "
@@ -147,7 +146,7 @@ def my_item(item_id: int, address: str = Depends(current_address)):
 
 
 @router.put("/v1/shop/items/{item_id}")
-def edit_item(item_id: int, req: ItemEdit, address: str = Depends(current_address)):
+def edit_item(item_id: int, req: ItemEdit, address: str = Depends(moderation.writer_address)):
     with cursor() as cur:
         before = _mine(cur, item_id, address)
         if req.active:

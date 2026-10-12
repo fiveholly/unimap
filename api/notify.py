@@ -3,18 +3,25 @@ your district, applied to live there, or tipped you sats (api/tips.py); or a blo
 treasure on your parcel or made your district the lucky one (api/game.py), or your district
 won a crown at the end of a season (api/seasons.py), you won a prize in a district event (api/events.py), or someone bought what you listed, made you an offer, or took yours (api/market.py), or bought something in your shop (api/shop.py); or your district's agent has drafts for you to look at or posted on its own, or saw a listing you asked it to watch for (api/agent.py). Each is written in
 the same transaction as the action, for the address it concerns, and never for your own actions.
+
+Signing in costs nothing, so throwaway addresses could bury someone in notifications. The free
+kinds (CAPPED) stop at PER_HOUR of a kind per recipient per hour, and anyone can mute an address
+for themselves (social.notify_mutes) so nothing from it reaches them.
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from api.auth import current_address
+from api.auth import current_address, normalize_address
 from api.db import cursor
 
 router = APIRouter()
 
 KINDS = ("reply", "like", "post", "follow", "apply", "tip", "treasure", "lucky", "crown", "event_win", "sold", "offer", "offer_accepted", "agent_draft", "agent_posted", "agent_alert", "shop_sold", "pat", "tenant")
+CAPPED = ("reply", "like", "post", "follow", "apply", "pat")  # anyone can cause these for free
+PER_HOUR = 30
 PAGE = 30
+MAX_MUTES = 500
 
 
 def notify(cur, address, kind, actor, bitmap_number, post_id=None, tip_id=None, block_height=None, order_id=None):
@@ -22,6 +29,17 @@ def notify(cur, address, kind, actor, bitmap_number, post_id=None, tip_id=None, 
     assert kind in KINDS
     if not address or address == actor:
         return
+    cur.execute("select 1 from social.notify_mutes where address = %s and muted = %s;", (address, actor))
+    if cur.fetchone() is not None:
+        return
+    if kind in CAPPED:
+        cur.execute(
+            "select 1 from social.notifications where address = %s and kind = %s and created_at > now() - interval '1 hour' "
+            "offset %s limit 1;",
+            (address, kind, PER_HOUR - 1),
+        )
+        if cur.fetchone() is not None:
+            return
     cur.execute(
         "insert into social.notifications (address, kind, actor, bitmap_number, post_id, tip_id, block_height, order_id) "
         "values (%s, %s, %s, %s, %s, %s, %s, %s) on conflict do nothing;",
@@ -89,3 +107,31 @@ def mark_read(req: ReadBody, address: str = Depends(current_address)):
             (address, req.up_to, req.up_to),
         )
         return {"unread": _unread(cur, address)}
+
+
+@router.get("/v1/me/mutes")
+def my_mutes(address: str = Depends(current_address)):
+    with cursor() as cur:
+        cur.execute("select muted from social.notify_mutes where address = %s order by created_at;", (address,))
+        return {"mutes": [r[0] for r in cur.fetchall()]}
+
+
+@router.put("/v1/me/mutes/{target}")
+def mute(target: str, address: str = Depends(current_address)):
+    """No more notifications from target, for this address."""
+    target = normalize_address(target)
+    if target == address:
+        raise HTTPException(400, "you can't mute yourself")
+    with cursor() as cur:
+        cur.execute("select count(*) from social.notify_mutes where address = %s;", (address,))
+        if cur.fetchone()[0] >= MAX_MUTES:
+            raise HTTPException(400, f"at most {MAX_MUTES} muted addresses")
+        cur.execute("insert into social.notify_mutes (address, muted) values (%s, %s) on conflict do nothing;", (address, target))
+    return {"ok": True}
+
+
+@router.delete("/v1/me/mutes/{target}")
+def unmute(target: str, address: str = Depends(current_address)):
+    with cursor() as cur:
+        cur.execute("delete from social.notify_mutes where address = %s and muted = %s;", (address, normalize_address(target)))
+    return {"ok": True}

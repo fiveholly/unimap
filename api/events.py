@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from api import game, notify, roles, seasons, wallets
 from api.auth import current_address
 from api.db import cursor
+from api.moderation import writer_address
 
 router = APIRouter()
 
@@ -200,7 +201,7 @@ class NewEvent(BaseModel):
 
 
 @router.post("/v1/districts/{bitmap_number}/events", status_code=201)
-def create_event(bitmap_number: int, req: NewEvent, address: str = Depends(current_address)):
+def create_event(bitmap_number: int, req: NewEvent, address: str = Depends(writer_address)):
     if req.metric not in METRICS:
         raise HTTPException(400, f"metric is one of {', '.join(METRICS)}")
     if any(not MIN_PRIZE <= p <= MAX_PRIZE for p in req.prizes):

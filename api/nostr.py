@@ -19,10 +19,11 @@ import hashlib
 import json
 import re
 import time
+from typing import Annotated
 
 from coincurve import PublicKeyXOnly
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import AfterValidator, BaseModel
 
 from api import wallets
 from api.auth import current_address
@@ -88,8 +89,18 @@ def of(cur, address):
     return row[0] if row else None
 
 
+def bounded(ev):
+    """Refuse an event bigger than MAX_EVENT as JSON when the request is read (422), before any work."""
+    if ev is not None and len(json.dumps(ev)) > MAX_EVENT:
+        raise ValueError("this Nostr event is too big")
+    return ev
+
+
+Event = Annotated[dict, AfterValidator(bounded)]
+
+
 class EventBody(BaseModel):
-    event: dict
+    event: Event
 
 
 @router.get("/v1/me/nostr")
