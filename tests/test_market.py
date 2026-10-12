@@ -59,6 +59,7 @@ class FakeChain:
 
     def __init__(self):
         self.utxos = {}  # outpoint: [value, scriptPubKey, inscriptions]
+        self.offsets = {}  # inscription id: where in its output it sits, when not at 0
         self.sent = []
 
     def add(self, outpoint, value, spk, inscriptions=()):
@@ -69,7 +70,7 @@ class FakeChain:
         return (u[0], u[1]) if u else None
 
     def satpoint(self, iid):
-        return next((f"{op}:0" for op, u in self.utxos.items() if iid in u[2]), None)
+        return next((f"{op}:{self.offsets.get(iid, 0)}" for op, u in self.utxos.items() if iid in u[2]), None)
 
     def output(self, op):
         u = self.utxos.get(op)
@@ -98,12 +99,12 @@ class FakeChain:
         return True, None
 
     def send(self, raw):
-        """Spend the inputs; inscriptions follow their first sat (each sits at offset 0 of its input)."""
+        """Spend the inputs; inscriptions follow their sat."""
         tx = btc.Tx.parse(bytes.fromhex(raw))
         at, moves = 0, []
         for t in tx.inputs:
             value, _, ins = self.utxos.pop(t.outpoint)
-            moves += [(at, i) for i in ins]
+            moves += [(at + self.offsets.get(i, 0), i) for i in ins]
             at += value
         edges, at = [], 0
         for n, o in enumerate(tx.outputs):
@@ -112,8 +113,9 @@ class FakeChain:
         for n, o in enumerate(tx.outputs):
             self.add(f"{tx.txid}:{n}", o.value, o.script_pubkey)
         for offset, iid in moves:
-            n = next(n for lo, hi, n in edges if lo <= offset < hi)
+            lo, n = next((lo, n) for lo, hi, n in edges if lo <= offset < hi)
             self.utxos[f"{tx.txid}:{n}"][2].append(iid)
+            self.offsets[iid] = offset - lo
         self.sent.append(tx)
         return tx.txid
 

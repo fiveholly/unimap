@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
+import { MetricsPanel } from "@/components/Metrics";
 import { PostCard } from "@/components/PostCard";
 import { reasonLabel, REPORT_REASONS, type ReportReason } from "@/components/Report";
 import { useSession } from "@/components/Session";
@@ -15,11 +16,11 @@ const secs = (iso: string) => Date.parse(iso) / 1000;
 const banReason = (r: string) =>
   r.split(",").every((c) => REPORT_REASONS.includes(c as ReportReason)) ? r.split(",").map(reasonLabel).join(" · ") : r;
 
-/** 站点管理: reported posts to remove or dismiss, and the addresses barred from posting. */
+/** 站点管理: reported posts to remove or dismiss, the addresses barred from posting, and the roadmap's weekly numbers. */
 export default function AdminPage() {
   const { token, ready } = useSession();
   const [me, setMe] = useState<Me | null>(null);
-  const [tab, setTab] = useState<"reports" | "bans">("reports");
+  const [tab, setTab] = useState<"reports" | "bans" | "metrics">("reports");
   const [reports, setReports] = useState<ReportGroup[] | null>(null);
   const [bans, setBans] = useState<Ban[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -72,7 +73,7 @@ export default function AdminPage() {
   return (
     <div className="page narrow admin">
       <h1>{t("站点管理")}</h1>
-      <p className="muted small">{t("这里是全站的举报和封禁。被封禁的地址不能发帖和回复，街区主人自己的禁言不受影响。")}</p>
+      <p className="muted small">{t("这里是全站的举报、封禁和每周指标。被封禁的地址不能发帖和回复，街区主人自己的禁言不受影响。")}</p>
       <nav className="tabs" aria-label={t("站点管理")}>
         <button type="button" className={tab === "reports" ? "active" : ""} onClick={() => setTab("reports")}>
           {t("举报#tab")} <span className="mono">{reports?.length ?? ""}</span>
@@ -80,8 +81,12 @@ export default function AdminPage() {
         <button type="button" className={tab === "bans" ? "active" : ""} onClick={() => setTab("bans")}>
           {t("封禁")} <span className="mono">{bans?.length ?? ""}</span>
         </button>
+        <button type="button" className={tab === "metrics" ? "active" : ""} onClick={() => setTab("metrics")}>
+          {t("指标")}
+        </button>
       </nav>
       {error && <p className="error small">{error}</p>}
+      {tab === "metrics" && <MetricsPanel token={token} />}
       {tab === "reports" &&
         (reports == null ? (
           <p className="muted">{t("加载中…")}</p>
