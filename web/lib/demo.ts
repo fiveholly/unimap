@@ -3,7 +3,7 @@
 // here from deterministic fake data; what the visitor does (posts, likes, follows, profile
 // edits) is kept in localStorage, and "重置演示数据" clears it.
 
-import type { MarketOffer, OfferQuote, Agent, AgentDraft, AgentGrant, AgentInfo, AgentTask, AgentView, Application, Badge, CaredPet, Contest, MarketListing, ContestMetric, District, DistrictGame, Draw, Game, Season, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Metrics, ShopBought, ShopItem, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
+import type { MarketOffer, OfferQuote, Agent, AgentDraft, AgentGrant, AgentInfo, AgentTask, AgentView, Application, Tenant, Badge, CaredPet, Contest, MarketListing, ContestMetric, District, DistrictGame, Draw, Game, Season, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Metrics, ShopBought, ShopItem, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
 import { CLAIM_BLOCKS, pick, rarityOf, ROUND, roundOf, SEASON, seasonOf, sha256, type Rarity } from "./game";
 import { connected } from "./parks";
 import { MAX_SHOWN, PET_KEYS, PETS, type Pet, type PetKey } from "./pets";
@@ -138,6 +138,7 @@ type State = {
   styles?: Record<number, DistrictStyle>;
   recruits?: Record<number, { message: string; parcels: number[]; updated_at: string; by: string }>;
   applications?: Record<number, Application[]>;
+  tenants?: Record<number, Tenant[]>; // 暂住居民 (api/tenants.py)
   polls?: DemoPoll[];
   parks?: { id: number; name: string; owner: string; members: number[] }[];
   showcase?: Record<number, PetKey[]>; // what the visitor chose to show on their districts
@@ -150,6 +151,7 @@ type State = {
   petCare?: Partial<Record<PetKey, DemoCare>>; // 我的宠物: feeding and names (api/pets.py)
   nostr?: string | null; // the visitor's linked Nostr key
   parcelPet?: PetKey | null; // the pet the visitor shows on their parcel
+  pats?: Record<string, string>; // "owner:asset" -> the day the visitor last patted that pet (串门摸宠物)
   tips?: DemoTip[];
   boot?: number; // when this demo began: a new block is "mined" every DEMO_BLOCK_MS after it
   badges?: Badge[]; // the visitor's
@@ -181,8 +183,15 @@ function seedExtras(s: State) {
     840002: { message: "减半旁边的街区，欢迎新邻居。地块不多，先到先得。", parcels: [3, 8, 12], updated_at: iso(0.5), by: ownerOf(840002)! },
     839998: { message: "CBD 招商：想在手续费最高的那几天留个名字的，来这里。", parcels: [1, 2], updated_at: iso(1.2), by: ownerOf(839998)! },
     839941: { message: "矿工新村招居民，园区里七个街区隔着马路一起热闹。", parcels: [4, 9], updated_at: iso(2), by: SEED_PARK.owner },
+    840008: { message: "找几个常来聊天的邻居，先暂住，熟了再给地块。", parcels: [], updated_at: iso(0.8), by: DEMO_ADDRESS },
   };
-  s.applications ??= {};
+  // Two people waiting on the visitor's own notice, so "let them stay" can be tried.
+  s.applications ??= {
+    840008: [
+      { address: fakeAddress(4101), note: "每天都来巡城，想在这儿发帖", created_at: iso(0.6) },
+      { address: fakeAddress(4102), note: "", created_at: iso(0.2) },
+    ],
+  };
   s.polls ??= [
     { id: 1, n: 840001, question: "街区要不要在 coinbase 那块地上修一个广场？", options: ["修广场", "保持原样", "改成公园"], by: ownerOf(840001)!,
       created_at: iso(1), closes_at: iso(-6), closed_at: null, votes: { a: 0, b: 0, c: 2, d: 0, e: 1 } },
@@ -544,7 +553,15 @@ function petsAt(n: number): Pet[] {
   const held = holdingsOf(owner, n);
   const chosen = owner === DEMO_ADDRESS ? load().showcase?.[n] ?? [] : (Object.keys(held) as PetKey[]);
   const face = (k: PetKey) => (owner === DEMO_ADDRESS ? caredPet(k).face : null);
-  return chosen.flatMap((k) => (petTier(k, held[k] ?? 0) ? [{ asset: k, tier: petTier(k, held[k]!), amount: String(held[k]), face: face(k) }] : []));
+  return chosen.flatMap((k) => (petTier(k, held[k] ?? 0) ? [{ asset: k, tier: petTier(k, held[k]!), amount: String(held[k]), face: face(k), ...patsOf(owner, k) }] : []));
+}
+/** Today's pats on someone's pet, as api/pets.py: a made-up few from others, plus the visitor's. */
+function patsOf(owner: string | null, k: PetKey) {
+  if (!owner) return { pats: 0, patted: false };
+  const day = dayOf(Date.now());
+  const patted = owner !== DEMO_ADDRESS && load().pats?.[`${owner}:${k}`] === day;
+  const others = owner === DEMO_ADDRESS ? 0 : strHash(`${owner}:${k}:${day}`) % 4;
+  return { pats: others + (patted ? 1 : 0), patted };
 }
 /** {tx_index: "dog:2"}: residents' pets on their parcels; a made-up quarter of them show one. */
 function parcelPetsAt(n: number): Record<string, string> {
@@ -871,6 +888,7 @@ function events(n: number): LandEvent[] {
 function roleOf(address: string | null, n: number): [Role, number | null] {
   if (address && ownerOf(n) === address) return ["owner", null];
   if (address === DEMO_ADDRESS && n === OWN_PARCEL.bitmap_number) return ["resident", OWN_PARCEL.tx_index];
+  if (address && load().tenants?.[n]?.some((x) => x.address === address)) return ["tenant", null];
   return ["visitor", null];
 }
 function profile(n: number): District["profile"] {
@@ -1190,6 +1208,40 @@ function route(path: string, opts: Opts): unknown {
       .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
     return { districts: out };
   }
+  // 开张 (api/opening.py)
+  if ((m = p.match(/^\/v1\/districts\/(\d+)\/opening$/))) {
+    const n = +m[1], a = owns(n);
+    const steps = {
+      bio: !!profile(n).bio,
+      post: s.posts.some((x) => x.bitmap_number === n && x.author.address === a && x.reply_to == null && !x.removed),
+      recruit: s.recruits?.[n]?.by === a,
+    };
+    let badge = (s.badges ?? []).find((x) => x.kind === "opening" && x.height === n) ?? null;
+    let fresh = false;
+    if (!badge && steps.bio && steps.post && steps.recruit) {
+      badge = { kind: "opening", height: n, bitmap_number: n, tx_index: null, rarity: "rare", created_at: new Date().toISOString() };
+      (s.badges ??= []).unshift(badge);
+      fresh = true;
+      save();
+    }
+    return { steps, opened: !!badge, badge, new: fresh };
+  }
+  if (p === "/v1/opened") {
+    // The visitor's own, and two the made-up owners opened lately.
+    const mine = (s.badges ?? []).filter((x) => x.kind === "opening" && Date.now() - Date.parse(x.created_at) < 7 * DAY * 1000).map((x) => ({ n: x.bitmap_number, at: x.created_at }));
+    const seeded = [
+      { n: 840001, at: iso(1.5), bio: "减半之后挖出的第一个街区，每周六晚上在这里聊天。" },
+      { n: 839998, at: iso(4), bio: "CBD 的老街区，手续费最高那几天的见证。" },
+    ];
+    return {
+      districts: [...mine, ...seeded].map(({ n, at, bio }: { n: number; at: string; bio?: string }) => ({
+        bitmap_number: n,
+        opened_at: at,
+        bio: (profile(n).bio || bio || "").slice(0, 80),
+        posts: s.posts.filter((x) => x.bitmap_number === n && x.reply_to == null && !x.removed).length,
+      })),
+    };
+  }
   if ((m = p.match(/^\/v1\/districts\/(\d+)\/recruit$/))) {
     const n = +m[1], a = owns(n);
     if (method === "DELETE") {
@@ -1217,9 +1269,37 @@ function route(path: string, opts: Opts): unknown {
       if (!recruitAt(n, a)) fail(404, "这个街区没有在招募");
       if (roleOf(a, n)[0] !== "visitor") fail(400, "你已经住在这里了");
       s.applications![n] = [...list.filter((x) => x.address !== a), { address: a, note: String(body.note ?? "").trim(), created_at: new Date().toISOString() }];
+      // The demo's made-up owners say yes at once, so the visitor sees what being a tenant is like.
+      const o = ownerOf(n);
+      if (o && o !== a) {
+        s.applications![n] = s.applications![n].filter((x) => x.address !== a);
+        s.tenants = { ...s.tenants, [n]: [{ address: a, since: new Date().toISOString() }, ...(s.tenants?.[n] ?? [])] };
+        const ids = (s.notifications ?? []).map((x) => x.id);
+        s.notifications = [{ id: Math.max(0, ...ids) + 1, kind: "tenant", actor: o, bitmap_number: n, post_id: null, created_at: new Date().toISOString(), read: false, snippet: null }, ...(s.notifications ?? [])];
+      }
     }
     save();
     return { ok: true };
+  }
+  if ((m = p.match(/^\/v1\/districts\/(\d+)\/tenants(?:\/([^/]+))?$/))) {
+    const n = +m[1], max = 20;
+    const list = () => ({ tenants: s.tenants?.[n] ?? [], max });
+    if (method === "GET") return list();
+    const a = needMe();
+    if (method === "DELETE") {
+      const who = decodeURIComponent(m[2] ?? "");
+      if (who !== a) owns(n);
+      s.tenants = { ...s.tenants, [n]: (s.tenants?.[n] ?? []).filter((x) => x.address !== who) };
+    } else {
+      owns(n);
+      const who = String(body.address ?? "");
+      if (!(s.applications![n] ?? []).some((x) => x.address === who)) fail(404, "they haven't applied here");
+      if ((s.tenants?.[n] ?? []).length >= max) fail(409, `at most ${max} tenants a district`);
+      s.applications![n] = s.applications![n].filter((x) => x.address !== who);
+      s.tenants = { ...s.tenants, [n]: [{ address: who, since: new Date().toISOString() }, ...(s.tenants?.[n] ?? [])] };
+    }
+    save();
+    return list();
   }
   if ((m = p.match(/^\/v1\/districts\/(\d+)\/polls$/))) {
     const n = +m[1];
@@ -1431,6 +1511,18 @@ function route(path: string, opts: Opts): unknown {
     s.petCare = { ...s.petCare, [k]: c };
     save();
     return caredPet(k);
+  }
+  if ((m = p.match(/^\/v1\/people\/([^/]+)\/pets\/(\w+)\/pat$/))) {
+    const me = needMe();
+    const owner = decodeURIComponent(m[1]), k = m[2] as PetKey;
+    if (owner === me) fail(400, "that's your own pet");
+    // The demo's owners hold pets district by district, so any known pet is taken as shown.
+    if (!PET_KEYS.includes(k)) fail(404, "this pet isn't shown anywhere");
+    const day = dayOf(Date.now());
+    if (s.pats?.[`${owner}:${k}`] === day) fail(409, "you already patted it today");
+    s.pats = { ...s.pats, [`${owner}:${k}`]: day };
+    save();
+    return { asset: k, ...patsOf(owner, k) };
   }
   if (p === "/v1/me/lightning") {
     needMe();

@@ -286,6 +286,69 @@ class SocialApi(unittest.TestCase):
         self.assertEqual(self.client.delete(f"/v1/districts/{DISTRICT}/recruit", headers=self.h(ALICE)).status_code, 200)
         self.assertIsNone(self.client.get(f"/v1/districts/{DISTRICT}").json()["recruit"])
 
+    def test_tenants(self):
+        self.client.put(f"/v1/districts/{DISTRICT}/recruit", json={"message": "找邻居"}, headers=self.h(ALICE))
+        let = lambda who, w=ALICE: self.client.post(f"/v1/districts/{DISTRICT}/tenants", json={"address": who.address}, headers=self.h(w))
+        try:
+            self.assertEqual(let(CAROL).status_code, 404)  # hasn't applied
+            self.client.put(f"/v1/districts/{DISTRICT}/application", json={"note": "让我住吧"}, headers=self.h(CAROL))
+            self.assertEqual(let(CAROL, BOB).status_code, 403)  # only the owner
+            self.assertEqual(self.post(CAROL, "还不能发").status_code, 403)
+            r = let(CAROL)
+            self.assertEqual(r.status_code, 201, r.text)
+            self.assertEqual([t["address"] for t in r.json()["tenants"]], [CAROL.address])
+            self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}/applications", headers=self.h(ALICE)).json()["applications"], [])
+            page = self.client.get(f"/v1/districts/{DISTRICT}", headers=self.h(CAROL)).json()
+            self.assertEqual((page["viewer"]["role"], page["viewer"]["parcel"]), ("tenant", None))
+            mine = self.post(CAROL, "我搬进来了")
+            self.assertEqual(mine.status_code, 201, mine.text)
+            self.assertEqual(mine.json()["author"]["role"], "tenant")
+            told = self.client.get("/v1/notifications", headers=self.h(CAROL)).json()["notifications"]
+            self.assertIn(("tenant", ALICE.address, DISTRICT), [(n["kind"], n["actor"], n["bitmap_number"]) for n in told])
+            self.assertEqual(self.client.put(f"/v1/districts/{DISTRICT}/application", json={}, headers=self.h(CAROL)).status_code, 400)
+            # The stay ends when the district changes hands.
+            with self.conn.cursor() as cur:
+                cur.execute("update inscription_owners set address = 'bcrt1qbuyer' where inscription_id = 'd100i0';")
+            try:
+                self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}/tenants").json()["tenants"], [])
+                self.assertEqual(self.post(CAROL, "还在吗").status_code, 403)
+            finally:
+                with self.conn.cursor() as cur:
+                    cur.execute("update inscription_owners set address = %s where inscription_id = 'd100i0';", (ALICE.address,))
+            self.assertEqual(self.client.delete(f"/v1/districts/{DISTRICT}/tenants/{CAROL.address}", headers=self.h(BOB)).status_code, 403)
+            gone = self.client.delete(f"/v1/districts/{DISTRICT}/tenants/{CAROL.address}", headers=self.h(CAROL))
+            self.assertEqual(gone.json()["tenants"], [])
+            self.assertEqual(self.post(CAROL, "走了").status_code, 403)
+        finally:
+            self.client.delete(f"/v1/districts/{DISTRICT}/recruit", headers=self.h(ALICE))
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.tenants; delete from social.posts where author_address = %s; delete from social.notifications where kind = 'tenant';", (CAROL.address,))
+
+    def test_opening(self):
+        clean = "delete from social.posts where bitmap_number = 105; delete from social.profiles where bitmap_number = 105; delete from social.recruitments where bitmap_number = 105; delete from social.badges where kind = 'opening';"
+        with self.conn.cursor() as cur:
+            cur.execute(clean)
+        try:
+            get = lambda w=CAROL: self.client.get(f"/v1/districts/{OTHER}/opening", headers=self.h(w))
+            self.assertEqual(get(ALICE).status_code, 403)
+            self.assertEqual(get().json()["steps"], {"bio": False, "post": False, "recruit": False})
+            self.client.put(f"/v1/districts/{OTHER}/profile", json={"bio": "新开的小街"}, headers=self.h(CAROL))
+            self.assertEqual(self.post(CAROL, "开张啦", district=OTHER).status_code, 201)
+            r = get().json()
+            self.assertEqual((r["steps"], r["opened"]), ({"bio": True, "post": True, "recruit": False}, False))
+            self.assertEqual(self.client.get("/v1/opened").json()["districts"], [])
+            self.client.put(f"/v1/districts/{OTHER}/recruit", json={"message": "来住"}, headers=self.h(CAROL))
+            r = get().json()
+            self.assertEqual((r["opened"], r["new"], r["badge"]["kind"]), (True, True, "opening"))
+            self.assertFalse(get().json()["new"])  # earned once
+            listed = self.client.get("/v1/opened").json()["districts"]
+            self.assertEqual([(d["bitmap_number"], d["bio"], d["posts"]) for d in listed], [(OTHER, "新开的小街", 1)])
+            kinds = [b["kind"] for b in self.client.get(f"/v1/people/{CAROL.address}").json()["badges"]]
+            self.assertIn("opening", kinds)
+        finally:
+            with self.conn.cursor() as cur:
+                cur.execute(clean)
+
     def test_polls(self):
         new = lambda w, **kw: self.client.post(f"/v1/districts/{DISTRICT}/polls", json={"question": "修个广场？", "options": ["好", "不好"], **kw}, headers=self.h(w))
         self.assertEqual(new(BOB).status_code, 403)
@@ -491,7 +554,7 @@ class SocialApi(unittest.TestCase):
                 put = self.client.put(f"/v1/districts/{DISTRICT}/showcase", json={"assets": ["dog", "cat"]}, headers=self.h(ALICE))
                 self.assertEqual(put.status_code, 200, put.text)
                 self.assertEqual([p["asset"] for p in put.json()["shown"]], ["dog", "cat"])
-                self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}").json()["pets"][0], {"asset": "dog", "tier": 2, "amount": "2500000.5", "face": None})
+                self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}").json()["pets"][0], {"asset": "dog", "tier": 2, "amount": "2500000.5", "face": None, "pats": 0, "patted": False})
                 tiles = {t["bitmap_number"]: t for t in self.client.get(f"/v1/land?start={DISTRICT}&end={OTHER}").json()["tiles"]}
                 self.assertEqual((tiles[DISTRICT]["pets"], tiles[OTHER]["pets"]), (["dog:2", "cat:1"], []))
                 # 刷新 is rate limited; a provider failure keeps the old cache.
@@ -1116,6 +1179,52 @@ class SocialApi(unittest.TestCase):
                     "delete from social.worn_badges; delete from social.badges where address in (%s, %s); delete from social.showcase; "
                     "delete from social.holdings; delete from social.pet_care;",
                     (frank.address, ALICE.address),
+                )
+
+    def test_pet_pats(self):
+        from api import pets
+
+        gina = Wallet(12)
+        self.tokens[gina.address] = self.login(gina)
+        pat = lambda w, a, asset="dog": self.client.post(f"/v1/people/{a}/pets/{asset}/pat", headers=self.h(w))
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("insert into social.holdings (address, asset, amount) values (%s, 'dog', 5), (%s, 'frog', 1);", (BOB.address, BOB.address))
+            # A pet nobody can see can't be patted; nor your own.
+            self.assertEqual(pat(gina, BOB.address).status_code, 404)
+            self.client.put("/v1/me/pets/dog", json={"public": True}, headers=self.h(BOB))
+            self.assertEqual(pat(BOB, BOB.address).status_code, 400)
+            self.assertEqual(pat(gina, BOB.address, "cat").status_code, 404)
+            # Once a day each; the owner hears about it and the pet gets a little affection.
+            dog = pat(gina, BOB.address).json()
+            self.assertEqual((dog["asset"], dog["pats"], dog["patted"]), ("dog", 1, True))
+            self.assertEqual(pat(gina, BOB.address).status_code, 409)
+            self.assertEqual(self.client.get("/v1/me/pets", headers=self.h(BOB)).json()["pets"][0]["affection"], pets.PAT_AFFECTION)
+            n = self.client.get("/v1/notifications", headers=self.h(BOB)).json()["notifications"][0]
+            self.assertEqual((n["kind"], n["actor"]), ("pat", gina.address))
+            page = {p["asset"]: p for p in self.client.get(f"/v1/people/{BOB.address}", headers=self.h(gina)).json()["pets"]}
+            self.assertEqual((page["dog"]["pats"], page["dog"]["patted"]), (1, True))
+            self.assertFalse(self.client.get(f"/v1/people/{BOB.address}", headers=self.h(CAROL)).json()["pets"][0]["patted"])
+            # Pats stop adding affection past PAT_CAP a day, though they still count.
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "insert into social.pet_pats (day, owner, asset, patter) select (now() at time zone 'utc')::date, %s, 'dog', 'x' || i from generate_series(1, 9) i;",
+                    (BOB.address,),
+                )
+            self.assertEqual(pat(CAROL, BOB.address).json()["pats"], 11)
+            self.assertEqual(self.client.get("/v1/me/pets", headers=self.h(BOB)).json()["pets"][0]["affection"], pets.PAT_AFFECTION)
+            # A pet shown on a district its owner holds can be patted there too.
+            with self.conn.cursor() as cur:
+                cur.execute("insert into social.holdings (address, asset, amount) values (%s, 'frog', 1);", (ALICE.address,))
+                cur.execute("insert into social.showcase (bitmap_number, assets, updated_by) values (100, %s, %s);", (["frog"], ALICE.address))
+            self.assertEqual(pat(gina, ALICE.address, "frog").status_code, 200)
+            shown = self.client.get("/v1/districts/100", headers=self.h(gina)).json()["pets"]
+            self.assertEqual([(p["asset"], p["pats"], p["patted"]) for p in shown], [("frog", 1, True)])
+        finally:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "delete from social.pet_pats; delete from social.pet_care; delete from social.holdings; delete from social.showcase; "
+                    "delete from social.notifications where kind = 'pat';"
                 )
 
     def test_seasons(self):

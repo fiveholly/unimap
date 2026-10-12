@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 
 import { drawShapes, petShapes, shapesBounds } from "@/lib/iso";
+import { useSession } from "./Session";
+import { api } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { amountText, inscriptionImage, PET_LOGOS, PETS, type Pet, type PetKey } from "@/lib/pets";
 
@@ -49,8 +51,43 @@ export function PetFace({ asset, tier, face, size }: { asset: PetKey; tier: numb
 // English looks are lower case for use mid-sentence; a heading wants a capital.
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
+/** 摸一摸 (api/pets.py): pat someone else's pet once a day; it gets a little affection and its
+ * owner hears about it. */
+export function PatButton({ owner, pet }: { owner: string; pet: Pet }) {
+  const { token, address } = useSession();
+  const [state, setState] = useState({ pats: pet.pats ?? 0, patted: !!pet.patted });
+  const [hearts, setHearts] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!token || address === owner) return state.pats ? <span className="dim small">{t("今天被摸了 {n} 次", { n: state.pats })}</span> : null;
+  const pat = async () => {
+    setError(null);
+    try {
+      const r = await api<Pet>(`/v1/people/${encodeURIComponent(owner)}/pets/${pet.asset}/pat`, { method: "POST", token });
+      setState({ pats: r.pats ?? state.pats + 1, patted: true });
+      setHearts(true);
+      setTimeout(() => setHearts(false), 1200);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  return (
+    <span className="pet-pat small">
+      <button type="button" className="ghost sm" disabled={state.patted} onClick={pat}>
+        {state.patted ? t("今天摸过了") : t("摸一摸")}
+      </button>
+      {state.pats > 0 && <span className="dim">{t("今天被摸了 {n} 次", { n: state.pats })}</span>}
+      {hearts && (
+        <span className="pet-pat-heart" aria-hidden>
+          ♥
+        </span>
+      )}
+      {error && <span className="error">{error}</span>}
+    </span>
+  );
+}
+
 /** 藏品: what the owner shows of their wallet, on the district page. */
-export function PetsCard({ pets }: { pets: Pet[] }) {
+export function PetsCard({ pets, owner }: { pets: Pet[]; owner?: string | null }) {
   if (!pets.length) return null;
   return (
     <section className="callout pets-card" aria-label={t("藏品")}>
@@ -65,6 +102,7 @@ export function PetsCard({ pets }: { pets: Pet[] }) {
                 {PETS[p.asset].asset}
               </span>
               <span className="mono small">{amountText(p.asset, p.amount)}</span>
+              {owner && <PatButton owner={owner} pet={p} />}
             </span>
           </li>
         ))}
