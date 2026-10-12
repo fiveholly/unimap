@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS social.posts (
 	id bigserial NOT NULL,
 	bitmap_number int4 NOT NULL,
 	author_address text NOT NULL,
-	author_role text NOT NULL, -- owner | resident | visitor
+	author_role text NOT NULL, -- owner | resident | tenant | visitor
 	author_parcel int4 NULL, -- tx_index of the parcel that made the author a resident
 	author_bitmap int4 NULL, -- district the author chose to post as
 	reply_to int8 NULL,
@@ -138,7 +138,7 @@ CREATE TABLE IF NOT EXISTS social.poll_votes (
 	poll_id int8 NOT NULL,
 	address text NOT NULL,
 	option int2 NOT NULL,
-	role text NOT NULL, -- owner | resident, when they voted
+	role text NOT NULL, -- owner | resident | tenant, when they voted
 	created_at timestamptz NOT NULL DEFAULT now(),
 	CONSTRAINT poll_votes_pk PRIMARY KEY (poll_id, address)
 );
@@ -186,7 +186,7 @@ CREATE TABLE IF NOT EXISTS social.holdings_checked (
 CREATE TABLE IF NOT EXISTS social.notifications (
 	id bigserial NOT NULL,
 	address text NOT NULL,
-	kind text NOT NULL, -- reply | like | post | follow | apply
+	kind text NOT NULL, -- reply | like | post | follow | apply | tip | treasure | lucky | crown | event_win | sold | offer | offer_accepted | agent_draft | agent_alert | pat | tenant
 	actor text NOT NULL,
 	bitmap_number int4 NOT NULL,
 	post_id int8 NULL, -- the reply, the liked post or the new post
@@ -229,3 +229,419 @@ CREATE TABLE IF NOT EXISTS social.wallet_links (
 	CONSTRAINT wallet_links_not_self CHECK (address <> main_address)
 );
 CREATE INDEX IF NOT EXISTS wallet_links_main_idx ON social.wallet_links USING btree (main_address);
+
+-- Reports and site moderation (api/moderation.py). One report per post per reporter.
+CREATE TABLE IF NOT EXISTS social.reports (
+	post_id int8 NOT NULL,
+	reporter text NOT NULL,
+	reason text NOT NULL, -- spam | abuse | scam | other
+	note text NOT NULL DEFAULT '',
+	created_at timestamptz NOT NULL DEFAULT now(),
+	resolved_at timestamptz NULL,
+	resolved_by text NULL,
+	resolution text NULL, -- removed | dismissed
+	CONSTRAINT reports_pk PRIMARY KEY (post_id, reporter)
+);
+CREATE INDEX IF NOT EXISTS reports_open_idx ON social.reports USING btree (post_id) WHERE resolved_at IS NULL;
+-- Addresses a site admin stopped from posting anywhere, until expires_at (null: for good).
+CREATE TABLE IF NOT EXISTS social.bans (
+	address text NOT NULL,
+	reason text NOT NULL DEFAULT '',
+	banned_by text NOT NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	expires_at timestamptz NULL,
+	CONSTRAINT bans_pk PRIMARY KEY (address)
+);
+
+-- Districts listed for sale on a marketplace (api/listings.py), replaced on every refresh.
+CREATE TABLE IF NOT EXISTS social.listings (
+	inscription_id text NOT NULL,
+	price_sats int8 NOT NULL,
+	seller text NOT NULL,
+	market text NOT NULL,
+	listed_at timestamptz NULL,
+	CONSTRAINT listings_pk PRIMARY KEY (inscription_id)
+);
+CREATE TABLE IF NOT EXISTS social.listings_checked (
+	market text NOT NULL,
+	checked_at timestamptz NOT NULL, -- last try, successful or not
+	ok_at timestamptz NULL, -- last time the marketplace answered
+	CONSTRAINT listings_checked_pk PRIMARY KEY (market)
+);
+
+-- Lightning tips (api/tips.py). A wallet group's Lightning address, kept under its main address.
+CREATE TABLE IF NOT EXISTS social.lightning_addresses (
+	address text NOT NULL,
+	lightning_address text NOT NULL, -- name@domain (LUD-16)
+	updated_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT lightning_addresses_pk PRIMARY KEY (address)
+);
+-- One tip: an invoice from the recipient's wallet, paid straight to them. We only keep the record.
+CREATE TABLE IF NOT EXISTS social.tips (
+	id bigserial NOT NULL,
+	tipper text NOT NULL,
+	recipient text NOT NULL, -- the post's author or the district's owner when the tip was made
+	bitmap_number int4 NOT NULL,
+	post_id int8 NULL, -- null: a tip to the district's owner
+	amount_sats int8 NOT NULL,
+	comment text NOT NULL DEFAULT '',
+	invoice text NOT NULL,
+	verify_url text NULL, -- LUD-21; without one a payment can't be confirmed and isn't counted
+	status text NOT NULL DEFAULT 'pending', -- pending | settled | expired
+	checked_at timestamptz NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	settled_at timestamptz NULL,
+	CONSTRAINT tips_pk PRIMARY KEY (id)
+);
+CREATE INDEX IF NOT EXISTS tips_post_idx ON social.tips USING btree (post_id) WHERE status = 'settled';
+CREATE INDEX IF NOT EXISTS tips_district_idx ON social.tips USING btree (bitmap_number, settled_at) WHERE status = 'settled';
+CREATE INDEX IF NOT EXISTS tips_tipper_idx ON social.tips USING btree (tipper, created_at);
+-- Tip notifications carry the tip, so each tip is told even from the same person on the same post.
+DO $$
+BEGIN
+	IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'social' AND table_name = 'notifications' AND column_name = 'tip_id') THEN
+		ALTER TABLE social.notifications ADD COLUMN tip_id int8 NULL;
+		ALTER TABLE social.notifications DROP CONSTRAINT IF EXISTS notifications_once;
+		ALTER TABLE social.notifications ADD CONSTRAINT notifications_once
+			UNIQUE NULLS NOT DISTINCT (address, kind, actor, bitmap_number, post_id, tip_id);
+	END IF;
+END $$;
+
+-- 区块节拍 (api/game.py): what each new block draws. Every block picks a treasure parcel; every
+-- ROUND-th block also picks the lucky district for the next ROUND blocks. Recomputed if a reorg
+-- replaces the block.
+CREATE TABLE IF NOT EXISTS social.block_draws (
+	height int4 NOT NULL,
+	block_hash text NOT NULL,
+	treasure_bitmap int4 NULL, -- null when no parcel was claimed before this block
+	treasure_tx int4 NULL,
+	treasure_of int4 NOT NULL, -- how many parcels it was drawn from
+	rarity text NOT NULL, -- common | rare | epic | legendary, from the block hash
+	lucky_bitmap int4 NULL, -- only on round starts
+	lucky_of int4 NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT block_draws_pk PRIMARY KEY (height)
+);
+CREATE INDEX IF NOT EXISTS block_draws_lucky_idx ON social.block_draws USING btree (height) WHERE lucky_bitmap IS NOT NULL;
+-- Badges won in the game: a treasure opened, a lucky round as its district's owner, a visit to the lucky district.
+CREATE TABLE IF NOT EXISTS social.badges (
+	id bigserial NOT NULL,
+	address text NOT NULL,
+	kind text NOT NULL, -- treasure | lucky | lucky_visit | crown | tour | opening
+	height int4 NOT NULL, -- the block that drew it; tour: the day, as days since 1970-01-01; opening: the district
+	bitmap_number int4 NOT NULL,
+	tx_index int4 NULL, -- treasure: the parcel
+	rarity text NOT NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT badges_pk PRIMARY KEY (id),
+	CONSTRAINT badges_once UNIQUE (kind, height, address)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS badges_one_treasure ON social.badges USING btree (height) WHERE kind = 'treasure';
+CREATE INDEX IF NOT EXISTS badges_address_idx ON social.badges USING btree (address, id);
+-- Game notifications carry the block that drew them, so each treasure or lucky round is told.
+DO $$
+BEGIN
+	IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'social' AND table_name = 'notifications' AND column_name = 'block_height') THEN
+		ALTER TABLE social.notifications ADD COLUMN block_height int4 NULL;
+		ALTER TABLE social.notifications DROP CONSTRAINT IF EXISTS notifications_once;
+		ALTER TABLE social.notifications ADD CONSTRAINT notifications_once
+			UNIQUE NULLS NOT DISTINCT (address, kind, actor, bitmap_number, post_id, tip_id, block_height);
+	END IF;
+END $$;
+
+-- 难度调整赛季 (api/seasons.py): one row per season once its start time is known; winners are
+-- frozen when the season ends, and wear a crown on the map through the next season.
+CREATE TABLE IF NOT EXISTS social.seasons (
+	number int4 NOT NULL, -- blocks number*2016 .. number*2016+2015
+	start_time timestamptz NOT NULL, -- the first block's timestamp
+	winners jsonb NULL, -- [{bitmap_number, owner, score}], best first; null until the season ends
+	frozen_at timestamptz NULL,
+	CONSTRAINT seasons_pk PRIMARY KEY (number)
+);
+
+-- 街区活动 (api/events.py): an owner's prizes in sats for whoever does the most in the district
+-- over one season. The host pays each prize as a tip carrying event_id and event_place.
+CREATE TABLE IF NOT EXISTS social.events (
+	id bigserial NOT NULL,
+	bitmap_number int4 NOT NULL,
+	season int4 NOT NULL,
+	host text NOT NULL, -- the owner who put it up
+	metric text NOT NULL, -- posts | replies | checkins
+	prizes int8[] NOT NULL, -- sats for 1st, 2nd, 3rd
+	note text NOT NULL DEFAULT '',
+	created_at timestamptz NOT NULL DEFAULT now(),
+	cancelled_at timestamptz NULL, -- only before the season starts
+	winners jsonb NULL, -- [{address, score, prize_sats}], best first; null until the season ends
+	frozen_at timestamptz NULL,
+	CONSTRAINT events_pk PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS events_one_a_season ON social.events USING btree (bitmap_number, season) WHERE cancelled_at IS NULL;
+CREATE INDEX IF NOT EXISTS events_season_idx ON social.events USING btree (season) WHERE cancelled_at IS NULL;
+ALTER TABLE social.tips ADD COLUMN IF NOT EXISTS event_id int8 NULL;
+ALTER TABLE social.tips ADD COLUMN IF NOT EXISTS event_place int2 NULL;
+CREATE INDEX IF NOT EXISTS tips_event_idx ON social.tips USING btree (event_id) WHERE event_id IS NOT NULL;
+
+-- 站内交易 (api/market.py): a listing is the seller's signed half of a PSBT; it lives while the
+-- inscription stays on outpoint. A quote is the purchase as handed to the buyer's wallet.
+CREATE TABLE IF NOT EXISTS social.market_listings (
+	id bigserial NOT NULL,
+	inscription_id text NOT NULL,
+	bitmap_number int4 NOT NULL,
+	tx_index int4 NULL, -- a parcel; null for a district
+	seller text NOT NULL,
+	price_sats int8 NOT NULL,
+	pay_to_script text NOT NULL, -- hex scriptPubKey the seller signed to be paid at
+	outpoint text NOT NULL, -- the output holding the inscription when it was listed
+	postage_sats int8 NOT NULL, -- that output's value, which goes to the buyer with it
+	psbt text NOT NULL, -- base64; the seller's input is final
+	status text NOT NULL DEFAULT 'active', -- active | sold | cancelled | replaced
+	buyer text NULL,
+	sold_txid text NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	updated_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT market_listings_pk PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS market_listings_one_active ON social.market_listings USING btree (inscription_id) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS market_listings_district_idx ON social.market_listings USING btree (bitmap_number) WHERE status = 'active';
+-- 园区打包卖: a listing of one output holding every district of a park, sold whole.
+ALTER TABLE social.market_listings ADD COLUMN IF NOT EXISTS park_id int8 NULL;
+ALTER TABLE social.market_listings ADD COLUMN IF NOT EXISTS members int4[] NULL; -- the park's districts, all in the listed output
+-- Moving a park's districts into one output (pack) or back into one output each (unpack), as handed to the owner's wallet.
+CREATE TABLE IF NOT EXISTS social.market_moves (
+	id bigserial NOT NULL,
+	kind text NOT NULL, -- pack | unpack
+	park_id int8 NOT NULL,
+	owner text NOT NULL,
+	psbt text NOT NULL, -- base64
+	expires_at timestamptz NOT NULL,
+	txid text NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT market_moves_pk PRIMARY KEY (id)
+);
+CREATE TABLE IF NOT EXISTS social.market_quotes (
+	id bigserial NOT NULL,
+	listing_id int8 NOT NULL,
+	buyer text NOT NULL,
+	psbt text NOT NULL, -- base64, as handed to the buyer
+	expires_at timestamptz NOT NULL,
+	used_at timestamptz NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT market_quotes_pk PRIMARY KEY (id)
+);
+
+-- 出价 (api/market.py): a buyer's signed purchase of something nobody listed, waiting for the holder.
+CREATE TABLE IF NOT EXISTS social.market_offers (
+	id bigserial NOT NULL,
+	inscription_id text NOT NULL,
+	bitmap_number int4 NOT NULL,
+	tx_index int4 NULL, -- a parcel; null for a district
+	buyer text NOT NULL,
+	seller text NOT NULL, -- the address holding it when the offer was made; the price goes there
+	price_sats int8 NOT NULL,
+	outpoint text NOT NULL, -- the output holding the inscription then
+	psbt text NOT NULL, -- base64; the buyer's inputs are final once signed
+	status text NOT NULL DEFAULT 'unsigned', -- unsigned | active | accepted | cancelled | declined | expired
+	txid text NULL,
+	expires_at timestamptz NOT NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	updated_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT market_offers_pk PRIMARY KEY (id)
+);
+CREATE INDEX IF NOT EXISTS market_offers_district_idx ON social.market_offers USING btree (bitmap_number) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS market_offers_buyer_idx ON social.market_offers USING btree (buyer, id);
+CREATE INDEX IF NOT EXISTS market_offers_seller_idx ON social.market_offers USING btree (seller, id);
+
+-- 街区 agent (api/agent.py): a helper the owner of a district or a parcel grants, with a wallet signature,
+-- the right to draft posts there and publish those the owner approves, signed with its own key.
+CREATE TABLE IF NOT EXISTS social.agents (
+	id bigserial NOT NULL,
+	bitmap_number int4 NOT NULL,
+	owner text NOT NULL, -- who signed the grant
+	agent_key text NOT NULL, -- x-only public key (BIP-340), hex
+	agent_secret text NOT NULL, -- its private key; it can only sign posts under the grant
+	grant_message text NOT NULL,
+	grant_signature text NULL, -- null until the owner signs
+	posts_per_day int2 NOT NULL,
+	expires_at timestamptz NOT NULL,
+	persona text NOT NULL DEFAULT '',
+	tasks text[] NOT NULL DEFAULT '{welcome,digest,answers}',
+	watch jsonb NOT NULL DEFAULT '{}', -- {radius, max_price_sats}: listings nearby to tell the owner about
+	memory jsonb NOT NULL DEFAULT '[]', -- short notes the agent keeps between runs
+	state jsonb NOT NULL DEFAULT '{}', -- what it has already looked at
+	paid_until timestamptz NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	granted_at timestamptz NULL,
+	revoked_at timestamptz NULL,
+	last_run_at timestamptz NULL,
+	CONSTRAINT agents_pk PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS agents_key_idx ON social.agents USING btree (agent_key);
+CREATE TABLE IF NOT EXISTS social.agent_drafts (
+	id bigserial NOT NULL,
+	agent_id int8 NOT NULL,
+	bitmap_number int4 NOT NULL,
+	reply_to int8 NULL,
+	body text NOT NULL,
+	why text NOT NULL DEFAULT '', -- what prompted it, for the owner
+	task text NOT NULL, -- welcome | digest | answers
+	status text NOT NULL DEFAULT 'pending', -- pending | posted | discarded | expired
+	post_id int8 NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	decided_at timestamptz NULL,
+	CONSTRAINT agent_drafts_pk PRIMARY KEY (id)
+);
+CREATE INDEX IF NOT EXISTS agent_drafts_agent_idx ON social.agent_drafts USING btree (agent_id, id);
+-- Posting on its own: only under a grant that says so, and only for the tasks the owner picked.
+ALTER TABLE social.agents ADD COLUMN IF NOT EXISTS may_publish bool NOT NULL DEFAULT false; -- the signed grant lets it post without asking
+ALTER TABLE social.agents ADD COLUMN IF NOT EXISTS auto_tasks text[] NOT NULL DEFAULT '{}'; -- tasks whose drafts it posts itself
+-- A resident's agent looks after one parcel: tx_index is set, and it acts as that parcel's holder.
+ALTER TABLE social.agents ADD COLUMN IF NOT EXISTS tx_index int4 NULL; -- null for the district's own agent
+DROP INDEX IF EXISTS social.agents_one_live;
+CREATE UNIQUE INDEX IF NOT EXISTS agents_one_live_each ON social.agents USING btree (bitmap_number, coalesce(tx_index, -1))
+	WHERE grant_signature IS NOT NULL AND revoked_at IS NULL;
+ALTER TABLE social.agent_drafts ADD COLUMN IF NOT EXISTS auto bool NOT NULL DEFAULT false; -- posted by the agent without the owner looking first
+CREATE TABLE IF NOT EXISTS social.agent_payments (
+	id bigserial NOT NULL,
+	agent_id int8 NOT NULL,
+	payer text NOT NULL,
+	amount_sats int8 NOT NULL,
+	invoice text NOT NULL,
+	verify_url text NOT NULL,
+	status text NOT NULL DEFAULT 'pending', -- pending | settled | expired
+	checked_at timestamptz NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	settled_at timestamptz NULL,
+	CONSTRAINT agent_payments_pk PRIMARY KEY (id)
+);
+ALTER TABLE social.posts ADD COLUMN IF NOT EXISTS agent_id int8 NULL; -- published by this agent
+CREATE INDEX IF NOT EXISTS posts_agent_idx ON social.posts USING btree (agent_id, created_at) WHERE agent_id IS NOT NULL;
+
+-- 店铺 (api/shop.py): digital goods a district's owner, or a resident for their parcel, sells there.
+-- Paid over Lightning straight to the seller's wallet; content is shown to the buyer once confirmed.
+CREATE TABLE IF NOT EXISTS social.shop_items (
+	id bigserial NOT NULL,
+	bitmap_number int4 NOT NULL,
+	tx_index int4 NULL, -- the parcel it is sold from; null for the district's owner
+	seller text NOT NULL, -- who held the place when listing; it is on sale only while they still do
+	title text NOT NULL,
+	description text NOT NULL DEFAULT '',
+	price_sats int8 NOT NULL,
+	content text NOT NULL, -- what the buyer gets: a link, a code, a text
+	stock int4 NULL, -- null: no limit
+	active bool NOT NULL DEFAULT true,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	updated_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT shop_items_pk PRIMARY KEY (id)
+);
+CREATE INDEX IF NOT EXISTS shop_items_district_idx ON social.shop_items USING btree (bitmap_number, id);
+CREATE TABLE IF NOT EXISTS social.shop_orders (
+	id bigserial NOT NULL,
+	item_id int8 NOT NULL,
+	buyer text NOT NULL,
+	seller text NOT NULL,
+	amount_sats int8 NOT NULL,
+	invoice text NOT NULL,
+	verify_url text NOT NULL, -- LUD-21; a shop only sells through wallets that can confirm
+	status text NOT NULL DEFAULT 'pending', -- pending | settled | expired
+	checked_at timestamptz NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	settled_at timestamptz NULL,
+	CONSTRAINT shop_orders_pk PRIMARY KEY (id)
+);
+CREATE INDEX IF NOT EXISTS shop_orders_item_idx ON social.shop_orders USING btree (item_id) WHERE status = 'settled';
+CREATE INDEX IF NOT EXISTS shop_orders_buyer_idx ON social.shop_orders USING btree (buyer, created_at);
+CREATE INDEX IF NOT EXISTS shop_orders_seller_idx ON social.shop_orders USING btree (seller, id) WHERE status = 'settled';
+-- Sale notifications carry the order, so each sale is told even from the same buyer.
+DO $$
+BEGIN
+	IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'social' AND table_name = 'notifications' AND column_name = 'order_id') THEN
+		ALTER TABLE social.notifications ADD COLUMN order_id int8 NULL;
+		ALTER TABLE social.notifications DROP CONSTRAINT IF EXISTS notifications_once;
+		ALTER TABLE social.notifications ADD CONSTRAINT notifications_once
+			UNIQUE NULLS NOT DISTINCT (address, kind, actor, bitmap_number, post_id, tip_id, block_height, order_id);
+	END IF;
+END $$;
+
+-- Nostr (api/nostr.py): one linked key per wallet group, the note a post was published as, and
+-- whether a tip went out as a zap.
+CREATE TABLE IF NOT EXISTS social.nostr_keys (
+	address text NOT NULL, -- the wallet group's main address
+	pubkey text NOT NULL, -- hex, 32 bytes
+	linked_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT nostr_keys_pk PRIMARY KEY (address),
+	CONSTRAINT nostr_keys_pubkey UNIQUE (pubkey)
+);
+ALTER TABLE social.posts ADD COLUMN IF NOT EXISTS nostr_event_id text NULL;
+ALTER TABLE social.tips ADD COLUMN IF NOT EXISTS zap bool NOT NULL DEFAULT false;
+
+-- A resident's pet on their parcel (api/holdings.py): one per parcel, shown while they hold it.
+CREATE TABLE IF NOT EXISTS social.parcel_showcase (
+	bitmap_number int4 NOT NULL,
+	tx_index int4 NOT NULL,
+	asset text NOT NULL,
+	updated_by text NOT NULL,
+	updated_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT parcel_showcase_pk PRIMARY KEY (bitmap_number, tx_index)
+);
+
+-- The inscriptions behind each collection holding, a few per address, for pets' pictures.
+CREATE TABLE IF NOT EXISTS social.holding_items (
+	address text NOT NULL,
+	asset text NOT NULL,
+	inscription_id text NOT NULL,
+	position int4 NOT NULL,
+	CONSTRAINT holding_items_pk PRIMARY KEY (address, inscription_id)
+);
+
+-- 养宠物 (api/pets.py): a wallet group's care for each pet it holds, under its main address.
+CREATE TABLE IF NOT EXISTS social.pet_care (
+	address text NOT NULL,
+	asset text NOT NULL,
+	name text NULL,
+	affection int4 NOT NULL DEFAULT 0,
+	fed_at timestamptz NULL,
+	streak int4 NOT NULL DEFAULT 0,
+	last_day date NULL,
+	face text NULL, -- the inscription its picture shows, one of the group's own
+	public bool NOT NULL DEFAULT false, -- shown on the owner's public page
+	CONSTRAINT pet_care_pk PRIMARY KEY (address, asset)
+);
+ALTER TABLE social.pet_care ADD COLUMN IF NOT EXISTS face text NULL;
+ALTER TABLE social.pet_care ADD COLUMN IF NOT EXISTS public bool NOT NULL DEFAULT false;
+
+-- 每日巡城 (api/tour.py): the districts each day's tour visits, picked the first time it is asked for.
+CREATE TABLE IF NOT EXISTS social.tour_days (
+	day date NOT NULL,
+	stops int4[] NOT NULL,
+	CONSTRAINT tour_days_pk PRIMARY KEY (day)
+);
+
+-- The one badge an address wears beside its name on posts and its page (api/game.py).
+CREATE TABLE IF NOT EXISTS social.worn_badges (
+	address text NOT NULL,
+	badge_id int8 NOT NULL REFERENCES social.badges (id) ON DELETE CASCADE,
+	CONSTRAINT worn_badges_pk PRIMARY KEY (address)
+);
+
+-- 摸一摸 (api/pets.py): a visitor patting someone else's pet, once a day each.
+CREATE TABLE IF NOT EXISTS social.pet_pats (
+	day date NOT NULL,
+	owner text NOT NULL, -- the pet's wallet group's main address
+	asset text NOT NULL,
+	patter text NOT NULL, -- the visitor's wallet group's main address
+	created_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT pet_pats_pk PRIMARY KEY (day, owner, asset, patter)
+);
+
+-- 暂住居民 (api/tenants.py): visitors the owner let move in before any parcel is theirs. A tenant
+-- can post and vote like a resident while the owner who let them in still holds the district.
+CREATE TABLE IF NOT EXISTS social.tenants (
+	bitmap_number int4 NOT NULL,
+	address text NOT NULL,
+	owner text NOT NULL, -- the owner who let them in; the stay ends when the district changes hands
+	created_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT tenants_pk PRIMARY KEY (bitmap_number, address)
+);

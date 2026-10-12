@@ -14,7 +14,7 @@ import psycopg2.extras
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import bip322, holdings, notify, parks, prosperity, recruit, roles, style, wallets, xlink
+from api import bip322, game, holdings, moderation, nostr, notify, parks, pets, prosperity, recruit, roles, seasons, style, tips, tour, wallets, xlink
 from api.auth import current_address, normalize_address, optional_address
 from api.db import cursor
 from api.land import EVENT_SELECT, _event
@@ -49,7 +49,18 @@ POST_COLUMNS = (
     "(select count(*) from social.likes l where l.post_id = p.id) as like_count, "
     "(select count(*) from social.posts r where r.reply_to = p.id and r.removed_at is null) as reply_count, "
     "exists(select 1 from social.likes l where l.post_id = p.id and l.address = %(me)s) as liked_by_me, "
-    "(select x.username from social.x_accounts x where x.address = p.author_address) as author_x "
+    "(select x.username from social.x_accounts x where x.address = p.author_address) as author_x, "
+    "(select coalesce(sum(t.amount_sats), 0) from social.tips t where t.post_id = p.id and t.status = 'settled') "
+    "as tips_sats, "
+    "exists(select 1 from social.lightning_addresses a where a.address = coalesce("
+    "(select w.main_address from social.wallet_links w where w.address = p.author_address), p.author_address)) "
+    "as author_tippable, "
+    "(select k.pubkey from social.nostr_keys k where k.address = coalesce("
+    "(select w.main_address from social.wallet_links w where w.address = p.author_address), p.author_address)) "
+    "as author_nostr, p.nostr_event_id, "
+    "p.agent_id, (select a.agent_key from social.agents a where a.id = p.agent_id) as agent_key, "
+    "(select json_build_object('kind', b.kind, 'rarity', b.rarity) from social.worn_badges w "
+    "join social.badges b on b.id = w.badge_id where w.address = p.author_address) as author_badge "
 )
 
 
@@ -64,6 +75,9 @@ def _post(row):
             "parcel": row["author_parcel"],
             "as_bitmap": row["author_bitmap"],
             "x": row["author_x"],  # linked X @username, if any
+            "tippable": row["author_tippable"],  # has a Lightning address for tips
+            "nostr": row["author_nostr"],  # linked Nostr public key (hex), if any
+            "badge": row["author_badge"],  # the badge they wear (api/game.py): {kind, rarity}
         },
         "reply_to": row["reply_to"],
         "body": None if removed else row["body"],
@@ -75,6 +89,10 @@ def _post(row):
         "like_count": row["like_count"],
         "reply_count": row["reply_count"],
         "liked_by_me": row["liked_by_me"],
+        "tips_sats": int(row["tips_sats"]),  # confirmed Lightning tips
+        "nostr_event_id": None if removed else row["nostr_event_id"],  # the note it was also published as (api/nostr.py)
+        # Published by the district's agent (api/agent.py), signed with its key under this grant.
+        "agent": {"grant_id": row["agent_id"], "key": row["agent_key"]} if row["agent_id"] is not None else None,
     }
 
 
@@ -116,7 +134,69 @@ def me(address: str = Depends(current_address)):
         follows = [r[0] for r in cur.fetchall()]
         x = xlink.of(cur, address)
         linked = wallets.view(cur, address)
-    return {"address": address, "districts": districts, "parcels": parcels, "follows": follows, "x": x, "wallets": linked}
+        is_banned = moderation.banned(cur, address)
+        nostr_key = nostr.of(cur, address)
+    return {
+        "address": address,
+        "districts": districts,
+        "parcels": parcels,
+        "follows": follows,
+        "x": x,
+        "wallets": linked,
+        "admin": moderation.is_admin(address),
+        "banned": is_banned,
+        "nostr": nostr_key,
+    }
+
+
+@router.get("/v1/people/{address}")
+def person(address: str, before_id: int | None = None, limit: int = 20, viewer: str | None = Depends(optional_address)):
+    """Someone's page: the land they hold, their X account and what they posted, newest first."""
+    address = normalize_address(address)
+    with cursor(dict_rows=True) as cur:
+        posts = _fetch_posts(
+            cur,
+            "p.author_address = %(a)s and p.removed_at is null and (%(before)s::int8 is null or p.id < %(before)s)",
+            {"a": address, "before": before_id},
+            viewer,
+            _limit(limit),
+        )
+    with cursor() as cur:
+        districts, parcels = roles.holdings(cur, address)
+        x = xlink.of(cur, address)
+        cur.execute(
+            "select count(*) filter (where reply_to is null), count(*) filter (where reply_to is not null), "
+            "min(created_at) from social.posts where author_address = %s and removed_at is null;",
+            (address,),
+        )
+        post_count, reply_count, first_post = cur.fetchone()
+        cur.execute("select count(*) from social.follows where address = %s;", (address,))
+        follows = cur.fetchone()[0]
+        badges = game.badges_of(cur, address)
+        shown_pets = pets.public_pets(cur, address, viewer)
+        # Score held districts a run at a time, so two far-apart districts don't score everything between.
+        levels, park_of, run = {}, {}, []
+        for n in districts + [None]:
+            if run and (n is None or n - run[0] > 1000):
+                lv, po = parks.scored(cur, run[0], run[-1])
+                levels.update(lv)
+                park_of.update(po)
+                run = []
+            if n is not None:
+                run.append(n)
+    return {
+        "address": address,
+        "x": x,
+        "districts": [{"bitmap_number": n, "level": levels.get(n, 0), "park": (park_of.get(n) or {}).get("name")} for n in districts],
+        "parcels": parcels,
+        "post_count": post_count,
+        "reply_count": reply_count,
+        "follows": follows,
+        "first_post_at": first_post.isoformat() if first_post else None,
+        "badges": badges,
+        "pets": shown_pets,
+        "posts": posts,
+    }
 
 
 @router.get("/v1/districts/{bitmap_number}")
@@ -147,8 +227,17 @@ def district(bitmap_number: int, tasks: BackgroundTasks, viewer: str | None = De
         prosper = prosperity.of(cur, bitmap_number)
         levels, park_of = parks.scored(cur, bitmap_number, bitmap_number)
         notice = recruit.get(cur, bitmap_number, viewer)
-        pets = holdings.shown(cur, bitmap_number, owner)
+        patted = pets.pats(cur, owner, viewer) if owner else {}
+        shown = [{**p, **patted.get(p["asset"], {"pats": 0, "patted": False})} for p in holdings.shown(cur, bitmap_number, owner)]
+        parcel_pets = holdings.parcel_pets(cur, bitmap_number)
+        for resident in holdings.stale_parcel_holders(cur, bitmap_number)[:5]:
+            tasks.add_task(holdings.refresh_group, resident, 0, True)
         owner_x = xlink.of(cur, owner)
+        tipped = tips.district_tips(cur, bitmap_number)
+        beat = game.district_view(cur, bitmap_number, viewer)
+        tip = game.top(cur)
+        crown = seasons.crowns(cur, tip).get(bitmap_number) if tip is not None else None
+        owner_tippable = tips.lightning_of(cur, owner) is not None
         # Pets on show keep their owner's balances fresh; the page doesn't wait for it.
         if holdings.chosen(cur, bitmap_number, owner) and holdings.stale_group(cur, owner):
             tasks.add_task(holdings.refresh_group, owner, 0, True)
@@ -167,7 +256,11 @@ def district(bitmap_number: int, tasks: BackgroundTasks, viewer: str | None = De
         "level": levels[bitmap_number],
         "park": park_of.get(bitmap_number),
         "recruit": notice,
-        "pets": pets,
+        "pets": shown,  # with today's pats (api/pets.py)
+        "parcel_pets": parcel_pets,  # {tx_index: "dog:2"}: the pet each resident shows on their parcel
+        "tips": tipped,  # confirmed Lightning tips on the district and its posts, last 30 days
+        "owner_tippable": owner_tippable,
+        "game": {**beat, "crown": crown and {"rank": crown, "season": tip // seasons.SEASON - 1}},  # api/game.py, api/seasons.py
         "viewer": None
         if viewer is None
         else {
@@ -202,7 +295,8 @@ def checkin(bitmap_number: int, address: str = Depends(current_address)):
         )
         if cur.rowcount == 0:
             raise HTTPException(409, "already checked in today")
-    return {"ok": True}
+        badges = game.on_checkin(cur, address, bitmap_number) + tour.on_checkin(cur, address, bitmap_number)
+    return {"ok": True, "badges": badges}
 
 
 @router.get("/v1/districts/{bitmap_number}/posts")
@@ -318,6 +412,8 @@ def create_post(bitmap_number: int, req: NewPost, address: str = Depends(current
 
     with cursor(dict_rows=True) as cur:
         role, parcel = roles.role_in(cur, address, bitmap_number)
+        if moderation.banned(cur, address):
+            raise HTTPException(403, "this address is banned from posting")
         cur.execute(
             "select 1 from social.mutes where bitmap_number = %s and address = %s;", (bitmap_number, address)
         )
