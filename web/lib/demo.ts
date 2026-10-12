@@ -3,7 +3,7 @@
 // here from deterministic fake data; what the visitor does (posts, likes, follows, profile
 // edits) is kept in localStorage, and "重置演示数据" clears it.
 
-import type { MarketOffer, OfferQuote, Agent, AgentDraft, AgentGrant, AgentInfo, AgentTask, AgentView, Application, Badge, Contest, MarketListing, ContestMetric, District, DistrictGame, Draw, Game, Season, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Metrics, ShopBought, ShopItem, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
+import type { MarketOffer, OfferQuote, Agent, AgentDraft, AgentGrant, AgentInfo, AgentTask, AgentView, Application, Tenant, Badge, CaredPet, Contest, MarketListing, ContestMetric, District, DistrictGame, Draw, Game, Season, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Metrics, ShopBought, ShopItem, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
 import { CLAIM_BLOCKS, pick, rarityOf, ROUND, roundOf, SEASON, seasonOf, sha256, type Rarity } from "./game";
 import { connected } from "./parks";
 import { MAX_SHOWN, PET_KEYS, PETS, type Pet, type PetKey } from "./pets";
@@ -138,6 +138,7 @@ type State = {
   styles?: Record<number, DistrictStyle>;
   recruits?: Record<number, { message: string; parcels: number[]; updated_at: string; by: string }>;
   applications?: Record<number, Application[]>;
+  tenants?: Record<number, Tenant[]>; // 暂住居民 (api/tenants.py)
   polls?: DemoPoll[];
   parks?: { id: number; name: string; owner: string; members: number[] }[];
   showcase?: Record<number, PetKey[]>; // what the visitor chose to show on their districts
@@ -147,11 +148,14 @@ type State = {
   reports?: { post_id: number; reporter: string; reason: string; note: string; created_at: string; resolved?: boolean }[];
   bans?: Ban[];
   lightning?: string | null; // the visitor's Lightning address for tips
+  petCare?: Partial<Record<PetKey, DemoCare>>; // 我的宠物: feeding and names (api/pets.py)
   nostr?: string | null; // the visitor's linked Nostr key
   parcelPet?: PetKey | null; // the pet the visitor shows on their parcel
+  pats?: Record<string, string>; // "owner:asset" -> the day the visitor last patted that pet (串门摸宠物)
   tips?: DemoTip[];
   boot?: number; // when this demo began: a new block is "mined" every DEMO_BLOCK_MS after it
   badges?: Badge[]; // the visitor's
+  worn?: number | null; // the id (badgeId) of the badge the visitor wears
   opened?: Record<number, string>; // treasures opened, by block height
   contests?: DemoContest[]; // 街区活动
   market?: DemoListing[]; // 站内交易
@@ -179,8 +183,15 @@ function seedExtras(s: State) {
     840002: { message: "减半旁边的街区，欢迎新邻居。地块不多，先到先得。", parcels: [3, 8, 12], updated_at: iso(0.5), by: ownerOf(840002)! },
     839998: { message: "CBD 招商：想在手续费最高的那几天留个名字的，来这里。", parcels: [1, 2], updated_at: iso(1.2), by: ownerOf(839998)! },
     839941: { message: "矿工新村招居民，园区里七个街区隔着马路一起热闹。", parcels: [4, 9], updated_at: iso(2), by: SEED_PARK.owner },
+    840008: { message: "找几个常来聊天的邻居，先暂住，熟了再给地块。", parcels: [], updated_at: iso(0.8), by: DEMO_ADDRESS },
   };
-  s.applications ??= {};
+  // Two people waiting on the visitor's own notice, so "let them stay" can be tried.
+  s.applications ??= {
+    840008: [
+      { address: fakeAddress(4101), note: "每天都来巡城，想在这儿发帖", created_at: iso(0.6) },
+      { address: fakeAddress(4102), note: "", created_at: iso(0.2) },
+    ],
+  };
   s.polls ??= [
     { id: 1, n: 840001, question: "街区要不要在 coinbase 那块地上修一个广场？", options: ["修广场", "保持原样", "改成公园"], by: ownerOf(840001)!,
       created_at: iso(1), closes_at: iso(-6), closed_at: null, votes: { a: 0, b: 0, c: 2, d: 0, e: 1 } },
@@ -465,6 +476,7 @@ function parts(n: number): ProsperityParts {
     neighbors30: Math.floor(hash(n * 7 + 4) * 150 * h * h) + near,
     tippers30: fake(5, 8) + new Set((s.tips ?? []).filter((x) => x.status === "settled" && x.n === n && x.at / 1000 > since).map((x) => x.tipper)).size,
     lucky: luckyNow()?.n === n ? 1 : 0,
+    pets: ownerOf(n) === DEMO_ADDRESS ? petsAt(n).reduce((sum, x) => sum + caredPet(x.asset).level - 1, 0) : 0,
   };
 }
 // The visitor's wallet holds 2.5 million DOG, a Quantum Cat, three Bitcoin Puppets, seven
@@ -496,12 +508,60 @@ function holdingsOf(address: string | null, n: number): Partial<Record<PetKey, n
     ...(hash(n + 66) < 0.3 ? { [extra]: 1 + Math.floor(hash(n + 67) * 12) } : {}),
   };
 }
+// 我的宠物, as api/pets.py: the dog has been looked after for a few days, the others are new.
+type DemoCare = { name: string | null; affection: number; fed_at: number | null; streak: number; last_day: string | null; face?: string | null; public?: boolean };
+// The demo frogs are real Bitcoin Frogs (their pictures load from ordinals.com); the other
+// collections have no made-up inscriptions, so their pets are drawn.
+const DEMO_ITEMS: Partial<Record<PetKey, string[]>> = {
+  frog: [
+    "6f7db76f94fdfbba79be9af20befc936d7fcc53cc5b0911739b9ff377e793ba9i0",
+    "7fcdcc1d3957390a2976e6dafa01ebb0b01ba8b0ffbc119b8f1911e18591321fi0",
+    "79e4567ff1ef86d80a3156393fa730c00a56d3d70548029aa82d3d8b63a87a81i0",
+    "ebe961f34d2ccf9d08b478db174a990beff3ad0ced56527168f25cd9ef4ad605i0",
+    "4709d556f22f35ec203a3b7d9ca35d68e4314b4ccd4bea27445c784a74a22d11i0",
+    "18262584040e850500cbad95b025c007e01e08bda42e4746ec00dfe4179cfc28i0",
+    "938b88de10dbdfa91d71103c72a515fe7d5271214a02ba0903373cba02565017i0",
+  ],
+};
+const FEED_HOURS = 6, HOUR = 3_600_000;
+const dayOf = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+function careOf(k: PetKey): DemoCare {
+  const c = load().petCare?.[k];
+  if (c) return c;
+  return k === "dog" ? { name: null, affection: 140, fed_at: Date.now() - 8 * HOUR, streak: 4, last_day: dayOf(Date.now() - DAY * 1000) } : { name: null, affection: 0, fed_at: null, streak: 0, last_day: null };
+}
+function caredPet(k: PetKey): CaredPet {
+  const held = holdingsOf(DEMO_ADDRESS, 0)[k] ?? 0, c = careOf(k), now = Date.now();
+  const level = Math.min(10, 1 + Math.floor(Math.sqrt(Math.floor(c.affection / 30))));
+  const hours = c.fed_at == null ? Infinity : (now - c.fed_at) / HOUR;
+  return {
+    asset: k, tier: petTier(k, held), amount: String(held), name: c.name, affection: c.affection, level,
+    next_level_at: level < 10 ? 30 * level ** 2 : null,
+    streak: c.last_day && c.last_day >= dayOf(now - DAY * 1000) ? c.streak : 0,
+    fed_at: c.fed_at == null ? null : new Date(c.fed_at).toISOString(),
+    can_feed_at: c.fed_at == null ? null : new Date(c.fed_at + FEED_HOURS * HOUR).toISOString(),
+    items: DEMO_ITEMS[k] ?? [],
+    public: !!c.public,
+    face: c.face && DEMO_ITEMS[k]?.includes(c.face) ? c.face : null,
+    mood: c.fed_at == null || (hours >= 24 && hours < 72) ? "hungry" : hours < FEED_HOURS ? "full" : hours < 24 ? "ok" : "starving",
+  };
+}
+const myPets = () => PET_KEYS.filter((k) => petTier(k, holdingsOf(DEMO_ADDRESS, 0)[k] ?? 0) > 0);
 const petTier = (k: PetKey, amount: number) => PETS[k].tiers.filter((t) => amount >= t).length;
 function petsAt(n: number): Pet[] {
   const owner = ownerOf(n);
   const held = holdingsOf(owner, n);
   const chosen = owner === DEMO_ADDRESS ? load().showcase?.[n] ?? [] : (Object.keys(held) as PetKey[]);
-  return chosen.flatMap((k) => (petTier(k, held[k] ?? 0) ? [{ asset: k, tier: petTier(k, held[k]!), amount: String(held[k]) }] : []));
+  const face = (k: PetKey) => (owner === DEMO_ADDRESS ? caredPet(k).face : null);
+  return chosen.flatMap((k) => (petTier(k, held[k] ?? 0) ? [{ asset: k, tier: petTier(k, held[k]!), amount: String(held[k]), face: face(k), ...patsOf(owner, k) }] : []));
+}
+/** Today's pats on someone's pet, as api/pets.py: a made-up few from others, plus the visitor's. */
+function patsOf(owner: string | null, k: PetKey) {
+  if (!owner) return { pats: 0, patted: false };
+  const day = dayOf(Date.now());
+  const patted = owner !== DEMO_ADDRESS && load().pats?.[`${owner}:${k}`] === day;
+  const others = owner === DEMO_ADDRESS ? 0 : strHash(`${owner}:${k}:${day}`) % 4;
+  return { pats: others + (patted ? 1 : 0), patted };
 }
 /** {tx_index: "dog:2"}: residents' pets on their parcels; a made-up quarter of them show one. */
 function parcelPetsAt(n: number): Record<string, string> {
@@ -608,6 +668,55 @@ function drawAt(h: number): Draw {
   const opened_by = load().opened?.[h] ?? null;
   return { height: h, block_hash, bitmap_number: n, tx_index: i, candidates: pool.length, index, rarity: rarityOf(block_hash), opened_by, open: !opened_by && h > demoTip() - CLAIM_BLOCKS };
 }
+const BADGE_KINDS = ["treasure", "lucky", "lucky_visit", "crown", "tour"];
+/** A demo badge's id: there is no table, so its kind and height stand in. */
+const badgeId = (b: { kind: string; height: number }) => b.height * 8 + BADGE_KINDS.indexOf(b.kind);
+const myBadges = (): Badge[] => (load().badges ?? []).map((b) => ({ ...b, id: badgeId(b), worn: badgeId(b) === load().worn }));
+const wornBadge = (a: string) => {
+  const b = a === DEMO_ADDRESS ? myBadges().find((x) => x.worn) : undefined;
+  return b ? { kind: b.kind, rarity: b.rarity } : null;
+};
+
+/** 每日巡城, as api/tour.py: two stops out of the districts posted in this week, then the rest
+ * out of all claimed ones, each by SHA-256 of "<day>:tour:<i>". Not stored: the demo's posts
+ * only change when the visitor posts, which is rare enough. */
+const TOUR_STREAKS: [number, Rarity][] = [[30, "legendary"], [7, "epic"], [3, "rare"], [1, "common"]];
+const dayNumber = (day: string) => Math.round(Date.parse(day) / 86_400_000);
+function tourStops(day: string): number[] {
+  const all = districtPool();
+  const week = Date.now() - 7 * DAY * 1000;
+  const active = [...new Set(load().posts.filter((p) => p.reply_to == null && !p.removed && Date.parse(p.created_at) > week && ownerOf(p.bitmap_number)).map((p) => p.bitmap_number))].sort((a, b) => a - b);
+  const picked: number[] = [];
+  let i = 0;
+  const take = (pool: number[], want: number) => {
+    for (let tries = 0; tries < want * 8 && picked.length < want && pool.some((n) => !picked.includes(n)); tries++) {
+      const n = pool[pick(day, `tour:${i++}`, pool.length)!];
+      if (!picked.includes(n)) picked.push(n);
+    }
+  };
+  take(active, 2);
+  take(all, 3);
+  return picked;
+}
+function tourStreak(day: string): number {
+  const done = new Set((load().badges ?? []).filter((b) => b.kind === "tour").map((b) => b.height));
+  let d = dayNumber(day);
+  if (!done.has(d)) d -= 1;
+  let run = 0;
+  while (done.has(d - run)) run++;
+  return run;
+}
+function tourView(me: string | null) {
+  const day = today(), stops = tourStops(day), s = load();
+  const stopsOut = stops.map((n) => ({ bitmap_number: n, visited: !!me && (s.checkins?.[n] ?? []).includes(day) }));
+  return {
+    day,
+    stops: stopsOut,
+    rules: { stops: 3, active: 2, active_days: 7, streaks: TOUR_STREAKS },
+    ...(me ? { done: stopsOut.every((x) => x.visited), streak: tourStreak(day) } : {}),
+  };
+}
+
 function luckyNow(): { n: number; since: number; block_hash: string; index: number; candidates: number } | null {
   const [since] = roundOf(demoTip());
   const block_hash = blockHash(since), pool = districtPool();
@@ -671,7 +780,7 @@ function gameView(me: string | null): Game {
     tip,
     round: lucky && { since: lucky.since, until: lucky.since + ROUND - 1, block_hash: lucky.block_hash, candidates: lucky.candidates, index: lucky.index, bitmap_number: lucky.n, owner: ownerOf(lucky.n) },
     draws: Array.from({ length: 20 }, (_, i) => drawAt(tip - i)),
-    badges: me ? load().badges ?? [] : null,
+    badges: me ? myBadges() : null,
     rules: { round: ROUND, claim_blocks: CLAIM_BLOCKS },
   };
 }
@@ -779,6 +888,7 @@ function events(n: number): LandEvent[] {
 function roleOf(address: string | null, n: number): [Role, number | null] {
   if (address && ownerOf(n) === address) return ["owner", null];
   if (address === DEMO_ADDRESS && n === OWN_PARCEL.bitmap_number) return ["resident", OWN_PARCEL.tx_index];
+  if (address && load().tenants?.[n]?.some((x) => x.address === address)) return ["tenant", null];
   return ["visitor", null];
 }
 function profile(n: number): District["profile"] {
@@ -795,7 +905,7 @@ function xOf(address: string | null): XAccount | null {
   if (address === SEED_PARK.owner) return xAccount("miner_village", "矿工新村");
   return null;
 }
-const view = (p: Post, me: string | null): Post => ({ ...p, author: { ...p.author, x: xOf(p.author.address)?.username ?? null, tippable: tippable(p.author.address) }, tips_sats: postTips(p.id), liked_by_me: !!me && !!load().likes[p.id], like_count: p.like_count + (me && load().likes[p.id] ? 1 : 0) });
+const view = (p: Post, me: string | null): Post => ({ ...p, author: { ...p.author, x: xOf(p.author.address)?.username ?? null, tippable: tippable(p.author.address), badge: wornBadge(p.author.address) }, tips_sats: postTips(p.id), liked_by_me: !!me && !!load().likes[p.id], like_count: p.like_count + (me && load().likes[p.id] ? 1 : 0) });
 const topPosts = (pred: (p: Post) => boolean, me: string | null) =>
   load().posts.filter((p) => !p.removed && p.reply_to == null && pred(p)).sort((a, b) => b.id - a.id).map((p) => view(p, me));
 function district(n: number, me: string | null): District {
@@ -865,7 +975,8 @@ function personDemo(a: string, me: string | null, before: number | null): Person
     follows: a === DEMO_ADDRESS ? load().follows.length : 0,
     first_post_at: first,
     posts,
-    badges: a === DEMO_ADDRESS ? load().badges ?? [] : a === ownerOf(840001) ? [{ kind: "lucky", height: roundOf(DEMO_TIP)[0], bitmap_number: 840001, tx_index: null, rarity: "rare", created_at: iso(0.3) }] : [],
+    pets: a === DEMO_ADDRESS ? myPets().map(caredPet).filter((p) => p.public).map(({ asset, tier, amount, name, level, mood, face }) => ({ asset, tier, amount, name, level, mood, face })) : [],
+    badges: a === DEMO_ADDRESS ? myBadges() : a === ownerOf(840001) ? [{ kind: "lucky", height: roundOf(DEMO_TIP)[0], bitmap_number: 840001, tx_index: null, rarity: "rare", created_at: iso(0.3) }] : [],
   };
 }
 
@@ -989,6 +1100,16 @@ function route(path: string, opts: Opts): unknown {
     return { indexed_height: { bitmap: tip, parcel: tip, owner: tip } };
   }
   if (p === "/v1/game") return gameView(me);
+  if (p === "/v1/tour") return tourView(me);
+  if (p === "/v1/me/badge" && method === "PUT") {
+    needMe();
+    const id = (body.id as number | null) ?? null;
+    const b = myBadges().find((x) => x.id === id);
+    if (id != null && !b) fail(404, "that isn't one of your badges");
+    load().worn = id;
+    save();
+    return { worn: b ? { id, kind: b.kind, rarity: b.rarity } : null };
+  }
   if (p === "/v1/season") return seasonView();
   if ((m = p.match(/^\/v1\/game\/treasures\/(\d+)\/open$/)) && method === "POST") {
     const a = needMe(), h = +m[1], d = drawAt(h);
@@ -1087,6 +1208,40 @@ function route(path: string, opts: Opts): unknown {
       .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
     return { districts: out };
   }
+  // 开张 (api/opening.py)
+  if ((m = p.match(/^\/v1\/districts\/(\d+)\/opening$/))) {
+    const n = +m[1], a = owns(n);
+    const steps = {
+      bio: !!profile(n).bio,
+      post: s.posts.some((x) => x.bitmap_number === n && x.author.address === a && x.reply_to == null && !x.removed),
+      recruit: s.recruits?.[n]?.by === a,
+    };
+    let badge = (s.badges ?? []).find((x) => x.kind === "opening" && x.height === n) ?? null;
+    let fresh = false;
+    if (!badge && steps.bio && steps.post && steps.recruit) {
+      badge = { kind: "opening", height: n, bitmap_number: n, tx_index: null, rarity: "rare", created_at: new Date().toISOString() };
+      (s.badges ??= []).unshift(badge);
+      fresh = true;
+      save();
+    }
+    return { steps, opened: !!badge, badge, new: fresh };
+  }
+  if (p === "/v1/opened") {
+    // The visitor's own, and two the made-up owners opened lately.
+    const mine = (s.badges ?? []).filter((x) => x.kind === "opening" && Date.now() - Date.parse(x.created_at) < 7 * DAY * 1000).map((x) => ({ n: x.bitmap_number, at: x.created_at }));
+    const seeded = [
+      { n: 840001, at: iso(1.5), bio: "减半之后挖出的第一个街区，每周六晚上在这里聊天。" },
+      { n: 839998, at: iso(4), bio: "CBD 的老街区，手续费最高那几天的见证。" },
+    ];
+    return {
+      districts: [...mine, ...seeded].map(({ n, at, bio }: { n: number; at: string; bio?: string }) => ({
+        bitmap_number: n,
+        opened_at: at,
+        bio: (profile(n).bio || bio || "").slice(0, 80),
+        posts: s.posts.filter((x) => x.bitmap_number === n && x.reply_to == null && !x.removed).length,
+      })),
+    };
+  }
   if ((m = p.match(/^\/v1\/districts\/(\d+)\/recruit$/))) {
     const n = +m[1], a = owns(n);
     if (method === "DELETE") {
@@ -1114,9 +1269,37 @@ function route(path: string, opts: Opts): unknown {
       if (!recruitAt(n, a)) fail(404, "这个街区没有在招募");
       if (roleOf(a, n)[0] !== "visitor") fail(400, "你已经住在这里了");
       s.applications![n] = [...list.filter((x) => x.address !== a), { address: a, note: String(body.note ?? "").trim(), created_at: new Date().toISOString() }];
+      // The demo's made-up owners say yes at once, so the visitor sees what being a tenant is like.
+      const o = ownerOf(n);
+      if (o && o !== a) {
+        s.applications![n] = s.applications![n].filter((x) => x.address !== a);
+        s.tenants = { ...s.tenants, [n]: [{ address: a, since: new Date().toISOString() }, ...(s.tenants?.[n] ?? [])] };
+        const ids = (s.notifications ?? []).map((x) => x.id);
+        s.notifications = [{ id: Math.max(0, ...ids) + 1, kind: "tenant", actor: o, bitmap_number: n, post_id: null, created_at: new Date().toISOString(), read: false, snippet: null }, ...(s.notifications ?? [])];
+      }
     }
     save();
     return { ok: true };
+  }
+  if ((m = p.match(/^\/v1\/districts\/(\d+)\/tenants(?:\/([^/]+))?$/))) {
+    const n = +m[1], max = 20;
+    const list = () => ({ tenants: s.tenants?.[n] ?? [], max });
+    if (method === "GET") return list();
+    const a = needMe();
+    if (method === "DELETE") {
+      const who = decodeURIComponent(m[2] ?? "");
+      if (who !== a) owns(n);
+      s.tenants = { ...s.tenants, [n]: (s.tenants?.[n] ?? []).filter((x) => x.address !== who) };
+    } else {
+      owns(n);
+      const who = String(body.address ?? "");
+      if (!(s.applications![n] ?? []).some((x) => x.address === who)) fail(404, "they haven't applied here");
+      if ((s.tenants?.[n] ?? []).length >= max) fail(409, `at most ${max} tenants a district`);
+      s.applications![n] = s.applications![n].filter((x) => x.address !== who);
+      s.tenants = { ...s.tenants, [n]: [{ address: who, since: new Date().toISOString() }, ...(s.tenants?.[n] ?? [])] };
+    }
+    save();
+    return list();
   }
   if ((m = p.match(/^\/v1\/districts\/(\d+)\/polls$/))) {
     const n = +m[1];
@@ -1228,6 +1411,13 @@ function route(path: string, opts: Opts): unknown {
       badges.push({ kind: "lucky_visit", height: lucky.since, bitmap_number: lucky.n, rarity: "common" });
       (s.badges ??= []).unshift({ ...badges[0], tx_index: null, created_at: new Date().toISOString() });
     }
+    const day = today(), stops = tourStops(day);
+    if (stops.includes(+m[1]) && stops.every((n) => (s.checkins?.[n] ?? []).includes(day))) {
+      const run = tourStreak(day) + 1;
+      const won = { kind: "tour" as const, height: dayNumber(day), bitmap_number: +m[1], rarity: TOUR_STREAKS.find(([d]) => run >= d)![1] };
+      badges.push({ ...won, streak: run } as (typeof badges)[number]);
+      (s.badges ??= []).unshift({ ...won, tx_index: null, created_at: new Date().toISOString() });
+    }
     save();
     return { ok: true, badges };
   }
@@ -1292,6 +1482,47 @@ function route(path: string, opts: Opts): unknown {
     const who = post ? post.author.address : ownerOf(Number(url.searchParams.get("bitmap_number")));
     if (!who || strHash(who) % 3 !== 0 || !tippable(who)) return { zap: null };
     return { zap: { pubkey: (strHash(who).toString(16).padStart(8, "0")).repeat(8), event_id: post?.nostr_event_id ?? null } };
+  }
+  if (p === "/v1/me/pets") return needMe() && { pets: myPets().map(caredPet), feed_hours: FEED_HOURS };
+  if ((m = p.match(/^\/v1\/me\/pets\/(\w+)(\/feed)?$/))) {
+    needMe();
+    const k = m[1] as PetKey;
+    if (!myPets().includes(k)) fail(404, "your wallets don't hold this pet");
+    const c = { ...careOf(k) }, now = Date.now();
+    if (m[2]) {
+      if (c.fed_at != null && now < c.fed_at + FEED_HOURS * HOUR) fail(409, "it's still full; feed it again later");
+      const today = dayOf(now);
+      c.streak = c.last_day === today ? c.streak : c.last_day === dayOf(now - DAY * 1000) ? c.streak + 1 : 1;
+      c.affection += 10 + Math.min(c.streak - 1, 7);
+      c.fed_at = now;
+      c.last_day = today;
+    } else {
+      if ("name" in body) {
+        const name = String(body.name ?? "").trim();
+        if (name.length > 20) fail(422, "a name is at most 20 characters");
+        c.name = name || null;
+      }
+      if ("public" in body) c.public = !!body.public;
+      if ("face" in body) {
+        if (body.face != null && !DEMO_ITEMS[k]?.includes(String(body.face))) fail(400, "pick one of the inscriptions this pet has");
+        c.face = body.face == null ? null : String(body.face);
+      }
+    }
+    s.petCare = { ...s.petCare, [k]: c };
+    save();
+    return caredPet(k);
+  }
+  if ((m = p.match(/^\/v1\/people\/([^/]+)\/pets\/(\w+)\/pat$/))) {
+    const me = needMe();
+    const owner = decodeURIComponent(m[1]), k = m[2] as PetKey;
+    if (owner === me) fail(400, "that's your own pet");
+    // The demo's owners hold pets district by district, so any known pet is taken as shown.
+    if (!PET_KEYS.includes(k)) fail(404, "this pet isn't shown anywhere");
+    const day = dayOf(Date.now());
+    if (s.pats?.[`${owner}:${k}`] === day) fail(409, "you already patted it today");
+    s.pats = { ...s.pats, [`${owner}:${k}`]: day };
+    save();
+    return { asset: k, ...patsOf(owner, k) };
   }
   if (p === "/v1/me/lightning") {
     needMe();

@@ -13,7 +13,7 @@ from api.db import cursor
 
 router = APIRouter()
 
-KINDS = ("reply", "like", "post", "follow", "apply", "tip", "treasure", "lucky", "crown", "event_win", "sold", "offer", "offer_accepted", "agent_draft", "agent_posted", "agent_alert", "shop_sold")
+KINDS = ("reply", "like", "post", "follow", "apply", "tip", "treasure", "lucky", "crown", "event_win", "sold", "offer", "offer_accepted", "agent_draft", "agent_posted", "agent_alert", "shop_sold", "pat", "tenant")
 PAGE = 30
 
 

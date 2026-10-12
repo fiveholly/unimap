@@ -48,7 +48,7 @@ export function RecruitCard({
       {canApply &&
         (recruit.applied ? (
           <div className="row between small">
-            <span className="muted">{t("已申请，等街区主人联系你。")}</span>
+            <span className="muted">{t("已申请，等街区主人同意你暂住，或者把地块转给你。")}</span>
             <button type="button" className="link-btn small" onClick={() => send("DELETE")}>
               {t("撤回申请")}
             </button>
@@ -63,7 +63,7 @@ export function RecruitCard({
         ))}
       {!token && <p className="muted small">{t("连接钱包后可以申请入住。")}</p>}
       {error && <p className="error small">{error}</p>}
-      <p className="dim small">{t("地块要由街区主人铭刻成子铭文转给你，链上到账后你就是这里的居民。")}</p>
+      <p className="dim small">{t("街区主人同意后，你马上就是这里的暂住居民，可以发帖和投票。地块要由主人铭刻成子铭文转给你，链上到账后就是正式居民。")}</p>
     </section>
   );
 }

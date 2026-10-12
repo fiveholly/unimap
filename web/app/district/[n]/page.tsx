@@ -8,7 +8,8 @@ import { Avatar } from "@/components/Avatar";
 import { Composer } from "@/components/Composer";
 import { EventItem } from "@/components/EventItem";
 import { Mondrian } from "@/components/Mondrian";
-import { OwnerTools } from "@/components/OwnerTools";
+import { OwnerTools, type Section } from "@/components/OwnerTools";
+import { OpeningCard } from "@/components/Opening";
 import { ParcelPanel } from "@/components/ParcelPanel";
 import { PetsCard } from "@/components/Pets";
 import { Polls } from "@/components/Polls";
@@ -25,9 +26,11 @@ import { TileThumb } from "@/components/TileThumb";
 import { useTip } from "@/components/BlockWatch";
 import { ClaimGuide, DistrictBeat } from "@/components/GameBits";
 import { TipButton } from "@/components/Tip";
+import { TourHint, tourWon } from "@/components/Tour";
 import { XHandle } from "@/components/X";
 import { api, ApiError, type District, type Land, type LandEvent, type MarketListing, type Me, type Post, type Sale, type Tile } from "@/lib/api";
 import { btc, epochName, MARKETS, timeAgo } from "@/lib/format";
+import type { Rarity } from "@/lib/game";
 import { t, tn } from "@/lib/i18n";
 import { districtText, parkText } from "@/lib/share";
 import { LANDMARKS, ZONES, zoneOf } from "@/lib/zones";
@@ -63,6 +66,8 @@ function DistrictView() {
   const [selected, setSelected] = useState<number | null>(search.get("parcel") ? Number(search.get("parcel")) : null);
   const [tab, setTab] = useState<Tab>((["contests", "shop", "agent", "parcels"] as const).find((k) => k === search.get("tab")) ?? "posts");
   const [editing, setEditing] = useState(false);
+  const [editSection, setEditSection] = useState<Section>("profile");
+  const [draft, setDraft] = useState<string | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
 
   // Keep only the latest answer: a request sent before sign-in can come back after the one
@@ -130,8 +135,10 @@ function DistrictView() {
   };
   const checkIn = async () => {
     try {
-      const r = await api<{ badges?: { kind: string }[] }>(`/v1/districts/${n}/checkin`, { method: "POST", token });
-      if (r.badges?.some((b) => b.kind === "lucky_visit")) setWon(t("签到成功。今天这里是幸运街区，你得到一枚幸运来访徽章。"));
+      const r = await api<{ badges?: { kind: string; rarity: Rarity; streak?: number }[] }>(`/v1/districts/${n}/checkin`, { method: "POST", token });
+      const lucky = r.badges?.some((b) => b.kind === "lucky_visit"), toured = r.badges?.find((b) => b.kind === "tour");
+      const notes = [lucky && t("签到成功。今天这里是幸运街区，你得到一枚幸运来访徽章。"), toured && tourWon(toured)].filter(Boolean);
+      if (notes.length) setWon(notes.join(" "));
       await loadDistrict();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -239,11 +246,24 @@ function DistrictView() {
             )}
             {land.claimed && district.owner && viewer && viewer.address !== district.owner && <OfferButton n={n} label={t("出价买下")} />}
             {viewer && <RoleBadge role={viewer.role} parcel={viewer.parcel} />}
+            {viewer?.role === "tenant" && (
+              <button
+                type="button"
+                className="link-btn small"
+                onClick={() =>
+                  confirm(t("搬出这个街区？之后就不能在这里发帖了，想回来要重新申请。")) &&
+                  api(`/v1/districts/${n}/tenants/${encodeURIComponent(viewer.address)}`, { method: "DELETE", token }).then(() => loadDistrict(), () => {})
+                }
+              >
+                {t("搬走")}
+              </button>
+            )}
             {viewer?.muted && <span className="badge muted-badge">{t("你在这里被禁言了")}</span>}
           </div>
           {tipNote && <p className="muted small">{tipNote}</p>}
           {!land.claimed && <ClaimGuide n={n} fresh={tip != null && tip - n < 6} />}
           {district.game && <DistrictBeat n={n} game={district.game} token={token} onOpened={loadDistrict} />}
+          <TourHint n={n} version={district.checked_in_today} />
           {won && <p className="win-note small">{won}</p>}
           {land.district?.sale && <SaleBanner sale={land.district.sale} mine={!!viewer && viewer.address === district.owner} />}
           {isOwner && token && <SellCard n={n} token={token} />}
@@ -396,6 +416,7 @@ function DistrictView() {
           txCount={txCount}
           onDone={loadDistrict}
           onUnpin={() => act(`/v1/districts/${n}/pin`, "DELETE")}
+          initial={editSection}
         />
       )}
 
@@ -444,8 +465,25 @@ function DistrictView() {
         <div className="d-main">
           {tab === "posts" && (
             <>
+              {isOwner && (
+                <OpeningCard
+                  n={n}
+                  token={token}
+                  version={`${district.profile.bio}|${posts.length}|${district.recruit?.updated_at ?? ""}`}
+                  onEdit={(s) => {
+                    setEditSection(s);
+                    setEditing(true);
+                    setTimeout(() => document.querySelector(".owner-panel")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+                  }}
+                  onDraft={(text) => {
+                    setDraft(text);
+                    setTimeout(() => (document.querySelector(".d-main textarea") as HTMLTextAreaElement | null)?.focus(), 50);
+                  }}
+                />
+              )}
               {canPost && (
                 <Composer
+                  draft={draft}
                   district={n}
                   asOptions={asOptions}
                   speakingAs={isOwner ? t("街区主人身份") : viewer?.parcel != null ? t("地块 #{n} ", { n: viewer.parcel }) : undefined}
@@ -454,7 +492,7 @@ function DistrictView() {
               )}
               {token && viewer?.role === "visitor" && (
                 <p className="muted small hint">
-                  {district.profile.visitor_comments_on ? t("访客可以回复帖子。持有这里的地块后就能发帖。") : t("街区主人关闭了访客回复。")}
+                  {district.profile.visitor_comments_on ? t("访客可以回复帖子。申请入住、主人同意后就能发帖。") : t("街区主人关闭了访客回复。")}
                 </p>
               )}
               {district.pinned_post && (
@@ -494,7 +532,7 @@ function DistrictView() {
               onChanged={() => loadDistrict()}
             />
           )}
-          <PetsCard pets={district.pets ?? []} />
+          <PetsCard pets={district.pets ?? []} owner={district.owner} />
           <section>
             <h2 className="section-title">{t("最近变动")}</h2>
             <ul className="events">

@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
 import { Feed } from "@/components/Feed";
+import { PetCareSection } from "@/components/PetCare";
 import { Delivered } from "@/components/Shop";
 import { useSession } from "@/components/Session";
 import { Bolt } from "@/components/Tip";
@@ -50,6 +51,7 @@ export default function MePage() {
         </div>
       </section>
       {me.banned && <p className="notice small">{t("这个地址已被站点管理员禁止发帖。")}</p>}
+      <PetCareSection token={token} />
       <XSection token={token} />
       <LightningSection token={token} />
       <NostrSection token={token} address={me.address} />

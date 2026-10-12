@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { AgentGrantNote } from "./Agent";
+import { WornBadgeMark } from "./Badge";
 import { Avatar } from "./Avatar";
 import { Composer } from "./Composer";
 import { ReportDialog } from "./Report";
@@ -27,7 +28,7 @@ export type PostActions = {
 };
 
 export function roleLabel(role: string, parcel: number | null): string {
-  return role === "owner" ? t("街区主人") : role === "resident" ? t("居民 · 地块 #{n}", { n: String(parcel) }) : t("访客");
+  return role === "owner" ? t("街区主人") : role === "resident" ? t("居民 · 地块 #{n}", { n: String(parcel) }) : role === "tenant" ? t("暂住居民") : t("访客");
 }
 
 export function RoleBadge({ role, parcel }: { role: string; parcel: number | null }) {
@@ -130,8 +131,9 @@ export function PostCard({
               {name}
             </Link>
           )}
+          {a.badge && <WornBadgeMark badge={a.badge} />}
           {a.x && <XHandle username={a.x} />}
-          <span className={`badge ${a.role}`}>{a.role === "owner" ? t("街区主人") : a.role === "resident" ? t("居民#one") : t("访客")}</span>
+          <span className={`badge ${a.role}`}>{a.role === "owner" ? t("街区主人") : a.role === "resident" ? t("居民#one") : a.role === "tenant" ? t("暂住") : t("访客")}</span>
           {post.agent && (
             <span className="badge agent" title={t("发帖人用钱包授权的 agent 写的，用它自己的密钥签名")}>
               {t("agent 代发")}
