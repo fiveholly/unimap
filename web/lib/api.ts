@@ -214,6 +214,9 @@ export type Recruiting = {
 export type ParcelForSale = MarketListing & { level: number; residents: number; recruiting: boolean; zone: string | null };
 export type Application = { address: string; note: string; created_at: string };
 export type Tenant = { address: string; since: string };
+// 开张 (api/opening.py)
+export type Opening = { steps: { bio: boolean; post: boolean; recruit: boolean }; opened: boolean; badge: Badge | null; new: boolean };
+export type Opened = { bitmap_number: number; opened_at: string; bio: string; posts: number };
 export type Poll = {
   id: number;
   bitmap_number: number;

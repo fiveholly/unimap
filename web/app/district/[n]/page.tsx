@@ -8,7 +8,8 @@ import { Avatar } from "@/components/Avatar";
 import { Composer } from "@/components/Composer";
 import { EventItem } from "@/components/EventItem";
 import { Mondrian } from "@/components/Mondrian";
-import { OwnerTools } from "@/components/OwnerTools";
+import { OwnerTools, type Section } from "@/components/OwnerTools";
+import { OpeningCard } from "@/components/Opening";
 import { ParcelPanel } from "@/components/ParcelPanel";
 import { PetsCard } from "@/components/Pets";
 import { Polls } from "@/components/Polls";
@@ -65,6 +66,8 @@ function DistrictView() {
   const [selected, setSelected] = useState<number | null>(search.get("parcel") ? Number(search.get("parcel")) : null);
   const [tab, setTab] = useState<Tab>((["contests", "shop", "agent", "parcels"] as const).find((k) => k === search.get("tab")) ?? "posts");
   const [editing, setEditing] = useState(false);
+  const [editSection, setEditSection] = useState<Section>("profile");
+  const [draft, setDraft] = useState<string | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
 
   // Keep only the latest answer: a request sent before sign-in can come back after the one
@@ -413,6 +416,7 @@ function DistrictView() {
           txCount={txCount}
           onDone={loadDistrict}
           onUnpin={() => act(`/v1/districts/${n}/pin`, "DELETE")}
+          initial={editSection}
         />
       )}
 
@@ -461,8 +465,25 @@ function DistrictView() {
         <div className="d-main">
           {tab === "posts" && (
             <>
+              {isOwner && (
+                <OpeningCard
+                  n={n}
+                  token={token}
+                  version={`${district.profile.bio}|${posts.length}|${district.recruit?.updated_at ?? ""}`}
+                  onEdit={(s) => {
+                    setEditSection(s);
+                    setEditing(true);
+                    setTimeout(() => document.querySelector(".owner-panel")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+                  }}
+                  onDraft={(text) => {
+                    setDraft(text);
+                    setTimeout(() => (document.querySelector(".d-main textarea") as HTMLTextAreaElement | null)?.focus(), 50);
+                  }}
+                />
+              )}
               {canPost && (
                 <Composer
+                  draft={draft}
                   district={n}
                   asOptions={asOptions}
                   speakingAs={isOwner ? t("街区主人身份") : viewer?.parcel != null ? t("地块 #{n} ", { n: viewer.parcel }) : undefined}
