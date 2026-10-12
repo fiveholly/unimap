@@ -11,6 +11,23 @@ Restart=always
 RestartSec=10
 NoNewPrivileges=true
 PrivateTmp=true
+# Sandboxing: it writes nothing but the database, so the filesystem is read-only.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 WorkingDirectory=/opt/unimap/src
 Environment=PYTHONPATH=/opt/unimap/src
 ExecStart=/opt/unimap/venv/bin/python3 -m parcel_index.zones
