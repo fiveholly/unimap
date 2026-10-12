@@ -2,9 +2,9 @@
 
 import os
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 
-from api import prosperity
+from api import game, holdings, listings, parks, seasons, style
 from api.db import cursor
 from parcel_index.sources import Bitcoind
 
@@ -63,8 +63,9 @@ def status():
 
 
 @router.get("/v1/land")
-def land_range(start: int, end: int):
-    """Map tiles for blocks start..end (inclusive): claimed or not, owner, parcel and post counts, prosperity level."""
+def land_range(start: int, end: int, tasks: BackgroundTasks):
+    """Map tiles for blocks start..end (inclusive): claimed or not, owner, parcel and post counts, prosperity level, look, park,
+    pets, asking price when listed for sale, and whether it is the lucky district or holds an open treasure (api/game.py)."""
     if end < start or end - start + 1 > MAX_RANGE:
         raise HTTPException(400, f"range must cover 1 to {MAX_RANGE} blocks")
     with cursor() as cur:
@@ -86,7 +87,15 @@ def land_range(start: int, end: int):
             (start, end),
         )
         zones = {n: (zone, txs) for n, zone, txs in cur.fetchall()}
-        levels = prosperity.levels(cur, max(start, 0), end)
+        levels, park_of = parks.scored(cur, max(start, 0), end)
+        styles = style.in_range(cur, max(start, 0), end)
+        pets = holdings.in_range(cur, max(start, 0), end, {n: c[0] for n, c in claimed.items() if c[0]})
+        sale = listings.in_range(cur, max(start, 0), end)
+        if listings.stale(cur):
+            tasks.add_task(listings.refresh)
+        beat = game.in_range(cur, max(start, 0), end)
+        crowned = seasons.crowns(cur, tip)
+        game.ensure_soon(cur, tasks)
     tiles = []
     for n in range(max(start, 0), end + 1):
         owner, parcels, posts = claimed.get(n, (None, 0, 0))
@@ -101,6 +110,13 @@ def land_range(start: int, end: int):
                 "parcels": parcels,
                 "posts": posts,
                 "level": levels[n],
+                "style": style.visible(styles.get(n), levels[n]),
+                "park": park_of[n]["id"] if n in park_of else None,
+                "pets": pets.get(n, []),
+                "sale": sale.get(n),
+                "lucky": n in beat and beat[n]["lucky"],
+                "treasure": beat[n]["treasure"] if n in beat else None,
+                "crown": crowned.get(n),  # 1-3: placed in the last season (api/seasons.py)
             }
         )
     return {"tip": tip, "tiles": tiles}
@@ -163,6 +179,7 @@ def land(bitmap_number: int):
                 "inscription_number": number,
                 "inscribed_height": height,
                 "owner": _owner(*owner),
+                "sale": listings.of(cur, bitmap_number),
             },
             "parcels": parcels,
         }

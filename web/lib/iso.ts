@@ -1,6 +1,8 @@
 // Isometric district tiles: one illustrated building set per zone, drawn as flat polygons.
 // A tile is TILE_W x TILE_H; its ground diamond is centred at (CX, CY) and spans 128 x 64.
 
+import { parsePets, petsKey, type PetKey } from "./pets";
+import { COLORS, styleKey, type DistrictStyle } from "./style";
 import type { Zone } from "./zones";
 
 export const TILE_W = 128;
@@ -96,6 +98,215 @@ class Painter {
     this.poly([lerp(ap, W, 0.3), lerp(ap, S, 0.3), ap], "#D3CEC2");
     this.poly([lerp(ap, S, 0.3), lerp(ap, E, 0.3), ap], "#F2EEE6");
   }
+}
+
+// Decorations an owner picks (lib/style.ts), in the front corner and along the two front
+// edges, drawn last so they stay in view in front of the buildings.
+const DECO_SPOTS: [number, number][] = [
+  [0.72, 0.72],
+  [-0.3, 0.8],
+  [0.8, -0.3],
+];
+function decorate(p: Painter, style: DistrictStyle) {
+  const hex = COLORS[style.color]?.hex ?? COLORS.orange.hex;
+  style.deco.slice(0, DECO_SPOTS.length).forEach((d, i) => {
+    const [gx, gy] = DECO_SPOTS[i];
+    const b = iso(gx, gy);
+    const shadow = () => p.ell(b[0] + 2, b[1] + 1, 7, 2.6, "rgba(0,0,0,0.3)");
+    if (d === "flag") {
+      shadow();
+      p.poly([[b[0] - 0.8, b[1]], [b[0] + 0.8, b[1]], [b[0] + 0.8, b[1] - 30], [b[0] - 0.8, b[1] - 30]], "#D8D2C4");
+      p.poly([[b[0] + 0.8, b[1] - 30], [b[0] + 14, b[1] - 26], [b[0] + 0.8, b[1] - 21]], hex);
+    } else if (d === "flowers") {
+      p.ell(b[0], b[1], 10, 4.6, "#5A3E28");
+      p.ell(b[0], b[1] - 1.2, 9, 4, "#3A6E34");
+      for (const [dx, dy] of [[-5, -1.5], [0, -3], [5, -1.5], [-2.5, 0.5], [3, 0.6]]) p.ell(b[0] + dx, b[1] + dy - 1.5, 1.7, 1.4, dx === 0 ? "#F2EEE6" : hex);
+    } else if (d === "lamps") {
+      for (const dx of [-6, 6]) {
+        const x = b[0] + dx, y = b[1] + (dx > 0 ? -2 : 2);
+        p.ell(x, y - 18, 5, 4, "rgba(246,198,107,0.22)");
+        p.poly([[x - 0.7, y], [x + 0.7, y], [x + 0.7, y - 17], [x - 0.7, y - 17]], "#2E2C28");
+        p.ell(x, y - 18, 2.2, 2, "#F6C66B");
+      }
+    } else if (d === "fountain") {
+      p.ell(b[0], b[1], 12, 5.4, "#9A958A");
+      p.ell(b[0], b[1] - 1.5, 10, 4.4, "#5BA7D9");
+      p.poly([[b[0] - 1.2, b[1] - 1], [b[0] + 1.2, b[1] - 1], [b[0] + 1.2, b[1] - 9], [b[0] - 1.2, b[1] - 9]], "#C9C3B6");
+      p.ell(b[0], b[1] - 11, 3.4, 2.8, "rgba(160,210,240,0.85)");
+    } else if (d === "statue") {
+      shadow();
+      p.poly([[b[0] - 5, b[1]], [b[0], b[1] + 2.5], [b[0], b[1] - 4.5], [b[0] - 5, b[1] - 7]], "#8E887C");
+      p.poly([[b[0], b[1] + 2.5], [b[0] + 5, b[1]], [b[0] + 5, b[1] - 7], [b[0], b[1] - 4.5]], "#B3AC9E");
+      p.poly([[b[0] - 5, b[1] - 7], [b[0], b[1] - 9.5], [b[0] + 5, b[1] - 7], [b[0], b[1] - 4.5]], "#CFC8BA");
+      p.poly([[b[0] - 2, b[1] - 8], [b[0] + 2, b[1] - 8], [b[0] + 1.6, b[1] - 20], [b[0] - 1.6, b[1] - 20]], hex);
+      p.ell(b[0], b[1] - 22.5, 2.4, 2.6, hex);
+    }
+  });
+}
+
+// Pets an owner shows from their wallet (lib/pets.ts), on the two front edges between the
+// decorations, drawn last of all. A higher tier is a bigger dog, or more cats.
+function dog(p: Painter, b: Pt, s: number, flip = false) {
+  const f = flip ? -1 : 1;
+  const X = (dx: number) => b[0] + dx * s * f;
+  const Y = (dy: number) => b[1] + dy * s;
+  p.ell(X(0.5), Y(0.4), 8 * s, 2.4 * s, "rgba(0,0,0,0.3)");
+  for (const dx of [-4.2, -2.6, 2.8, 4.4]) p.poly([[X(dx - 0.6), Y(0)], [X(dx + 0.6), Y(0)], [X(dx + 0.6), Y(-4.5)], [X(dx - 0.6), Y(-4.5)]], dx < 0 ? "#B07A38" : "#C48A44");
+  p.poly([[X(-5.4), Y(-6.5)], [X(-8.2), Y(-11)], [X(-6.6), Y(-11.4)], [X(-4.4), Y(-7.6)]], "#B07A38"); // tail up
+  p.ell(X(0), Y(-6.2), 6.2 * s, 3.3 * s, "#D9A35B");
+  p.ell(X(0.4), Y(-5.2), 4 * s, 1.6 * s, "#F2E6CF");
+  p.ell(X(5.6), Y(-10), 3.4 * s, 3 * s, "#D9A35B");
+  p.ell(X(8.2), Y(-9), 1.9 * s, 1.4 * s, "#F2E6CF");
+  p.ell(X(9.6), Y(-9.4), 0.7 * s, 0.6 * s, "#2E2C28");
+  p.poly([[X(3.6), Y(-11.6)], [X(4.4), Y(-15.4)], [X(6.4), Y(-12.4)]], "#B07A38"); // ear
+  p.ell(X(6.6), Y(-10.6), 0.55 * s, 0.6 * s, "#2E2C28");
+}
+const CAT_FUR = ["#8E9AAF", "#E0A15A", "#3B3A40"];
+function cat(p: Painter, b: Pt, s: number, fur: string) {
+  const X = (dx: number) => b[0] + dx * s;
+  const Y = (dy: number) => b[1] + dy * s;
+  const light = fur === "#3B3A40" ? "#5A5960" : "#F2EEE6";
+  p.ell(X(0.8), Y(0.3), 5.5 * s, 1.9 * s, "rgba(0,0,0,0.3)");
+  p.ell(X(3.6), Y(-0.6), 3.4 * s, 1 * s, fur); // tail round the feet
+  p.ell(X(0), Y(-4.4), 3.6 * s, 4.4 * s, fur);
+  p.ell(X(0), Y(-3.6), 2 * s, 2.8 * s, light);
+  p.ell(X(0), Y(-10), 3.3 * s, 2.9 * s, fur);
+  p.poly([[X(-3.1), Y(-10.6)], [X(-2.6), Y(-14.6)], [X(-0.6), Y(-12.4)]], fur);
+  p.poly([[X(3.1), Y(-10.6)], [X(2.6), Y(-14.6)], [X(0.6), Y(-12.4)]], fur);
+  for (const dx of [-1.3, 1.3]) p.ell(X(dx), Y(-10.3), 0.65 * s, 0.75 * s, "#B5E07A");
+  p.ell(X(0), Y(-9.1), 0.5 * s, 0.35 * s, "#E58A8A");
+}
+function puppet(p: Painter, b: Pt, s: number, cloth: string) {
+  const X = (dx: number) => b[0] + dx * s;
+  const Y = (dy: number) => b[1] + dy * s;
+  const line = (x0: number, y0: number, x1: number, y1: number, c = "rgba(237,234,227,0.55)", w = 0.25) =>
+    p.poly([[X(x0 - w), Y(y0)], [X(x0 + w), Y(y0)], [X(x1 + w), Y(y1)], [X(x1 - w), Y(y1)]], c);
+  p.ell(X(0.6), Y(0.4), 4.5 * s, 1.6 * s, "rgba(0,0,0,0.25)");
+  // Strings up to the wooden control bar it dangles from.
+  line(-3.6, -8, -3.4, -24);
+  line(3.6, -8, 3.4, -24);
+  line(0, -14.5, 0, -24);
+  line(-5, -24, 5, -24, "#8A6844", 0.7);
+  line(0, -26.5, 0, -21.5, "#8A6844", 0.6);
+  line(-1.4, -2.2, -1.6, 0, "#3B3A40", 0.5); // legs
+  line(1.4, -2.2, 1.6, 0, "#3B3A40", 0.5);
+  p.poly([[X(-2.6), Y(-2.2)], [X(2.6), Y(-2.2)], [X(1.8), Y(-8.6)], [X(-1.8), Y(-8.6)]], cloth);
+  line(-1.8, -8.2, -3.6, -6.4, cloth, 0.6); // arms, raised to the strings
+  line(1.8, -8.2, 3.6, -6.4, cloth, 0.6);
+  p.ell(X(0), Y(-11.4), 3 * s, 3 * s, "#F1C9A0");
+  for (const dx of [-1.1, 1.1]) p.ell(X(dx), Y(-11.8), 0.45 * s, 0.55 * s, "#2E2C28");
+  p.poly([[X(-1), Y(-10)], [X(1), Y(-10)], [X(0), Y(-9.4)]], "#B04A35");
+}
+function monkey(p: Painter, b: Pt, s: number, fur: string) {
+  const X = (dx: number) => b[0] + dx * s;
+  const Y = (dy: number) => b[1] + dy * s;
+  p.ell(X(0.6), Y(0.3), 5 * s, 1.8 * s, "rgba(0,0,0,0.3)");
+  for (const [dx, dy, r] of [[3.4, -1.2, 1], [5, -2.6, 0.9], [5.4, -4.6, 0.8], [4.6, -6.2, 0.7]] as const) p.ell(X(dx), Y(dy), r * s, r * s, fur); // tail
+  p.ell(X(0), Y(-3.8), 3.6 * s, 3.8 * s, fur);
+  p.ell(X(0), Y(-3.2), 2.2 * s, 2.6 * s, "#D9B48A");
+  for (const dx of [-3.4, 3.4]) p.ell(X(dx), Y(-10.2), 1.4 * s, 1.4 * s, "#D9B48A"); // ears
+  p.ell(X(0), Y(-10), 3.4 * s, 3.1 * s, fur);
+  p.ell(X(0), Y(-9.3), 2.4 * s, 2 * s, "#D9B48A");
+  for (const dx of [-0.9, 0.9]) p.ell(X(dx), Y(-10.2), 0.5 * s, 0.6 * s, "#2E2C28");
+  p.ell(X(0), Y(-8.6), 0.9 * s, 0.35 * s, "#8A5A3A");
+}
+function palm(p: Painter, b: Pt) {
+  const [x, y] = b;
+  p.ell(x + 3, y + 0.5, 7, 2.4, "rgba(0,0,0,0.28)");
+  p.poly([[x - 1.2, y], [x + 1.2, y], [x + 2.6, y - 22], [x + 0.6, y - 22]], "#8A6844");
+  const top: Pt = [x + 1.6, y - 22];
+  for (const [dx, dy] of [[-10, 3], [10, 4], [-7, -5], [8, -5], [0, -8]])
+    p.poly([top, [top[0] + dx, top[1] + dy], [top[0] + dx * 0.5, top[1] + dy * 0.5 - 2.2]], dx < 0 ? "#3A6E34" : "#5C9A4A");
+  p.ell(top[0] - 1, top[1] + 1.5, 1.4, 1.4, "#6B4A2A");
+  p.ell(top[0] + 1.4, top[1] + 1.8, 1.4, 1.4, "#6B4A2A");
+}
+function frog(p: Painter, b: Pt, s: number) {
+  const X = (dx: number) => b[0] + dx * s;
+  const Y = (dy: number) => b[1] + dy * s;
+  p.ell(X(0.4), Y(0.3), 4.6 * s, 1.5 * s, "rgba(0,0,0,0.3)");
+  p.ell(X(-3), Y(-0.6), 1.8 * s, 0.9 * s, "#4F8A3A"); // feet
+  p.ell(X(3), Y(-0.6), 1.8 * s, 0.9 * s, "#4F8A3A");
+  p.ell(X(0), Y(-2.6), 4 * s, 2.7 * s, "#6DAA52");
+  p.ell(X(0), Y(-2), 2.6 * s, 1.5 * s, "#C9E0A0");
+  for (const dx of [-1.9, 1.9]) {
+    p.ell(X(dx), Y(-5.2), 1.5 * s, 1.5 * s, "#6DAA52");
+    p.ell(X(dx), Y(-5.4), 0.8 * s, 0.85 * s, "#F2EEE6");
+    p.ell(X(dx), Y(-5.4), 0.4 * s, 0.5 * s, "#2E2C28");
+  }
+  p.poly([[X(-1.6), Y(-3.4)], [X(1.6), Y(-3.4)], [X(0), Y(-3)]], "#3A6E34");
+}
+function pond(p: Painter, b: Pt, rx: number) {
+  p.ell(b[0], b[1], rx + 2, (rx + 2) * 0.45, "#5A564C");
+  p.ell(b[0], b[1] - 0.6, rx, rx * 0.45, "#3F86B0");
+  p.ell(b[0] - rx * 0.35, b[1] - 0.8, rx * 0.4, rx * 0.12, "rgba(200,230,245,0.35)");
+  p.ell(b[0] + rx * 0.4, b[1] + 0.4, rx * 0.22, rx * 0.1, "#4F8A3A"); // a lily pad
+}
+function runestone(p: Painter, b: Pt, s: number) {
+  const X = (dx: number) => b[0] + dx * s;
+  const Y = (dy: number) => b[1] + dy * s;
+  p.ell(X(1), Y(0.6), 5.5 * s, 2 * s, "rgba(0,0,0,0.3)");
+  // A slab, its broad face to the front-left, rounded at the top.
+  p.poly([[X(-3.6), Y(-1.4)], [X(1.6), Y(1)], [X(1.6), Y(-13)], [X(0.2), Y(-15.6)], [X(-2.4), Y(-16.2)], [X(-3.6), Y(-14.6)]], "#7C776C");
+  p.poly([[X(1.6), Y(1)], [X(3.4), Y(0)], [X(3.4), Y(-13.6)], [X(2.2), Y(-15.4)], [X(0.2), Y(-15.6)], [X(1.6), Y(-13)]], "#A39D90");
+  // Carved runes that glow a little.
+  const cut = (x0: number, y0: number, x1: number, y1: number) =>
+    p.poly([[X(x0 - 0.3), Y(y0)], [X(x0 + 0.3), Y(y0)], [X(x1 + 0.3), Y(y1)], [X(x1 - 0.3), Y(y1)]], "#F7A23C");
+  cut(-1.6, -3.6, -1.6, -11.6);
+  cut(-1.6, -11.6, 0.2, -9.2);
+  cut(0.2, -9.2, -1.6, -7.6);
+  cut(-1.6, -7.6, 0.4, -4.4);
+}
+
+// Up to three pets on a tile, in the order the owner picked them: along the front-left edge,
+// the front-right edge, then the front corner. at(a, b) is a point a along the slot's edge and
+// b towards the tile's middle; the corner has less room, so a is squeezed there.
+type Slot = (a: number, b?: number) => Pt;
+const PET_SLOTS: Slot[] = [
+  (a, b = 0) => iso(0.3 + a, 0.9 - b),
+  (a, b = 0) => iso(0.9 - b, 0.3 + a),
+  (a, b = 0) => iso(0.7 + a * 0.35 - b, 0.7 - a * 0.35 - b),
+];
+const PUPPET_CLOTH = ["#C2553D", "#5B8DB8", "#E8B04A"];
+const MONKEY_FUR = ["#8A5A3A", "#6B4A2A"];
+function showPets(p: Painter, pets: [PetKey, number][]) {
+  pets.slice(0, PET_SLOTS.length).forEach(([key, tier], i) => {
+    const at = PET_SLOTS[i];
+    if (key === "dog") {
+      if (tier >= 3) {
+        const [gx, gy] = i === 0 ? [-0.05, 0.78] : i === 1 ? [0.78, -0.05] : [0.58, 0.58];
+        const k = p.box(gx, gy, 0.11, 0.11, 9, { l: "#8A6844", r: "#A9824F" });
+        p.roof(k, 7, { rb: "#C2553D", lb: "#9E4330", l: "#8A3828", r: "#B04A35" }, gx, gy);
+        const door = iso(gx + 0.11, gy + 0.04);
+        p.ell(door[0] - 3, door[1] - 4, 2.2, 3, "#2E2418");
+      }
+      dog(p, at(0.02), tier >= 2 ? 1.15 : 0.85);
+      if (tier >= 3) dog(p, at(-0.75, -0.05), 0.62, true);
+    } else if (key === "cat") {
+      const spots: [number, number, number][] = [[0, 0, 1], [-0.28, 0.04, 0.85], [0.22, -0.05, 0.8]];
+      spots.slice(0, tier).forEach(([a, d, sc], j) => cat(p, at(a, d), sc, CAT_FUR[j]));
+    } else if (key === "puppet") {
+      if (tier >= 3) {
+        // A little puppet theatre behind them: a booth with a striped awning.
+        const [x, y] = at(-0.05, 0.22);
+        p.poly([[x - 13, y], [x + 13, y], [x + 13, y - 18], [x - 13, y - 18]], "#8A6844");
+        p.poly([[x - 10, y - 4], [x + 10, y - 4], [x + 10, y - 15], [x - 10, y - 15]], "#2E2418");
+        for (let j = 0; j < 4; j++) p.poly([[x - 14 + j * 7, y - 18], [x - 7 + j * 7, y - 18], [x - 7 + j * 7, y - 22], [x - 14 + j * 7, y - 22]], j % 2 ? "#F2EEE6" : "#C2553D");
+      }
+      const spots: [number, number][] = tier >= 2 ? [[-0.12, 0], [0.14, 0.02]] : [[0, 0]];
+      spots.forEach(([a, d], j) => puppet(p, at(a, d), 0.9, PUPPET_CLOTH[j]));
+    } else if (key === "monkey") {
+      if (tier >= 3) palm(p, at(-0.3, 0.1));
+      monkey(p, at(0.05), 1, MONKEY_FUR[0]);
+      if (tier >= 2) monkey(p, at(0.3, 0.02), 0.8, MONKEY_FUR[1]);
+    } else if (key === "frog") {
+      if (tier >= 2) pond(p, at(0, 0.08), tier >= 3 ? 15 : 11);
+      const spots: [number, number, number][] = tier >= 3 ? [[-0.12, 0.02, 0.9], [0.14, 0.04, 0.8], [0.02, 0.18, 0.7]] : [[tier >= 2 ? -0.08 : 0, 0, 1]];
+      spots.forEach(([a, d, sc]) => frog(p, at(a, d), sc));
+    } else if (key === "runestone") {
+      const stones: [number, number, number][] = tier >= 3 ? [[-0.22, 0.08, 0.9], [0.22, 0.08, 0.9], [0, 0.18, 1.2]] : [[0, 0, tier >= 2 ? 1.35 : 0.95]];
+      stones.forEach(([a, d, sc]) => runestone(p, at(a, d), sc));
+    }
+  });
 }
 
 // Things on a tile are drawn back to front by k = gx + gy.
@@ -349,12 +560,41 @@ export const GROUND: Record<Zone | "unknown", Faces & { t: string }> = {
   unknown: { t: "#2A2823", l: "#1A1916", r: "#22201C" },
 };
 
+/** The ground of a park member (lib/parks.ts): one paved plaza across the whole park. */
+export const PAVED: Faces & { t: string } = { t: "#A8977A", l: "#5A4C38", r: "#6E5E46" };
+
 /** Shapes of one tile. variant picks heights and colours, so neighbours differ. */
-export function tileShapes(zone: Zone | null, variant: number, level: Lv = 3): Shape[] {
+export function tileShapes(
+  zone: Zone | null,
+  variant: number,
+  level: Lv = 3,
+  style: DistrictStyle | null = null,
+  paved = false,
+  pets: string[] | null = null,
+): Shape[] {
   const p = new Painter();
-  p.ground(GROUND[zone ?? "unknown"]);
+  p.ground(paved ? PAVED : GROUND[zone ?? "unknown"]);
   if (zone) BUILD[zone](p, rng(variant), level);
+  if (style?.deco.length) decorate(p, style);
+  const shown = parsePets(pets);
+  if (shown.length) showPets(p, shown);
   return p.out;
+}
+
+/** Just the pets of one asset and tier, for the 藏品 card. */
+export function petShapes(key: PetKey, tier: number): Shape[] {
+  const p = new Painter();
+  showPets(p, [[key, tier]]);
+  return p.out;
+}
+
+export function shapesBounds(shapes: Shape[]): [number, number, number, number] {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const s of shapes) {
+    const pts: Pt[] = "pts" in s ? s.pts : [[s.e[0] - s.e[2], s.e[1] - s.e[3]], [s.e[0] + s.e[2], s.e[1] + s.e[3]]];
+    for (const [x, y] of pts) [x0, y0, x1, y1] = [Math.min(x0, x), Math.min(y0, y), Math.max(x1, x), Math.max(y1, y)];
+  }
+  return [x0, y0, x1, y1];
 }
 
 export function drawShapes(ctx: CanvasRenderingContext2D, shapes: Shape[]) {
@@ -377,10 +617,18 @@ const sprites = new Map<string, HTMLCanvasElement>();
 
 /** A pre-rendered tile image at `res` pixels per tile unit, cached. level is the district's
  * prosperity level; districts without one look settled (3). */
-export function tileSprite(zone: Zone | null, n: number, res: number, level: number | null = null): HTMLCanvasElement {
+export function tileSprite(
+  zone: Zone | null,
+  n: number,
+  res: number,
+  level: number | null = null,
+  style: DistrictStyle | null = null,
+  paved = false,
+  pets: string[] | null = null,
+): HTMLCanvasElement {
   const variant = hash(n) % VARIANTS;
   const lv = (level != null && level >= 1 && level <= 5 ? Math.round(level) : 3) as Lv;
-  const key = `${zone}:${variant}:${res}:${lv}`;
+  const key = `${zone}:${variant}:${res}:${lv}:${styleKey(style)}:${paved ? "p" : ""}:${petsKey(pets)}`;
   let c = sprites.get(key);
   if (!c) {
     c = document.createElement("canvas");
@@ -388,7 +636,7 @@ export function tileSprite(zone: Zone | null, n: number, res: number, level: num
     c.height = Math.ceil(TILE_H * res);
     const ctx = c.getContext("2d")!;
     ctx.scale(res, res);
-    drawShapes(ctx, tileShapes(zone, 9000 + variant, lv));
+    drawShapes(ctx, tileShapes(zone, 9000 + variant, lv, style, paved, pets));
     sprites.set(key, c);
   }
   return c;

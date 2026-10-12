@@ -98,6 +98,8 @@ as_unimap "$OPT/src/scripts/setup_opi.sh" "$OPT/opi"
 
 [ -x "$OPT/venv/bin/python3" ] || as_unimap python3 -m venv "$OPT/venv"
 as_unimap "$OPT/venv/bin/pip" install -q -r "$OPT/src/requirements.txt"
+# Collection lists for pets on the map (api/holdings.py). Not fatal: a missing list only hides that pet.
+as_unimap "$OPT/venv/bin/python3" "$OPT/src/scripts/fetch_collections.py" || echo "warning: some collection lists failed to download"
 [ -x "$OPT/opi-venv/bin/python3" ] || as_unimap python3 -m venv "$OPT/opi-venv"
 as_unimap "$OPT/opi-venv/bin/pip" install -q -r "$OPT/opi/modules/requirements.txt"
 
@@ -124,7 +126,7 @@ chmod 640 /etc/unimap/*.env /etc/unimap/bitcoin.conf
 sed "s|@DOMAIN@|$DOMAIN|" "$OPT/src/deploy/Caddyfile" >/etc/caddy/Caddyfile
 
 # ---- web app ------------------------------------------------------------------
-(cd "$OPT/src/web" && as_unimap npm ci --no-audit --no-fund && as_unimap env NEXT_PUBLIC_API_URL="https://$DOMAIN" npm run build)
+(cd "$OPT/src/web" && as_unimap npm ci --no-audit --no-fund && as_unimap env NEXT_PUBLIC_API_URL="https://$DOMAIN" NEXT_PUBLIC_SITE_URL="https://$DOMAIN" npm run build)
 
 # ---- services -----------------------------------------------------------------
 install -m 644 "$OPT/src/deploy/systemd/"*.service /etc/systemd/system/
@@ -135,7 +137,7 @@ for s in bitcoind ord opi-ord; do
   systemctl enable "unimap-$s" >/dev/null
   if [ "${1:-}" = --restart-all ]; then systemctl restart "unimap-$s"; else systemctl start "unimap-$s"; fi
 done
-for s in bitmap-index indexer owners zones api web; do
+for s in bitmap-index indexer owners zones api agent web; do
   systemctl enable "unimap-$s" >/dev/null
   systemctl restart "unimap-$s"
 done

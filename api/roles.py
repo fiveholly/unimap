@@ -1,6 +1,8 @@
 """Who someone is in a district, read live from the indexer tables."""
 
-OWNER, RESIDENT, VISITOR = "owner", "resident", "visitor"
+from fastapi import HTTPException
+
+OWNER, RESIDENT, TENANT, VISITOR = "owner", "resident", "tenant", "visitor"
 
 
 def _first(row):
@@ -20,6 +22,31 @@ def district_owner(cur, bitmap_number):
     return _first(cur.fetchone())
 
 
+def require_owner(cur, bitmap_number, address):
+    if district_owner(cur, bitmap_number) != address:
+        raise HTTPException(403, "only the district owner can do this")
+
+
+def parcel_holder(cur, bitmap_number, tx_index):
+    """Address holding parcel tx_index of the district, or None."""
+    cur.execute(
+        "select o.address from parcels p join inscription_owners o on o.inscription_id = p.inscription_id "
+        "where p.bitmap_number = %s and p.tx_index = %s;",
+        (bitmap_number, tx_index),
+    )
+    return _first(cur.fetchone())
+
+
+def parcel_holders(cur, bitmap_number):
+    """{tx_index: address} for the district's claimed parcels."""
+    cur.execute(
+        "select p.tx_index, o.address from parcels p join inscription_owners o on o.inscription_id = p.inscription_id "
+        "where p.bitmap_number = %s and o.address is not null;",
+        (bitmap_number,),
+    )
+    return {r[0]: r[1] for r in ((tuple(x.values()) if isinstance(x, dict) else x) for x in cur.fetchall())}
+
+
 def role_in(cur, address, bitmap_number):
     """(role, parcel tx_index or None) of address in the district."""
     if address is not None and district_owner(cur, bitmap_number) == address:
@@ -32,7 +59,20 @@ def role_in(cur, address, bitmap_number):
     tx_index = _first(cur.fetchone())
     if tx_index is not None:
         return RESIDENT, tx_index
+    if address is not None and is_tenant(cur, address, bitmap_number):
+        return TENANT, None
     return VISITOR, None
+
+
+def is_tenant(cur, address, bitmap_number):
+    """暂住居民 (api/tenants.py): let in by the owner who still holds the district."""
+    cur.execute(
+        "select 1 from social.tenants t join bitmaps b on b.bitmap_number = t.bitmap_number "
+        "join inscription_owners o on o.inscription_id = b.inscription_id and o.address = t.owner "
+        "where t.bitmap_number = %s and t.address = %s;",
+        (bitmap_number, address),
+    )
+    return cur.fetchone() is not None
 
 
 def holdings(cur, address):
