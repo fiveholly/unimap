@@ -1,18 +1,20 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 
 import { useTip } from "@/components/BlockWatch";
 import { CityMap } from "@/components/CityMap";
 import { LuckyStrip } from "@/components/GameBits";
-import { EventItem } from "@/components/EventItem";
-import { PostCard } from "@/components/PostCard";
-import { useSession } from "@/components/Session";
+import { Today } from "@/components/Today";
+import { TourCard } from "@/components/Tour";
+import { OpenedList } from "@/components/Opening";
 import { Welcome } from "@/components/Welcome";
-import { api, type FeedItem } from "@/lib/api";
+import { LAND, WorldMap } from "@/components/WorldMap";
 import { epochName } from "@/lib/format";
 import { t } from "@/lib/i18n";
+import { continent, HALVING } from "@/lib/terrain";
+import { ISLANDS } from "@/lib/world";
 
 export default function Home() {
   return (
@@ -22,17 +24,24 @@ export default function Home() {
   );
 }
 
+const num = (n: number) => n.toLocaleString("en-US");
+
+/** The home page is the map: the whole world first, and the city map of a spot once you pick one
+ * (?b= names the block, so the browser's back button returns to the world). */
 function HomeView() {
-  const { token } = useSession();
+  const router = useRouter();
   const search = useSearchParams();
   const { tip, error } = useTip();
-  // Where the map opens: ?b=, else the newest block when the page was opened (a new block later doesn't move it).
+  const [highlight, setHighlight] = useState<number | null>(null);
+  // Where the city map opens: ?b=, else the newest block when the page was opened (a new block later doesn't move it).
   const [opened, setOpened] = useState<number | null>(null);
   useEffect(() => {
     if (tip != null && opened == null) setOpened(tip);
   }, [tip, opened]);
   const b = Number(search.get("b"));
-  const focus = tip == null ? 0 : Number.isInteger(b) && b >= 0 && b <= tip && search.get("b") ? b : (opened ?? tip);
+  const city = tip != null && search.get("b") != null && Number.isInteger(b) && b >= 0 && b <= tip;
+  const enter = (n: number) => router.push(`/?b=${n}`, { scroll: false });
+  const epochs = tip == null ? 0 : Math.floor(tip / HALVING) + 1;
 
   return (
     <div className="page">
@@ -45,45 +54,72 @@ function HomeView() {
         </div>
         {tip != null && (
           <div className="mono muted small nowrap">
-            {epochName(tip)} · {t("最新区块 {n}", { n: tip.toLocaleString("en-US") })}
+            {epochName(tip)} · {t("最新区块 {n}", { n: num(tip) })}
           </div>
         )}
       </section>
-      {tip != null && <Welcome tip={tip} />}
-      {tip != null && <LuckyStrip tip={tip} />}
       {error && <p className="error">{t("连不上 unimap 服务：{error}", { error })}</p>}
       {tip == null && !error && <div className="city-skeleton" aria-label={t("地图加载中")} />}
-      {tip != null && <CityMap tip={tip} focus={focus} />}
-      <section className="home-feed">
-        <h2 className="section-title">{t("我的动态")}</h2>
-        {token ? <Feed token={token} /> : <p className="muted">{t("连接钱包并关注街区后，这里会出现它们的帖子和地块变动。")}</p>}
-      </section>
-    </div>
-  );
-}
-
-function Feed({ token }: { token: string }) {
-  const [items, setItems] = useState<FeedItem[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    api<{ items: FeedItem[] }>("/v1/feed", { token })
-      .then((r) => setItems(r.items))
-      .catch((e) => setError(e.message));
-  }, [token]);
-  if (error) return <p className="error small">{error}</p>;
-  if (!items) return <p className="muted">{t("加载中…")}</p>;
-  if (items.length === 0) return <p className="muted">{t("关注一个街区，动态就会出现在这里。")}</p>;
-  return (
-    <div className="feed">
-      {items.map((i) =>
-        i.type === "event" ? (
-          <ul className="events" key={`e${i.event.id}`}>
-            <EventItem event={i.event} showDistrict />
-          </ul>
-        ) : (
-          <PostCard key={`p${i.post.id}`} post={i.post} showDistrict />
-        ),
+      {tip != null && city && (
+        <>
+          <nav className="map-crumbs" aria-label={t("地图位置")}>
+            <button type="button" className="ghost sm" onClick={() => router.push("/", { scroll: false })}>
+              ← {t("世界地图")}
+            </button>
+            <span className="muted small">
+              {t(continent(Math.floor(b / HALVING)).name)} · {ISLANDS[Math.floor(b / HALVING)]?.years}
+            </span>
+          </nav>
+          <CityMap tip={tip} focus={b} />
+        </>
       )}
+      {tip != null && !city && (
+        <div className="world">
+          <WorldMap tip={tip} highlight={highlight} onEnter={enter} />
+          <aside className="world-panel">
+            <h2 className="section-title">{t("世界地图")}</h2>
+            <p className="muted small">{t("每一次减半是一块大陆，大陆上每一小格是 64 个区块，越靠中间越早。点地图上任意一处，进入那里的城区。")}</p>
+            <ul className="continents">
+              {ISLANDS.slice(0, Math.min(epochs + 1, ISLANDS.length)).map((isle, e) => {
+                const first = e * HALVING, last = Math.min(tip, (e + 1) * HALVING - 1);
+                const future = e >= epochs;
+                return (
+                  <li key={e}>
+                    <button
+                      type="button"
+                      className={`continent-row${highlight === e ? " on" : ""}`}
+                      disabled={future}
+                      onMouseEnter={() => setHighlight(e)}
+                      onMouseLeave={() => setHighlight(null)}
+                      onFocus={() => setHighlight(e)}
+                      onBlur={() => setHighlight(null)}
+                      onClick={() => enter(first)}
+                    >
+                      <i className="swatch" style={future ? { border: "1px dashed var(--fg-2)" } : { background: LAND[e] }} />
+                      <span className="grow">
+                        <b>{t(continent(e).name)}</b>
+                        <span className="muted small">
+                          {" "}
+                          {isle.years}
+                        </span>
+                        <span className="mono muted small block">
+                          {future ? t("区块 {a} 起", { a: num(first) }) : t("区块 {a} – {b}", { a: num(first), b: num(last) })}
+                        </span>
+                      </span>
+                      <span className="small muted nowrap">{future ? t("还没出现") : last - first + 1 < HALVING ? t("还在长") : ""}</span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </aside>
+        </div>
+      )}
+      {tip != null && <Today />}
+      {tip != null && <LuckyStrip tip={tip} />}
+      {tip != null && <TourCard />}
+      {tip != null && <OpenedList />}
+      {tip != null && <Welcome tip={tip} />}
     </div>
   );
 }

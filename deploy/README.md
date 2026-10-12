@@ -2,6 +2,14 @@
 
 这里的文件把整套 unimap 装到一台 Ubuntu 24.04 机器上：比特币节点、两个 ord 索引器、OPI 的街区索引、unimap 的地块/持有人/地段索引、API、网站，以及自动申请 HTTPS 证书的 Caddy。
 
+> **只想先看看效果？** `demo.sh` 在一台 2 核 2 GB 的小机器上跑演示版（`npm run demo` 那座虚构的城市，不需要比特币节点和数据库）：
+>
+> ```
+> curl -fsSL https://raw.githubusercontent.com/fiveholly/unimap/preview/deploy/demo.sh | sudo bash
+> ```
+>
+> 装好后用 `http://<服务器 IP>` 访问。它跟着 `preview` 分支，每 5 分钟检查一次，有新提交就在旁边构建好再切换。有了域名后，把它写进 `/etc/unimap/demo.env` 的 `DOMAIN=`，再跑一次上面的命令，Caddy 会自动申请 HTTPS 证书。
+
 ## 机器
 
 | 项目 | 建议 | 原因 |

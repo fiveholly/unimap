@@ -9,5 +9,8 @@ import { market } from "./market.ts";
 import { tips } from "./tips.ts";
 import { agent } from "./agent.ts";
 import { shop } from "./shop.ts";
+import { metrics } from "./metrics.ts";
+import { nostr } from "./nostr.ts";
+import { parcels } from "./parcels.ts";
 
-export const EN: Record<string, string> = { ...district, ...map, ...social, ...moderation, ...tips, ...game, ...market, ...agent, ...shop, ...common };
+export const EN: Record<string, string> = { ...district, ...map, ...social, ...moderation, ...tips, ...game, ...market, ...agent, ...shop, ...metrics, ...nostr, ...parcels, ...common };

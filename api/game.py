@@ -18,6 +18,7 @@ replaces the block.
 import hashlib
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from pydantic import BaseModel
 
 from api import notify, wallets
 from api.auth import current_address, optional_address
@@ -251,13 +252,37 @@ def on_checkin(cur, address, n):
 
 def badges_of(cur, address):
     cur.execute(
-        "select kind, height, bitmap_number, tx_index, rarity, created_at from social.badges where address = %s order by id desc limit 200;",
+        "select b.id, b.kind, b.height, b.bitmap_number, b.tx_index, b.rarity, b.created_at, w.address is not null "
+        "from social.badges b left join social.worn_badges w on w.badge_id = b.id "
+        "where b.address = %s order by b.id desc limit 200;",
         (address,),
     )
     return [
-        {"kind": k, "height": h, "bitmap_number": n, "tx_index": tx, "rarity": r, "created_at": at.isoformat()}
-        for k, h, n, tx, r, at in cur.fetchall()
+        {"id": i, "kind": k, "height": h, "bitmap_number": n, "tx_index": tx, "rarity": r, "created_at": at.isoformat(), "worn": worn}
+        for i, k, h, n, tx, r, at, worn in cur.fetchall()
     ]
+
+
+class WearBody(BaseModel):
+    id: int | None = None  # one of the address's badges, or null to wear none
+
+
+@router.put("/v1/me/badge")
+def wear(req: WearBody, address: str = Depends(current_address)):
+    """Wear one of your badges beside your name on posts and your page."""
+    with cursor() as cur:
+        if req.id is None:
+            cur.execute("delete from social.worn_badges where address = %s;", (address,))
+            return {"worn": None}
+        cur.execute("select kind, rarity from social.badges where id = %s and address = %s;", (req.id, address))
+        row = cur.fetchone()
+        if row is None:
+            raise HTTPException(404, "that isn't one of your badges")
+        cur.execute(
+            "insert into social.worn_badges (address, badge_id) values (%s, %s) on conflict (address) do update set badge_id = excluded.badge_id;",
+            (address, req.id),
+        )
+        return {"worn": {"id": req.id, "kind": row[0], "rarity": row[1]}}
 
 
 @router.get("/v1/game")
