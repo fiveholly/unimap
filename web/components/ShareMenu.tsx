@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { XIcon } from "./X";
 import { xIntent } from "@/lib/share";
+import { t } from "@/lib/i18n";
 
 const ShareIcon = () => (
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -19,7 +20,7 @@ const ShareIcon = () => (
 export function ShareMenu({
   path,
   text,
-  label = "分享",
+  label,
   className = "ghost lg",
   align = "right",
 }: {
@@ -58,7 +59,7 @@ export function ShareMenu({
     <div className={`share-menu ${align}`} ref={ref}>
       <button type="button" className={className} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
         <ShareIcon />
-        {copied ? "链接已复制" : label || <span className="sr-only">分享</span>}
+        {copied ? t("链接已复制") : (label ?? t("分享")) || <span className="sr-only">{t("分享")}</span>}
       </button>
       {open && (
         <div className="menu" role="menu">
@@ -71,10 +72,10 @@ export function ShareMenu({
             onClick={() => setOpen(false)}
           >
             <XIcon />
-            分享到 X
+            {t("分享到 X")}
           </a>
           <button type="button" role="menuitem" className="menu-item" onClick={copy}>
-            复制链接
+            {t("复制链接")}
           </button>
           {native && (
             <button
@@ -86,7 +87,7 @@ export function ShareMenu({
                 navigator.share({ text, url: url() }).catch(() => {});
               }}
             >
-              更多方式…
+              {t("更多方式…")}
             </button>
           )}
         </div>
