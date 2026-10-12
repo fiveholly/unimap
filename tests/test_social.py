@@ -1010,6 +1010,68 @@ class SocialApi(unittest.TestCase):
                 )
 
 
+    def test_tour(self):
+        from datetime import date, timedelta
+
+        from api import tour
+
+        erin = Wallet(10)
+        self.tokens[erin.address] = self.login(erin)
+        with self.conn.cursor() as cur:
+            cur.execute("delete from social.tour_days; delete from social.badges where kind = 'tour';")
+        try:
+            # Three different inscribed districts; the day's stops stay put.
+            t = self.client.get("/v1/tour").json()
+            stops = [s["bitmap_number"] for s in t["stops"]]
+            with self.conn.cursor() as cur:
+                cur.execute("select bitmap_number from bitmaps;")
+                inscribed = {r[0] for r in cur.fetchall()}
+            self.assertEqual(len(set(stops) & inscribed), 3)
+            self.assertNotIn("done", t)
+            self.assertEqual([s["bitmap_number"] for s in self.client.get("/v1/tour").json()["stops"]], stops)
+            # The first stops are districts posted in this week; a stored day is kept as it is.
+            self.post(CAROL, "热闹一下", district=OTHER)
+            with self.conn.cursor() as cur:
+                day = date(2026, 1, 2)
+                cur.execute("insert into social.tour_days (day, stops) values (%s, %s);", (day - timedelta(days=1), [1]))
+                cur.execute(
+                    "select distinct p.bitmap_number from social.posts p join bitmaps b using (bitmap_number) "
+                    "where p.reply_to is null and p.removed_at is null and p.created_at > now() - interval '7 days';"
+                )
+                active = {r[0] for r in cur.fetchall()}
+                picked = tour.stops(cur, day)
+                self.assertEqual((len(picked), len(set(picked))), (3, 3))
+                self.assertTrue(set(picked[: min(tour.ACTIVE, len(active))]) <= active)
+                self.assertEqual(tour.stops(cur, day - timedelta(days=1)), [1])
+            # Checking in at each stop; the last one earns the badge.
+            for n in stops[:-1]:
+                self.assertEqual(self.client.post(f"/v1/districts/{n}/checkin", headers=self.h(erin)).json()["badges"], [])
+            mine = self.client.get("/v1/tour", headers=self.h(erin)).json()
+            self.assertEqual(([s["visited"] for s in mine["stops"]], mine["done"], mine["streak"]), ([True, True, False], False, 0))
+            won = self.client.post(f"/v1/districts/{stops[-1]}/checkin", headers=self.h(erin)).json()["badges"]
+            today = tour.day_number(tour.today())
+            self.assertEqual(won, [{"kind": "tour", "height": today, "bitmap_number": stops[-1], "rarity": "common", "streak": 1}])
+            mine = self.client.get("/v1/tour", headers=self.h(erin)).json()
+            self.assertEqual((mine["done"], mine["streak"]), (True, 1))
+            self.assertIn("tour", [b["kind"] for b in self.client.get(f"/v1/people/{erin.address}").json()["badges"]])
+            # Days in a row make the badge rarer; a missed day starts over.
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "insert into social.badges (address, kind, height, bitmap_number, rarity) "
+                    "select %s, 'tour', h, 100, 'common' from unnest(%s::int[]) h;",
+                    (erin.address, [today - 1, today - 2, today - 4]),
+                )
+                self.assertEqual(tour.streak(cur, erin.address, tour.today()), 3)
+                self.assertEqual(tour.streak(cur, erin.address, tour.today() + timedelta(days=1)), 3)  # tomorrow, not done yet
+                self.assertEqual(tour.streak(cur, erin.address, tour.today() + timedelta(days=2)), 0)
+            self.assertEqual([tour.rarity(n) for n in (1, 3, 7, 30)], ["common", "rare", "epic", "legendary"])
+        finally:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "delete from social.tour_days; delete from social.badges where kind = 'tour'; delete from social.checkins where address = %s;",
+                    (erin.address,),
+                )
+
     def test_seasons(self):
         from api import seasons
 

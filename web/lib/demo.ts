@@ -649,6 +649,46 @@ function drawAt(h: number): Draw {
   const opened_by = load().opened?.[h] ?? null;
   return { height: h, block_hash, bitmap_number: n, tx_index: i, candidates: pool.length, index, rarity: rarityOf(block_hash), opened_by, open: !opened_by && h > demoTip() - CLAIM_BLOCKS };
 }
+/** 每日巡城, as api/tour.py: two stops out of the districts posted in this week, then the rest
+ * out of all claimed ones, each by SHA-256 of "<day>:tour:<i>". Not stored: the demo's posts
+ * only change when the visitor posts, which is rare enough. */
+const TOUR_STREAKS: [number, Rarity][] = [[30, "legendary"], [7, "epic"], [3, "rare"], [1, "common"]];
+const dayNumber = (day: string) => Math.round(Date.parse(day) / 86_400_000);
+function tourStops(day: string): number[] {
+  const all = districtPool();
+  const week = Date.now() - 7 * DAY * 1000;
+  const active = [...new Set(load().posts.filter((p) => p.reply_to == null && !p.removed && Date.parse(p.created_at) > week && ownerOf(p.bitmap_number)).map((p) => p.bitmap_number))].sort((a, b) => a - b);
+  const picked: number[] = [];
+  let i = 0;
+  const take = (pool: number[], want: number) => {
+    for (let tries = 0; tries < want * 8 && picked.length < want && pool.some((n) => !picked.includes(n)); tries++) {
+      const n = pool[pick(day, `tour:${i++}`, pool.length)!];
+      if (!picked.includes(n)) picked.push(n);
+    }
+  };
+  take(active, 2);
+  take(all, 3);
+  return picked;
+}
+function tourStreak(day: string): number {
+  const done = new Set((load().badges ?? []).filter((b) => b.kind === "tour").map((b) => b.height));
+  let d = dayNumber(day);
+  if (!done.has(d)) d -= 1;
+  let run = 0;
+  while (done.has(d - run)) run++;
+  return run;
+}
+function tourView(me: string | null) {
+  const day = today(), stops = tourStops(day), s = load();
+  const stopsOut = stops.map((n) => ({ bitmap_number: n, visited: !!me && (s.checkins?.[n] ?? []).includes(day) }));
+  return {
+    day,
+    stops: stopsOut,
+    rules: { stops: 3, active: 2, active_days: 7, streaks: TOUR_STREAKS },
+    ...(me ? { done: stopsOut.every((x) => x.visited), streak: tourStreak(day) } : {}),
+  };
+}
+
 function luckyNow(): { n: number; since: number; block_hash: string; index: number; candidates: number } | null {
   const [since] = roundOf(demoTip());
   const block_hash = blockHash(since), pool = districtPool();
@@ -1031,6 +1071,7 @@ function route(path: string, opts: Opts): unknown {
     return { indexed_height: { bitmap: tip, parcel: tip, owner: tip } };
   }
   if (p === "/v1/game") return gameView(me);
+  if (p === "/v1/tour") return tourView(me);
   if (p === "/v1/season") return seasonView();
   if ((m = p.match(/^\/v1\/game\/treasures\/(\d+)\/open$/)) && method === "POST") {
     const a = needMe(), h = +m[1], d = drawAt(h);
@@ -1269,6 +1310,13 @@ function route(path: string, opts: Opts): unknown {
     if (lucky?.n === +m[1] && !(s.badges ?? []).some((b) => b.kind === "lucky_visit" && b.height === lucky.since)) {
       badges.push({ kind: "lucky_visit", height: lucky.since, bitmap_number: lucky.n, rarity: "common" });
       (s.badges ??= []).unshift({ ...badges[0], tx_index: null, created_at: new Date().toISOString() });
+    }
+    const day = today(), stops = tourStops(day);
+    if (stops.includes(+m[1]) && stops.every((n) => (s.checkins?.[n] ?? []).includes(day))) {
+      const run = tourStreak(day) + 1;
+      const won = { kind: "tour" as const, height: dayNumber(day), bitmap_number: +m[1], rarity: TOUR_STREAKS.find(([d]) => run >= d)![1] };
+      badges.push({ ...won, streak: run } as (typeof badges)[number]);
+      (s.badges ??= []).unshift({ ...won, tx_index: null, created_at: new Date().toISOString() });
     }
     save();
     return { ok: true, badges };

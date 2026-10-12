@@ -340,6 +340,14 @@ export type Draw = {
   open: boolean;
 };
 export type LuckyRound = { since: number; until: number; block_hash: string; candidates: number; index: number | null; bitmap_number: number | null; owner: string | null };
+/** 每日巡城 (api/tour.py): today's stops; done and streak only for a signed-in viewer. */
+export type Tour = {
+  day: string;
+  stops: { bitmap_number: number; visited: boolean }[];
+  done?: boolean;
+  streak?: number;
+  rules: { stops: number; active: number; active_days: number; streaks: [number, Rarity][] };
+};
 export type Game = { tip: number | null; round: LuckyRound | null; draws: Draw[]; badges: Badge[] | null; rules: { round: number; claim_blocks: number } };
 /** 街区活动 (api/events.py): an owner's prizes for whoever does the most in the district over a season. */
 export type ContestMetric = "posts" | "replies" | "checkins";

@@ -14,7 +14,7 @@ import psycopg2.extras
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import bip322, game, holdings, moderation, nostr, notify, parks, pets, prosperity, recruit, roles, seasons, style, tips, wallets, xlink
+from api import bip322, game, holdings, moderation, nostr, notify, parks, pets, prosperity, recruit, roles, seasons, style, tips, tour, wallets, xlink
 from api.auth import current_address, normalize_address, optional_address
 from api.db import cursor
 from api.land import EVENT_SELECT, _event
@@ -291,7 +291,7 @@ def checkin(bitmap_number: int, address: str = Depends(current_address)):
         )
         if cur.rowcount == 0:
             raise HTTPException(409, "already checked in today")
-        badges = game.on_checkin(cur, address, bitmap_number)
+        badges = game.on_checkin(cur, address, bitmap_number) + tour.on_checkin(cur, address, bitmap_number)
     return {"ok": True, "badges": badges}
 
 

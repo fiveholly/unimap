@@ -7,6 +7,7 @@ import { BadgeIcon, BadgeList } from "@/components/Badge";
 import { CityContests } from "@/components/Contests";
 import { useTip } from "@/components/BlockWatch";
 import { short, useSession } from "@/components/Session";
+import { TourCard } from "@/components/Tour";
 import { api, type Draw, type Game, type Season } from "@/lib/api";
 import { birthdays, CLAIM_BLOCKS, CROWN_COLORS, nextHalving, pick, RARITIES, RARITY_COLORS, RARITY_NAMES, RARITY_ODDS, rarityOf, ROUND, SEASON } from "@/lib/game";
 import { HALVING } from "@/lib/terrain";
@@ -47,6 +48,7 @@ export default function GamePage() {
       </div>
       {error && <p className="error">{error}</p>}
       {!game && !error && <p className="muted">{t("加载中…")}</p>}
+      <TourCard />
 
       {r && r.bitmap_number != null && (
         <section className="game-card lucky">
@@ -109,6 +111,7 @@ export default function GamePage() {
           <li>{t("宝箱：每个区块从它之前铭刻的所有地块里抽一块。宝箱的稀有度看区块哈希末尾有几个 0。")}</li>
           <li>{t("幸运街区：每 {n} 个区块（大约一天）从之前铭刻的所有街区里抽一个。", { n: ROUND })}</li>
           <li>{t("不持有土地的人也有路：去幸运街区签到，免费领幸运来访徽章。")}</li>
+          <li>{t("每日巡城：每天（UTC）选出 3 个街区，2 个来自最近一周有人发帖的街区，1 个来自全城。三站都签到就得到当天的巡城徽章；连续 3 天起是稀有，7 天史诗，30 天传说，断一天从头算。")}</li>
         </ul>
         <table className="odds small">
           <thead>

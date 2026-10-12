@@ -25,9 +25,11 @@ import { TileThumb } from "@/components/TileThumb";
 import { useTip } from "@/components/BlockWatch";
 import { ClaimGuide, DistrictBeat } from "@/components/GameBits";
 import { TipButton } from "@/components/Tip";
+import { TourHint, tourWon } from "@/components/Tour";
 import { XHandle } from "@/components/X";
 import { api, ApiError, type District, type Land, type LandEvent, type MarketListing, type Me, type Post, type Sale, type Tile } from "@/lib/api";
 import { btc, epochName, MARKETS, timeAgo } from "@/lib/format";
+import type { Rarity } from "@/lib/game";
 import { t, tn } from "@/lib/i18n";
 import { districtText, parkText } from "@/lib/share";
 import { LANDMARKS, ZONES, zoneOf } from "@/lib/zones";
@@ -130,8 +132,10 @@ function DistrictView() {
   };
   const checkIn = async () => {
     try {
-      const r = await api<{ badges?: { kind: string }[] }>(`/v1/districts/${n}/checkin`, { method: "POST", token });
-      if (r.badges?.some((b) => b.kind === "lucky_visit")) setWon(t("签到成功。今天这里是幸运街区，你得到一枚幸运来访徽章。"));
+      const r = await api<{ badges?: { kind: string; rarity: Rarity; streak?: number }[] }>(`/v1/districts/${n}/checkin`, { method: "POST", token });
+      const lucky = r.badges?.some((b) => b.kind === "lucky_visit"), toured = r.badges?.find((b) => b.kind === "tour");
+      const notes = [lucky && t("签到成功。今天这里是幸运街区，你得到一枚幸运来访徽章。"), toured && tourWon(toured)].filter(Boolean);
+      if (notes.length) setWon(notes.join(" "));
       await loadDistrict();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -244,6 +248,7 @@ function DistrictView() {
           {tipNote && <p className="muted small">{tipNote}</p>}
           {!land.claimed && <ClaimGuide n={n} fresh={tip != null && tip - n < 6} />}
           {district.game && <DistrictBeat n={n} game={district.game} token={token} onOpened={loadDistrict} />}
+          <TourHint n={n} version={district.checked_in_today} />
           {won && <p className="win-note small">{won}</p>}
           {land.district?.sale && <SaleBanner sale={land.district.sale} mine={!!viewer && viewer.address === district.owner} />}
           {isOwner && token && <SellCard n={n} token={token} />}
