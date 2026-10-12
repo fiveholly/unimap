@@ -137,7 +137,7 @@ for s in bitcoind ord opi-ord; do
   systemctl enable "unimap-$s" >/dev/null
   if [ "${1:-}" = --restart-all ]; then systemctl restart "unimap-$s"; else systemctl start "unimap-$s"; fi
 done
-for s in bitmap-index indexer owners zones api web; do
+for s in bitmap-index indexer owners zones api agent web; do
   systemctl enable "unimap-$s" >/dev/null
   systemctl restart "unimap-$s"
 done
