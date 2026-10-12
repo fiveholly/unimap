@@ -4,6 +4,7 @@ A district owner posts a notice saying who they're looking for and which plots a
 signed-in visitors apply with a short note and the owner sees the list. Handing over a plot
 still happens on chain: the owner inscribes the parcel and sends it to the new resident, who
 becomes a resident as soon as the indexer sees it. A notice lapses when the district is sold.
+The other way in is buying a parcel someone listed in unimap (api/market.py); notices list those too.
 """
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -51,7 +52,15 @@ def get(cur, bitmap_number, viewer=None):
         "updated_at": updated_at.isoformat(),
         "applications": applications,
         "applied": applied,
+        "for_sale": _for_sale(cur, bitmap_number),
     }
+
+
+def _for_sale(cur, bitmap_number):
+    """Parcels here someone listed in unimap: buying one is the other way in."""
+    from api import market  # market imports this module
+
+    return market.parcels_listed(cur, bitmap_number)
 
 
 @router.get("/v1/recruiting")
@@ -81,6 +90,7 @@ def recruiting():
                     "message": message,
                     "parcels": _open_plots(cur, n, plots),
                     "updated_at": updated_at.isoformat(),
+                    "for_sale": _for_sale(cur, n),
                 }
             )
     return {"districts": out}
