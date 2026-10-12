@@ -41,7 +41,6 @@ export const district: Record<string, string> = {
   // Passed to Composer as who you post as.
   "街区主人身份": "the owner",
   "地块 #{n} ": "parcel #{n}",
-  "访客可以回复帖子。持有这里的地块后就能发帖。": "Visitors can reply to posts. Hold a parcel here to post.",
   "街区主人关闭了访客回复。": "The owner has turned off replies from visitors.",
   "还没有帖子。": "No posts yet.",
   "还没有认领或转手记录。": "No claims or transfers yet.",
@@ -89,8 +88,6 @@ export const district: Record<string, string> = {
   "申请（{n}）": "Applications ({n})",
   "还没有人申请。": "No applications yet.",
   "没有留言": "No note",
-  "选好人后，把地块铭刻成 {n}.bitmap 的子铭文转到对方地址，链上确认后对方就是居民了。":
-    "Once you've picked someone, inscribe the parcel as a child of {n}.bitmap and send it to their address. After it confirms on chain, they're a resident.",
   "{n} 园区": "Park {n}",
   "你在这附近只有这一个街区。持有边挨着边或隔着马路相对的街区后，可以把它们连成一个园区，分数合并计算、一起升级。":
     "This is your only district around here. Hold districts that share an edge or face each other across a road, and you can join them into a park that pools their points and levels up together.",
@@ -150,13 +147,10 @@ export const district: Record<string, string> = {
   // Recruiting card
   "招募居民": "Recruiting residents",
   "{n} 人申请": "{n} applied",
-  "已申请，等街区主人联系你。": "Applied. The owner will get in touch.",
   "撤回申请": "Withdraw",
   "介绍一下自己，想要哪块地（可不填）": "Say who you are and which parcel you'd like (optional)",
   "申请入住": "Apply to move in",
   "连接钱包后可以申请入住。": "Connect a wallet to apply to move in.",
-  "地块要由街区主人铭刻成子铭文转给你，链上到账后你就是这里的居民。":
-    "The owner inscribes a parcel as a child inscription and sends it to you. Once it arrives on chain, you're a resident here.",
 
   // Polls
   "加载中…": "Loading…",
@@ -181,4 +175,10 @@ export const district: Record<string, string> = {
   "{n} 天": "{n} days",
   "取消": "Cancel",
   "发起": "Start",
+
+  // For sale (在售)
+  "在售": "For sale",
+  "你在 {market} 挂单出售这个街区": "You've listed this district on {market}",
+  "拥有者在 {market} 挂单出售": "Listed by its owner on {market}",
+  "去 {market} 看看": "View on {market}",
 };

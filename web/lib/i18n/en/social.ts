@@ -52,8 +52,8 @@ export const social: Record<string, string> = {
   "{who} 申请入住你的街区 {place}，去「管理街区 → 招募」看看":
     "{who} applied to move into your district {place}. See Manage district → Recruiting",
   "连接钱包后可以看到你的通知。": "Connect a wallet to see your notifications.",
-  "还没有通知。有人回复、点赞你的帖子，关注你的街区或者申请入住时，会在这里告诉你。":
-    "No notifications yet. When someone replies to or likes your post, follows your district or applies to move in, you'll see it here.",
+  "还没有通知。有人回复、点赞、打赏你的帖子，关注你的街区或者申请入住，或者区块给你送来宝箱时，会在这里告诉你。":
+    "No notifications yet. When someone replies to, likes or tips your post, follows your district or applies to move in, or a block brings you a treasure, you'll see it here.",
   "更早的通知": "Older notifications",
 
   // Posts (PostCard, Composer, post page)
@@ -149,4 +149,17 @@ export const social: Record<string, string> = {
   "链接不完整，请回到我的土地重新绑定。": "The link is incomplete. Go back to My land and link again.",
   "回到我的土地": "Back to My land",
   "正在确认 X 账号…": "Confirming your X account…",
+  // Person page (app/address/[a])
+  "复制地址": "Copy address",
+  "已复制": "Copied",
+  "{who} 在 unimap 上的街区和帖子 #Bitmap": "{who}'s districts and posts on unimap #Bitmap",
+  "这是你的主页，别人看到的就是这样。": "This is your page, as others see it.",
+  "管理我的土地": "Manage my land",
+  "回复#count": "Replies",
+  "街区#count": "Districts",
+  "帖子和回复": "Posts and replies",
+  "从 {date} 开始发帖": "Posting since {date}",
+  "还没有发过帖子。": "No posts yet.",
+  "更早的帖子": "Older posts",
+  "看看别人眼中的我的主页": "See my public page",
 };
