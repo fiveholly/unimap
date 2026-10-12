@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS social.posts (
 	id bigserial NOT NULL,
 	bitmap_number int4 NOT NULL,
 	author_address text NOT NULL,
-	author_role text NOT NULL, -- owner | resident | visitor
+	author_role text NOT NULL, -- owner | resident | tenant | visitor
 	author_parcel int4 NULL, -- tx_index of the parcel that made the author a resident
 	author_bitmap int4 NULL, -- district the author chose to post as
 	reply_to int8 NULL,
@@ -138,7 +138,7 @@ CREATE TABLE IF NOT EXISTS social.poll_votes (
 	poll_id int8 NOT NULL,
 	address text NOT NULL,
 	option int2 NOT NULL,
-	role text NOT NULL, -- owner | resident, when they voted
+	role text NOT NULL, -- owner | resident | tenant, when they voted
 	created_at timestamptz NOT NULL DEFAULT now(),
 	CONSTRAINT poll_votes_pk PRIMARY KEY (poll_id, address)
 );
@@ -186,7 +186,7 @@ CREATE TABLE IF NOT EXISTS social.holdings_checked (
 CREATE TABLE IF NOT EXISTS social.notifications (
 	id bigserial NOT NULL,
 	address text NOT NULL,
-	kind text NOT NULL, -- reply | like | post | follow | apply | tip | treasure | lucky | crown | event_win | sold | offer | offer_accepted | agent_draft | agent_alert
+	kind text NOT NULL, -- reply | like | post | follow | apply | tip | treasure | lucky | crown | event_win | sold | offer | offer_accepted | agent_draft | agent_alert | pat | tenant
 	actor text NOT NULL,
 	bitmap_number int4 NOT NULL,
 	post_id int8 NULL, -- the reply, the liked post or the new post
@@ -328,8 +328,8 @@ CREATE INDEX IF NOT EXISTS block_draws_lucky_idx ON social.block_draws USING btr
 CREATE TABLE IF NOT EXISTS social.badges (
 	id bigserial NOT NULL,
 	address text NOT NULL,
-	kind text NOT NULL, -- treasure | lucky | lucky_visit | crown
-	height int4 NOT NULL, -- the block that drew it
+	kind text NOT NULL, -- treasure | lucky | lucky_visit | crown | tour | opening
+	height int4 NOT NULL, -- the block that drew it; tour: the day, as days since 1970-01-01; opening: the district
 	bitmap_number int4 NOT NULL,
 	tx_index int4 NULL, -- treasure: the parcel
 	rarity text NOT NULL,
@@ -611,3 +611,37 @@ CREATE TABLE IF NOT EXISTS social.pet_care (
 );
 ALTER TABLE social.pet_care ADD COLUMN IF NOT EXISTS face text NULL;
 ALTER TABLE social.pet_care ADD COLUMN IF NOT EXISTS public bool NOT NULL DEFAULT false;
+
+-- 每日巡城 (api/tour.py): the districts each day's tour visits, picked the first time it is asked for.
+CREATE TABLE IF NOT EXISTS social.tour_days (
+	day date NOT NULL,
+	stops int4[] NOT NULL,
+	CONSTRAINT tour_days_pk PRIMARY KEY (day)
+);
+
+-- The one badge an address wears beside its name on posts and its page (api/game.py).
+CREATE TABLE IF NOT EXISTS social.worn_badges (
+	address text NOT NULL,
+	badge_id int8 NOT NULL REFERENCES social.badges (id) ON DELETE CASCADE,
+	CONSTRAINT worn_badges_pk PRIMARY KEY (address)
+);
+
+-- 摸一摸 (api/pets.py): a visitor patting someone else's pet, once a day each.
+CREATE TABLE IF NOT EXISTS social.pet_pats (
+	day date NOT NULL,
+	owner text NOT NULL, -- the pet's wallet group's main address
+	asset text NOT NULL,
+	patter text NOT NULL, -- the visitor's wallet group's main address
+	created_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT pet_pats_pk PRIMARY KEY (day, owner, asset, patter)
+);
+
+-- 暂住居民 (api/tenants.py): visitors the owner let move in before any parcel is theirs. A tenant
+-- can post and vote like a resident while the owner who let them in still holds the district.
+CREATE TABLE IF NOT EXISTS social.tenants (
+	bitmap_number int4 NOT NULL,
+	address text NOT NULL,
+	owner text NOT NULL, -- the owner who let them in; the stay ends when the district changes hands
+	created_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT tenants_pk PRIMARY KEY (bitmap_number, address)
+);
