@@ -2,7 +2,7 @@
 
 import { DEMO, demoApi } from "./demo";
 import type { BadgeKind, Rarity } from "./game";
-import type { Pet, PetKey } from "./pets";
+import type { Pet, PetKey, PublicPet } from "./pets";
 import type { Prosperity } from "./prosperity";
 import type { DistrictStyle } from "./style";
 
@@ -142,12 +142,12 @@ export type LandEvent = {
   to_address: string | null;
 };
 
-export type Role = "owner" | "resident" | "visitor";
+export type Role = "owner" | "resident" | "tenant" | "visitor"; // tenant: 暂住居民, let in by the owner (api/tenants.py)
 
 export type Post = {
   id: number;
   bitmap_number: number;
-  author: { address: string; role: Role; parcel: number | null; as_bitmap: number | null; x?: string | null; tippable?: boolean; nostr?: string | null };
+  author: { address: string; role: Role; parcel: number | null; as_bitmap: number | null; x?: string | null; tippable?: boolean; nostr?: string | null; badge?: WornBadge | null };
   reply_to: number | null;
   body: string | null;
   media: string[];
@@ -213,6 +213,10 @@ export type Recruiting = {
 /** A parcel for sale city-wide, with what its district is like. */
 export type ParcelForSale = MarketListing & { level: number; residents: number; recruiting: boolean; zone: string | null };
 export type Application = { address: string; note: string; created_at: string };
+export type Tenant = { address: string; since: string };
+// 开张 (api/opening.py)
+export type Opening = { steps: { bio: boolean; post: boolean; recruit: boolean }; opened: boolean; badge: Badge | null; new: boolean };
+export type Opened = { bitmap_number: number; opened_at: string; bio: string; posts: number };
 export type Poll = {
   id: number;
   bitmap_number: number;
@@ -242,6 +246,7 @@ export type CaredPet = {
   mood: "full" | "ok" | "hungry" | "starving";
   items: string[]; // the wallet's own inscriptions of this collection, a few at most; none for a rune
   face: string | null; // the one the pet looks like
+  public: boolean; // shown on the owner's public page
 };
 
 export type Ranking = { bitmap_number: number; name: string; zone: string | null; owner: string | null; score: number; level: number };
@@ -282,6 +287,7 @@ export type Person = {
   first_post_at: string | null;
   posts: Post[];
   badges?: Badge[];
+  pets?: PublicPet[]; // the ones the owner chose to show
 };
 
 /** GET /v1/search: a district number, parks by name, people by address or X handle. */
@@ -299,7 +305,7 @@ export type FeedItem = { type: "post"; time: number; post: Post } | { type: "eve
 /** The owner's view of what their wallet holds and what the district shows. */
 export type Showcase = { chosen: PetKey[]; held: Pet[]; wallets?: number; checked_at: string | null; error: string | null; shown: Pet[] };
 
-export type NotificationKind = "reply" | "like" | "post" | "follow" | "apply" | "tip" | "treasure" | "lucky" | "crown" | "event_win" | "sold" | "offer" | "offer_accepted" | "agent_draft" | "agent_posted" | "agent_alert" | "shop_sold";
+export type NotificationKind = "reply" | "like" | "post" | "follow" | "apply" | "tip" | "treasure" | "lucky" | "crown" | "event_win" | "sold" | "offer" | "offer_accepted" | "agent_draft" | "agent_posted" | "agent_alert" | "shop_sold" | "pat" | "tenant";
 export type Notification = {
   id: number;
   kind: NotificationKind;
@@ -319,7 +325,9 @@ export type Notification = {
 };
 
 /** 区块节拍 (api/game.py). */
-export type Badge = { kind: BadgeKind; height: number; bitmap_number: number; tx_index: number | null; rarity: Rarity; created_at: string };
+export type Badge = { id?: number; kind: BadgeKind; height: number; bitmap_number: number; tx_index: number | null; rarity: Rarity; created_at: string; worn?: boolean };
+/** The badge someone wears beside their name (PUT /v1/me/badge). */
+export type WornBadge = { kind: BadgeKind; rarity: Rarity };
 export type OpenTreasure = { height: number; block_hash: string; tx_index: number; rarity: Rarity; closes_at: number; claimable: boolean };
 export type DistrictGame = {
   lucky: { since: number; until: number; visited: boolean } | null;
@@ -338,6 +346,14 @@ export type Draw = {
   open: boolean;
 };
 export type LuckyRound = { since: number; until: number; block_hash: string; candidates: number; index: number | null; bitmap_number: number | null; owner: string | null };
+/** 每日巡城 (api/tour.py): today's stops; done and streak only for a signed-in viewer. */
+export type Tour = {
+  day: string;
+  stops: { bitmap_number: number; visited: boolean }[];
+  done?: boolean;
+  streak?: number;
+  rules: { stops: number; active: number; active_days: number; streaks: [number, Rarity][] };
+};
 export type Game = { tip: number | null; round: LuckyRound | null; draws: Draw[]; badges: Badge[] | null; rules: { round: number; claim_blocks: number } };
 /** 街区活动 (api/events.py): an owner's prizes for whoever does the most in the district over a season. */
 export type ContestMetric = "posts" | "replies" | "checkins";
