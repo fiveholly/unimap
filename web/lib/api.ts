@@ -147,7 +147,7 @@ export type Role = "owner" | "resident" | "visitor";
 export type Post = {
   id: number;
   bitmap_number: number;
-  author: { address: string; role: Role; parcel: number | null; as_bitmap: number | null; x?: string | null; tippable?: boolean; nostr?: string | null };
+  author: { address: string; role: Role; parcel: number | null; as_bitmap: number | null; x?: string | null; tippable?: boolean; nostr?: string | null; badge?: WornBadge | null };
   reply_to: number | null;
   body: string | null;
   media: string[];
@@ -321,7 +321,9 @@ export type Notification = {
 };
 
 /** 区块节拍 (api/game.py). */
-export type Badge = { kind: BadgeKind; height: number; bitmap_number: number; tx_index: number | null; rarity: Rarity; created_at: string };
+export type Badge = { id?: number; kind: BadgeKind; height: number; bitmap_number: number; tx_index: number | null; rarity: Rarity; created_at: string; worn?: boolean };
+/** The badge someone wears beside their name (PUT /v1/me/badge). */
+export type WornBadge = { kind: BadgeKind; rarity: Rarity };
 export type OpenTreasure = { height: number; block_hash: string; tx_index: number; rarity: Rarity; closes_at: number; claimable: boolean };
 export type DistrictGame = {
   lucky: { since: number; until: number; visited: boolean } | null;

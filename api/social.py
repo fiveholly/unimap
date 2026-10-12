@@ -58,7 +58,9 @@ POST_COLUMNS = (
     "(select k.pubkey from social.nostr_keys k where k.address = coalesce("
     "(select w.main_address from social.wallet_links w where w.address = p.author_address), p.author_address)) "
     "as author_nostr, p.nostr_event_id, "
-    "p.agent_id, (select a.agent_key from social.agents a where a.id = p.agent_id) as agent_key "
+    "p.agent_id, (select a.agent_key from social.agents a where a.id = p.agent_id) as agent_key, "
+    "(select json_build_object('kind', b.kind, 'rarity', b.rarity) from social.worn_badges w "
+    "join social.badges b on b.id = w.badge_id where w.address = p.author_address) as author_badge "
 )
 
 
@@ -75,6 +77,7 @@ def _post(row):
             "x": row["author_x"],  # linked X @username, if any
             "tippable": row["author_tippable"],  # has a Lightning address for tips
             "nostr": row["author_nostr"],  # linked Nostr public key (hex), if any
+            "badge": row["author_badge"],  # the badge they wear (api/game.py): {kind, rarity}
         },
         "reply_to": row["reply_to"],
         "body": None if removed else row["body"],

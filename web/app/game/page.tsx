@@ -29,6 +29,14 @@ export default function GamePage() {
       .catch((e) => setError(e.message));
   }, [token, ready, tip]);
   const r = game?.round;
+  const wear = async (id: number | null) => {
+    try {
+      await api("/v1/me/badge", { method: "PUT", token, body: { id } });
+      setGame(await api<Game>("/v1/game", { token }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   return (
     <div className="page narrow game">
@@ -101,7 +109,8 @@ export default function GamePage() {
           <h2 className="section-title">
             {t("我的徽章")} <span className="mono">{game.badges.length}</span>
           </h2>
-          {game.badges.length ? <BadgeList badges={game.badges} /> : <p className="muted small">{t("还没有徽章。去今日幸运街区签到，就能领到第一枚。")}</p>}
+          {game.badges.length > 0 && <p className="muted small">{t("挑一枚佩戴，它会出现在你的帖子和主页上你的名字旁边。")}</p>}
+          {game.badges.length ? <BadgeList badges={game.badges} onWear={token ? wear : undefined} /> : <p className="muted small">{t("还没有徽章。去今日幸运街区签到，就能领到第一枚。")}</p>}
         </section>
       )}
 

@@ -181,4 +181,7 @@ export const game: Record<string, string> = {
   "这里是今日巡城的一站，签到就算到过（{k}/{n}）。": "This is a stop on today's tour. Check in to count it ({k}/{n}).",
   "巡城是什么 →": "What's the tour? →",
   "今天的巡城完成了，你得到一枚{rarity}巡城徽章（连续 {n} 天）。": "Today's tour is done: you got a {rarity} tour badge ({n} days in a row).",
+  "取下": "Take off",
+  "佩戴": "Wear",
+  "挑一枚佩戴，它会出现在你的帖子和主页上你的名字旁边。": "Pick one to wear. It shows beside your name on your posts and your page.",
 };

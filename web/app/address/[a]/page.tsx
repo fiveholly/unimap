@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
-import { BadgeList } from "@/components/Badge";
+import { BadgeList, WornBadgeMark } from "@/components/Badge";
 import { PetFace } from "@/components/Pets";
 import { PostCard } from "@/components/PostCard";
 import { useSession } from "@/components/Session";
@@ -54,6 +54,7 @@ export default function AddressPage() {
     } catch {}
   };
   const who = person.x ? `@${person.x.username}` : short(person.address);
+  const worn = person.badges?.find((b) => b.worn);
   const since = person.first_post_at ? new Date(person.first_post_at).toLocaleDateString(locale()) : null;
 
   return (
@@ -61,7 +62,10 @@ export default function AddressPage() {
       <section className="me-head">
         <Avatar seed={person.address} size={56} />
         <div className="grow">
-          <h1>{person.x ? person.x.name : short(person.address)}</h1>
+          <h1>
+            {person.x ? person.x.name : short(person.address)}
+            {worn && <WornBadgeMark badge={worn} size={26} />}
+          </h1>
           <div className="person-ids">
             {person.x && <XHandle username={person.x.username} />}
             <button type="button" className="link-btn mono small break" onClick={copy} title={t("复制地址")}>

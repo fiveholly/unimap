@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import type { Badge } from "@/lib/api";
+import type { Badge, WornBadge } from "@/lib/api";
 import { BADGE_NAMES, RARITY_COLORS, RARITY_NAMES, type BadgeKind, type Rarity } from "@/lib/game";
 import { t } from "@/lib/i18n";
 
@@ -40,12 +40,22 @@ export function BadgeIcon({ kind, rarity, size = 32 }: { kind: BadgeKind; rarity
   );
 }
 
-/** 徽章: what someone won in 区块节拍, newest first. */
-export function BadgeList({ badges }: { badges: Badge[] }) {
+/** The badge someone wears, beside their name. */
+export function WornBadgeMark({ badge, size = 18 }: { badge: WornBadge; size?: number }) {
+  const name = `${t(RARITY_NAMES[badge.rarity])} ${t(BADGE_NAMES[badge.kind])}`;
+  return (
+    <span className="worn-badge" title={name} aria-label={name}>
+      <BadgeIcon kind={badge.kind} rarity={badge.rarity} size={size} />
+    </span>
+  );
+}
+
+/** 徽章: what someone won in 区块节拍, newest first. With onWear, each can be worn beside your name. */
+export function BadgeList({ badges, onWear }: { badges: Badge[]; onWear?: (id: number | null) => void }) {
   return (
     <ul className="badge-list">
       {badges.map((b) => (
-        <li key={`${b.kind}:${b.height}`} title={`${t(BADGE_NAMES[b.kind])} · ${t(RARITY_NAMES[b.rarity])}`}>
+        <li key={`${b.kind}:${b.height}`} className={b.worn ? "worn" : ""} title={`${t(BADGE_NAMES[b.kind])} · ${t(RARITY_NAMES[b.rarity])}`}>
           <BadgeIcon kind={b.kind} rarity={b.rarity} size={36} />
           <span className="small">
             <b style={{ color: RARITY_COLORS[b.rarity] }}>{t(RARITY_NAMES[b.rarity])}</b> {t(BADGE_NAMES[b.kind])}
@@ -55,6 +65,11 @@ export function BadgeList({ badges }: { badges: Badge[] }) {
             <span className="mono dim block">
               {b.kind === "tour" ? new Date(b.height * 86_400_000).toISOString().slice(0, 10) : t("区块 {n}", { n: b.height.toLocaleString("en-US") })}
             </span>
+            {onWear && b.id != null && (
+              <button type="button" className="link-btn small" aria-pressed={!!b.worn} onClick={() => onWear(b.worn ? null : b.id!)}>
+                {b.worn ? t("取下") : t("佩戴")}
+              </button>
+            )}
           </span>
         </li>
       ))}

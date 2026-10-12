@@ -86,6 +86,35 @@ def public_pets(cur, address):
     return [{k: p[k] for k in PUBLIC_FIELDS} for p in pets(cur, address) if p["public"]]
 
 
+def care_points(cur, lo, hi):
+    """{n: points} for districts lo..hi whose owner shows pets there (api/holdings.py): each shown
+    pet the owner still holds adds its level less one, so a pet fed for weeks helps its district
+    a little (at most MAX_LEVEL - 1 a pet)."""
+    cur.execute(
+        "select s.bitmap_number, o.address from social.showcase s join bitmaps b on b.bitmap_number = s.bitmap_number "
+        "join inscription_owners o on o.inscription_id = b.inscription_id where s.bitmap_number between %s and %s;",
+        (lo, hi),
+    )
+    owners = dict(cur.fetchall())
+    choices = holdings._choices(cur, lo, hi, owners)
+    if not choices:
+        return {}
+    who = {owners[n] for n in choices}
+    held = holdings._amounts(cur, who)
+    main = {o: wallets.main_of(cur, o) for o in who}
+    cur.execute("select address, asset, affection from social.pet_care where address = any(%s);", (list(set(main.values())),))
+    affection = {(a, asset): x for a, asset, x in cur.fetchall()}
+    out = {}
+    for n, assets in choices.items():
+        o = owners[n]
+        points = sum(
+            level(affection.get((main[o], a), 0)) - 1 for a in assets if holdings.tier(a, held.get(o, {}).get(a, 0)) > 0
+        )
+        if points:
+            out[n] = points
+    return out
+
+
 def _refresh_unchecked(address):
     """Ask the provider about any of the group's wallets it was never asked about."""
     with cursor() as cur:

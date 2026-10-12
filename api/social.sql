@@ -618,3 +618,10 @@ CREATE TABLE IF NOT EXISTS social.tour_days (
 	stops int4[] NOT NULL,
 	CONSTRAINT tour_days_pk PRIMARY KEY (day)
 );
+
+-- The one badge an address wears beside its name on posts and its page (api/game.py).
+CREATE TABLE IF NOT EXISTS social.worn_badges (
+	address text NOT NULL,
+	badge_id int8 NOT NULL REFERENCES social.badges (id) ON DELETE CASCADE,
+	CONSTRAINT worn_badges_pk PRIMARY KEY (address)
+);

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { AgentGrantNote } from "./Agent";
+import { WornBadgeMark } from "./Badge";
 import { Avatar } from "./Avatar";
 import { Composer } from "./Composer";
 import { ReportDialog } from "./Report";
@@ -130,6 +131,7 @@ export function PostCard({
               {name}
             </Link>
           )}
+          {a.badge && <WornBadgeMark badge={a.badge} />}
           {a.x && <XHandle username={a.x} />}
           <span className={`badge ${a.role}`}>{a.role === "owner" ? t("街区主人") : a.role === "resident" ? t("居民#one") : t("访客")}</span>
           {post.agent && (

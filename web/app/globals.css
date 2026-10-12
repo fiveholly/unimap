@@ -3434,3 +3434,16 @@ span.act.tip-btn {
   gap: 8px;
   margin: 8px 0;
 }
+
+/* A worn badge beside a name */
+.worn-badge {
+  display: inline-flex;
+  vertical-align: middle;
+  margin: 0 2px;
+}
+h1 .worn-badge {
+  margin-left: 8px;
+}
+.badge-list li.worn {
+  border-color: var(--accent);
+}

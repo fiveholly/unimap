@@ -153,6 +153,7 @@ type State = {
   tips?: DemoTip[];
   boot?: number; // when this demo began: a new block is "mined" every DEMO_BLOCK_MS after it
   badges?: Badge[]; // the visitor's
+  worn?: number | null; // the id (badgeId) of the badge the visitor wears
   opened?: Record<number, string>; // treasures opened, by block height
   contests?: DemoContest[]; // 街区活动
   market?: DemoListing[]; // 站内交易
@@ -466,6 +467,7 @@ function parts(n: number): ProsperityParts {
     neighbors30: Math.floor(hash(n * 7 + 4) * 150 * h * h) + near,
     tippers30: fake(5, 8) + new Set((s.tips ?? []).filter((x) => x.status === "settled" && x.n === n && x.at / 1000 > since).map((x) => x.tipper)).size,
     lucky: luckyNow()?.n === n ? 1 : 0,
+    pets: ownerOf(n) === DEMO_ADDRESS ? petsAt(n).reduce((sum, x) => sum + caredPet(x.asset).level - 1, 0) : 0,
   };
 }
 // The visitor's wallet holds 2.5 million DOG, a Quantum Cat, three Bitcoin Puppets, seven
@@ -649,6 +651,15 @@ function drawAt(h: number): Draw {
   const opened_by = load().opened?.[h] ?? null;
   return { height: h, block_hash, bitmap_number: n, tx_index: i, candidates: pool.length, index, rarity: rarityOf(block_hash), opened_by, open: !opened_by && h > demoTip() - CLAIM_BLOCKS };
 }
+const BADGE_KINDS = ["treasure", "lucky", "lucky_visit", "crown", "tour"];
+/** A demo badge's id: there is no table, so its kind and height stand in. */
+const badgeId = (b: { kind: string; height: number }) => b.height * 8 + BADGE_KINDS.indexOf(b.kind);
+const myBadges = (): Badge[] => (load().badges ?? []).map((b) => ({ ...b, id: badgeId(b), worn: badgeId(b) === load().worn }));
+const wornBadge = (a: string) => {
+  const b = a === DEMO_ADDRESS ? myBadges().find((x) => x.worn) : undefined;
+  return b ? { kind: b.kind, rarity: b.rarity } : null;
+};
+
 /** 每日巡城, as api/tour.py: two stops out of the districts posted in this week, then the rest
  * out of all claimed ones, each by SHA-256 of "<day>:tour:<i>". Not stored: the demo's posts
  * only change when the visitor posts, which is rare enough. */
@@ -752,7 +763,7 @@ function gameView(me: string | null): Game {
     tip,
     round: lucky && { since: lucky.since, until: lucky.since + ROUND - 1, block_hash: lucky.block_hash, candidates: lucky.candidates, index: lucky.index, bitmap_number: lucky.n, owner: ownerOf(lucky.n) },
     draws: Array.from({ length: 20 }, (_, i) => drawAt(tip - i)),
-    badges: me ? load().badges ?? [] : null,
+    badges: me ? myBadges() : null,
     rules: { round: ROUND, claim_blocks: CLAIM_BLOCKS },
   };
 }
@@ -876,7 +887,7 @@ function xOf(address: string | null): XAccount | null {
   if (address === SEED_PARK.owner) return xAccount("miner_village", "矿工新村");
   return null;
 }
-const view = (p: Post, me: string | null): Post => ({ ...p, author: { ...p.author, x: xOf(p.author.address)?.username ?? null, tippable: tippable(p.author.address) }, tips_sats: postTips(p.id), liked_by_me: !!me && !!load().likes[p.id], like_count: p.like_count + (me && load().likes[p.id] ? 1 : 0) });
+const view = (p: Post, me: string | null): Post => ({ ...p, author: { ...p.author, x: xOf(p.author.address)?.username ?? null, tippable: tippable(p.author.address), badge: wornBadge(p.author.address) }, tips_sats: postTips(p.id), liked_by_me: !!me && !!load().likes[p.id], like_count: p.like_count + (me && load().likes[p.id] ? 1 : 0) });
 const topPosts = (pred: (p: Post) => boolean, me: string | null) =>
   load().posts.filter((p) => !p.removed && p.reply_to == null && pred(p)).sort((a, b) => b.id - a.id).map((p) => view(p, me));
 function district(n: number, me: string | null): District {
@@ -947,7 +958,7 @@ function personDemo(a: string, me: string | null, before: number | null): Person
     first_post_at: first,
     posts,
     pets: a === DEMO_ADDRESS ? myPets().map(caredPet).filter((p) => p.public).map(({ asset, tier, amount, name, level, mood, face }) => ({ asset, tier, amount, name, level, mood, face })) : [],
-    badges: a === DEMO_ADDRESS ? load().badges ?? [] : a === ownerOf(840001) ? [{ kind: "lucky", height: roundOf(DEMO_TIP)[0], bitmap_number: 840001, tx_index: null, rarity: "rare", created_at: iso(0.3) }] : [],
+    badges: a === DEMO_ADDRESS ? myBadges() : a === ownerOf(840001) ? [{ kind: "lucky", height: roundOf(DEMO_TIP)[0], bitmap_number: 840001, tx_index: null, rarity: "rare", created_at: iso(0.3) }] : [],
   };
 }
 
@@ -1072,6 +1083,15 @@ function route(path: string, opts: Opts): unknown {
   }
   if (p === "/v1/game") return gameView(me);
   if (p === "/v1/tour") return tourView(me);
+  if (p === "/v1/me/badge" && method === "PUT") {
+    needMe();
+    const id = (body.id as number | null) ?? null;
+    const b = myBadges().find((x) => x.id === id);
+    if (id != null && !b) fail(404, "that isn't one of your badges");
+    load().worn = id;
+    save();
+    return { worn: b ? { id, kind: b.kind, rarity: b.rarity } : null };
+  }
   if (p === "/v1/season") return seasonView();
   if ((m = p.match(/^\/v1\/game\/treasures\/(\d+)\/open$/)) && method === "POST") {
     const a = needMe(), h = +m[1], d = drawAt(h);

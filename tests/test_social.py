@@ -1072,6 +1072,52 @@ class SocialApi(unittest.TestCase):
                     (erin.address,),
                 )
 
+    def test_rewards(self):
+        from api import pets
+
+        frank = Wallet(11)
+        self.tokens[frank.address] = self.login(frank)
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "insert into social.badges (address, kind, height, bitmap_number, rarity) values "
+                    "(%s, 'lucky_visit', 1, 100, 'common'), (%s, 'tour', 2, 100, 'epic'), (%s, 'tour', 2, 100, 'rare') returning id;",
+                    (frank.address, frank.address, ALICE.address),
+                )
+                common, epic, alices = [r[0] for r in cur.fetchall()]
+            # A badge you wear shows beside your name on your posts; only your own badges.
+            self.assertEqual(self.client.put("/v1/me/badge", json={"id": alices}, headers=self.h(frank)).status_code, 404)
+            self.assertEqual(self.client.put("/v1/me/badge", json={"id": epic}, headers=self.h(frank)).json()["worn"], {"id": epic, "kind": "tour", "rarity": "epic"})
+            top = self.post(CAROL, "欢迎来逛", district=OTHER).json()["id"]
+            self.assertEqual(self.post(frank, "戴着徽章来逛逛", district=OTHER, reply_to=top).status_code, 201)
+            self.assertEqual(self.client.get(f"/v1/people/{frank.address}").json()["posts"][0]["author"]["badge"], {"kind": "tour", "rarity": "epic"})
+            badges = {b["id"]: b["worn"] for b in self.client.get(f"/v1/people/{frank.address}").json()["badges"]}
+            self.assertEqual(badges, {common: False, epic: True})
+            self.client.put("/v1/me/badge", json={"id": common}, headers=self.h(frank))
+            self.assertEqual(self.client.get(f"/v1/people/{frank.address}").json()["posts"][0]["author"]["badge"]["kind"], "lucky_visit")
+            self.assertIsNone(self.client.put("/v1/me/badge", json={"id": None}, headers=self.h(frank)).json()["worn"])
+            self.assertIsNone(self.client.get(f"/v1/people/{frank.address}").json()["posts"][0]["author"]["badge"])
+            # The pets an owner shows add their levels above 1 to the district's prosperity, while held.
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "insert into social.showcase (bitmap_number, assets, updated_by) values (100, %s, %s);"
+                    "insert into social.holdings (address, asset, amount) values (%s, 'dog', 5);"
+                    "insert into social.pet_care (address, asset, affection) values (%s, 'dog', 270), (%s, 'cat', 9999);",
+                    (["dog", "cat"], ALICE.address, ALICE.address, ALICE.address, ALICE.address),
+                )
+                self.assertEqual(pets.care_points(cur, 0, 2000), {100: pets.level(270) - 1})
+            self.assertEqual(self.client.get("/v1/districts/100").json()["prosperity"]["parts"]["pets"], 3)
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.holdings;")
+                self.assertEqual(pets.care_points(cur, 0, 2000), {})
+        finally:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "delete from social.worn_badges; delete from social.badges where address in (%s, %s); delete from social.showcase; "
+                    "delete from social.holdings; delete from social.pet_care;",
+                    (frank.address, ALICE.address),
+                )
+
     def test_seasons(self):
         from api import seasons
 

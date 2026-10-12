@@ -49,4 +49,6 @@ export const parcels: Record<string, string> = {
   "宠物": "Pets",
   "{n} 小时": "{n} h",
   "{n} 分钟": "{n} min",
+  "展示在你街区上的宠物，每高一级给街区繁荣度加 1 分。": "Each level a pet shown on your district has above 1 adds a point to its prosperity.",
+  "宠物等级": "Pet levels",
 };
