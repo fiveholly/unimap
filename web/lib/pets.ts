@@ -4,7 +4,7 @@
 import { lang } from "./i18n/index.ts";
 
 export type PetKey = "dog" | "cat" | "puppet" | "monkey" | "frog" | "runestone";
-export type Pet = { asset: PetKey; tier: number; amount: string; face?: string | null };
+export type Pet = { asset: PetKey; tier: number; amount: string; face?: string | null; pats?: number; patted?: boolean };
 /** A pet on its owner's public page (api/pets.py public_pets). */
 export type PublicPet = Pet & { name: string | null; level: number; mood: string };
 

@@ -35,6 +35,7 @@ export function PetCareSection({ token }: { token: string }) {
       {pets && pets.length > 0 && (
         <>
           <p className="muted small">{t("每只宠物每 6 小时可以喂一次，连续几天都来喂，亲密度涨得更快。也可以在你的街区或地块上展示它们。")}</p>
+          <p className="muted small">{t("展示在你街区上的宠物，每高一级给街区繁荣度加 1 分。")}</p>
           <ul className="pet-cards">
             {pets.map((p) => (
               <PetCard key={p.asset} pet={p} token={token} onChange={update} />
