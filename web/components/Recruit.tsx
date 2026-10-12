@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 
+import { ParcelsOnSale } from "./Market";
 import { api, type Recruit } from "@/lib/api";
+import { t } from "@/lib/i18n";
 
 /** The district's call for residents, with an apply form for signed-in visitors. */
 export function RecruitCard({
@@ -27,40 +29,41 @@ export function RecruitCard({
       .then(onChanged)
       .catch((e) => setError(e.message));
   return (
-    <section className="callout recruit" aria-label="招募居民">
+    <section id="recruit" className="callout recruit" aria-label={t("招募居民")}>
       <div className="row between">
-        <b>招募居民</b>
-        <span className="muted small">{recruit.applications} 人申请</span>
+        <b>{t("招募居民")}</b>
+        <span className="muted small">{t("{n} 人申请", { n: recruit.applications })}</span>
       </div>
       <p className="pre">{recruit.message}</p>
       {recruit.parcels.length > 0 && (
         <div className="chips">
           {recruit.parcels.map((i) => (
             <button key={i} type="button" className="chip mono" onClick={() => onPick(i)}>
-              地块 #{i}
+              {t("地块 #{n}", { n: i })}
             </button>
           ))}
         </div>
       )}
+      <ParcelsOnSale items={recruit.for_sale ?? []} intro={t("也可以直接买这里在售的地块，买下就是居民：")} onPick={onPick} />
       {canApply &&
         (recruit.applied ? (
           <div className="row between small">
-            <span className="muted">已申请，等街区主人联系你。</span>
+            <span className="muted">{t("已申请，等街区主人同意你暂住，或者把地块转给你。")}</span>
             <button type="button" className="link-btn small" onClick={() => send("DELETE")}>
-              撤回申请
+              {t("撤回申请")}
             </button>
           </div>
         ) : (
           <>
-            <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} maxLength={200} placeholder="介绍一下自己，想要哪块地（可不填）" name="note" />
+            <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} maxLength={200} placeholder={t("介绍一下自己，想要哪块地（可不填）")} name="note" />
             <button type="button" className="primary" onClick={() => send("PUT")}>
-              申请入住
+              {t("申请入住")}
             </button>
           </>
         ))}
-      {!token && <p className="muted small">连接钱包后可以申请入住。</p>}
+      {!token && <p className="muted small">{t("连接钱包后可以申请入住。")}</p>}
       {error && <p className="error small">{error}</p>}
-      <p className="dim small">地块要由街区主人铭刻成子铭文转给你，链上到账后你就是这里的居民。</p>
+      <p className="dim small">{t("街区主人同意后，你马上就是这里的暂住居民，可以发帖和投票。地块要由主人铭刻成子铭文转给你，链上到账后就是正式居民。")}</p>
     </section>
   );
 }
