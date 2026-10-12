@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { api, type Tip } from "@/lib/api";
+import { nostrExtension, now, writeRelays } from "@/lib/nostr";
 import { t } from "@/lib/i18n";
 
 export const TIP_AMOUNTS = [100, 500, 2100] as const;
@@ -31,6 +32,24 @@ function InvoiceQr({ invoice }: { invoice: string }) {
     return qr.createSvgTag({ cellSize: 4, margin: 4, scalable: true });
   }, [invoice]);
   return <div className="tip-qr" role="img" aria-label={t("付款二维码")} dangerouslySetInnerHTML={{ __html: svg }} />;
+}
+
+/** A NIP-57 zap request for this tip, signed by the browser's Nostr extension, when the recipient
+ * linked a Nostr key and their wallet takes zaps. Anything going wrong (no extension, the person
+ * says no) just makes it a plain tip. */
+async function zapRequest(target: Target, sats: number, comment: string, token: string) {
+  const ext = nostrExtension();
+  if (!ext || "event_id" in target) return undefined;
+  try {
+    const q = "post_id" in target ? `post_id=${target.post_id}` : `bitmap_number=${target.bitmap_number}`;
+    const { zap } = await api<{ zap: { pubkey: string; event_id: string | null } | null }>(`/v1/tips/zap?${q}`, { token });
+    if (!zap) return undefined;
+    const relays = await writeRelays(ext);
+    const tags = [["relays", ...relays], ["amount", String(sats * 1000)], ["p", zap.pubkey], ...(zap.event_id ? [["e", zap.event_id]] : [])];
+    return await ext.signEvent({ kind: 9734, created_at: now(), tags, content: comment });
+  } catch {
+    return undefined;
+  }
 }
 
 /** Paying unimap rather than tipping someone (the district agent): where to ask for the invoice and what to say. */
@@ -71,7 +90,8 @@ export function TipDialog({ target, to, token, close, fixed, bill }: { target: T
     if (!Number.isFinite(sats) || sats < 1 || sats > 1_000_000) return setError(t("金额是 1 到 1,000,000 聪"));
     setBusy(true);
     try {
-      const made = await api<Tip>(bill ? bill.create : "/v1/tips", { method: "POST", token, body: bill ? undefined : { ...target, amount_sats: sats, comment } });
+      const zap_request = bill ? undefined : await zapRequest(target, sats, comment.trim(), token);
+      const made = await api<Tip>(bill ? bill.create : "/v1/tips", { method: "POST", token, body: bill ? undefined : { ...target, amount_sats: sats, comment, zap_request } });
       setTip(made);
       // A browser Lightning wallet (WebLN, e.g. Alby) pays in one click; otherwise the QR code does.
       const webln = (window as unknown as { webln?: WebLN }).webln;
@@ -171,6 +191,7 @@ export function TipDialog({ target, to, token, close, fixed, bill }: { target: T
             <p className="muted small tip-wait" aria-live="polite">
               {tip.verifiable ? t("付款后这里会自动确认…") : t("对方的钱包不支持确认付款：钱照样会到账，但不会计入打赏榜。")}
             </p>
+            {tip.zap && <p className="muted small">{t("这笔打赏也会作为 zap 出现在 Nostr 上。")}</p>}
           </>
         )}
       </div>
