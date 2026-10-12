@@ -8,7 +8,7 @@ district that goes quiet falls back. Landmarks are always at the top level.
 import math
 import time
 
-from api import game
+from api import game, pets
 from parcel_index.zones import LANDMARKS
 
 WEIGHTS = {
@@ -20,6 +20,7 @@ WEIGHTS = {
     "neighbors30": 0.3,
     "tippers30": 2,
     "lucky": 30,  # 1 while it is the lucky district (api/game.py)
+    "pets": 1,  # levels above 1 of the pets its owner shows here (api/pets.py care_points)
 }
 THRESHOLDS = (0, 25, 80, 200, 450)
 TOP = len(THRESHOLDS)
@@ -84,6 +85,7 @@ def parts_for(cur, lo, hi):
         (WINDOW_DAYS, lo, hi),
     )
     add(cur.fetchall(), "tippers30")
+    add(pets.care_points(cur, lo, hi).items(), "pets")
     lucky, _ = game.lucky_now(cur)
     if lucky is not None:
         add([(lucky, 1)], "lucky")

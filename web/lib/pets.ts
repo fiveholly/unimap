@@ -4,7 +4,9 @@
 import { lang } from "./i18n/index.ts";
 
 export type PetKey = "dog" | "cat" | "puppet" | "monkey" | "frog" | "runestone";
-export type Pet = { asset: PetKey; tier: number; amount: string };
+export type Pet = { asset: PetKey; tier: number; amount: string; face?: string | null; pats?: number; patted?: boolean };
+/** A pet on its owner's public page (api/pets.py public_pets). */
+export type PublicPet = Pet & { name: string | null; level: number; mood: string };
 
 export const PETS: Record<PetKey, { name: string; asset: string; kind: string; unit: string; tiers: [number, number, number]; looks: [string, string, string] }> = {
   dog: { name: "狗狗", asset: "DOG•GO•TO•THE•MOON", kind: "Rune", unit: "DOG", tiers: [1, 1_000_000, 100_000_000], looks: ["一只小狗", "一只大狗", "狗狗和狗窝"] },
@@ -45,3 +47,17 @@ export function nextTier(key: PetKey, tier: number): number | null {
 /** An inscription's own picture, served by an ord server (ordinals.com unless set). */
 const ORD = (process.env.NEXT_PUBLIC_ORD_CONTENT_URL || "https://ordinals.com").replace(/\/$/, "");
 export const inscriptionImage = (id: string) => `${ORD}/content/${encodeURIComponent(id)}`;
+
+/** Each pet's official logo, shown wherever the pet is pictured unless the owner picked one of
+ * their own inscriptions: Bitcoin Frogs' icon inscription (from ordinals-wallet/ordinals-collections),
+ * Ordiscan's collection icons for the other collections, and DOG's own picture (its X avatar)
+ * in public/pets/. A pet whose logo won't load is drawn as on the map. */
+const ordiscanIcon = (slug: string) => `https://ordiscan.com/collections/${slug}/icon.avif`;
+export const PET_LOGOS: Partial<Record<PetKey, string>> = {
+  dog: "/pets/dog.webp",
+  frog: inscriptionImage("d19981a198e4a8419c8be18588d9e4919cea294deefdb5f9261a30242df578b7i0"),
+  cat: ordiscanIcon("quantum-cats"),
+  puppet: ordiscanIcon("bitcoin-puppets"),
+  monkey: ordiscanIcon("nodemonkes"),
+  runestone: ordiscanIcon("runestone"),
+};
