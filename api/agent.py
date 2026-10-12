@@ -139,12 +139,7 @@ def holder(cur, bitmap_number, tx_index):
     """Who holds the district (tx_index None) or one of its parcels."""
     if tx_index is None:
         return roles.district_owner(cur, bitmap_number)
-    cur.execute(
-        "select o.address from parcels p join inscription_owners o on o.inscription_id = p.inscription_id "
-        "where p.bitmap_number = %s and p.tx_index = %s;",
-        (bitmap_number, tx_index),
-    )
-    return roles._first(cur.fetchone())
+    return roles.parcel_holder(cur, bitmap_number, tx_index)
 
 
 def _require_holder(cur, bitmap_number, tx_index, address):
