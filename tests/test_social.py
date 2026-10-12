@@ -286,6 +286,69 @@ class SocialApi(unittest.TestCase):
         self.assertEqual(self.client.delete(f"/v1/districts/{DISTRICT}/recruit", headers=self.h(ALICE)).status_code, 200)
         self.assertIsNone(self.client.get(f"/v1/districts/{DISTRICT}").json()["recruit"])
 
+    def test_tenants(self):
+        self.client.put(f"/v1/districts/{DISTRICT}/recruit", json={"message": "找邻居"}, headers=self.h(ALICE))
+        let = lambda who, w=ALICE: self.client.post(f"/v1/districts/{DISTRICT}/tenants", json={"address": who.address}, headers=self.h(w))
+        try:
+            self.assertEqual(let(CAROL).status_code, 404)  # hasn't applied
+            self.client.put(f"/v1/districts/{DISTRICT}/application", json={"note": "让我住吧"}, headers=self.h(CAROL))
+            self.assertEqual(let(CAROL, BOB).status_code, 403)  # only the owner
+            self.assertEqual(self.post(CAROL, "还不能发").status_code, 403)
+            r = let(CAROL)
+            self.assertEqual(r.status_code, 201, r.text)
+            self.assertEqual([t["address"] for t in r.json()["tenants"]], [CAROL.address])
+            self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}/applications", headers=self.h(ALICE)).json()["applications"], [])
+            page = self.client.get(f"/v1/districts/{DISTRICT}", headers=self.h(CAROL)).json()
+            self.assertEqual((page["viewer"]["role"], page["viewer"]["parcel"]), ("tenant", None))
+            mine = self.post(CAROL, "我搬进来了")
+            self.assertEqual(mine.status_code, 201, mine.text)
+            self.assertEqual(mine.json()["author"]["role"], "tenant")
+            told = self.client.get("/v1/notifications", headers=self.h(CAROL)).json()["notifications"]
+            self.assertIn(("tenant", ALICE.address, DISTRICT), [(n["kind"], n["actor"], n["bitmap_number"]) for n in told])
+            self.assertEqual(self.client.put(f"/v1/districts/{DISTRICT}/application", json={}, headers=self.h(CAROL)).status_code, 400)
+            # The stay ends when the district changes hands.
+            with self.conn.cursor() as cur:
+                cur.execute("update inscription_owners set address = 'bcrt1qbuyer' where inscription_id = 'd100i0';")
+            try:
+                self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}/tenants").json()["tenants"], [])
+                self.assertEqual(self.post(CAROL, "还在吗").status_code, 403)
+            finally:
+                with self.conn.cursor() as cur:
+                    cur.execute("update inscription_owners set address = %s where inscription_id = 'd100i0';", (ALICE.address,))
+            self.assertEqual(self.client.delete(f"/v1/districts/{DISTRICT}/tenants/{CAROL.address}", headers=self.h(BOB)).status_code, 403)
+            gone = self.client.delete(f"/v1/districts/{DISTRICT}/tenants/{CAROL.address}", headers=self.h(CAROL))
+            self.assertEqual(gone.json()["tenants"], [])
+            self.assertEqual(self.post(CAROL, "走了").status_code, 403)
+        finally:
+            self.client.delete(f"/v1/districts/{DISTRICT}/recruit", headers=self.h(ALICE))
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.tenants; delete from social.posts where author_address = %s; delete from social.notifications where kind = 'tenant';", (CAROL.address,))
+
+    def test_opening(self):
+        clean = "delete from social.posts where bitmap_number = 105; delete from social.profiles where bitmap_number = 105; delete from social.recruitments where bitmap_number = 105; delete from social.badges where kind = 'opening';"
+        with self.conn.cursor() as cur:
+            cur.execute(clean)
+        try:
+            get = lambda w=CAROL: self.client.get(f"/v1/districts/{OTHER}/opening", headers=self.h(w))
+            self.assertEqual(get(ALICE).status_code, 403)
+            self.assertEqual(get().json()["steps"], {"bio": False, "post": False, "recruit": False})
+            self.client.put(f"/v1/districts/{OTHER}/profile", json={"bio": "新开的小街"}, headers=self.h(CAROL))
+            self.assertEqual(self.post(CAROL, "开张啦", district=OTHER).status_code, 201)
+            r = get().json()
+            self.assertEqual((r["steps"], r["opened"]), ({"bio": True, "post": True, "recruit": False}, False))
+            self.assertEqual(self.client.get("/v1/opened").json()["districts"], [])
+            self.client.put(f"/v1/districts/{OTHER}/recruit", json={"message": "来住"}, headers=self.h(CAROL))
+            r = get().json()
+            self.assertEqual((r["opened"], r["new"], r["badge"]["kind"]), (True, True, "opening"))
+            self.assertFalse(get().json()["new"])  # earned once
+            listed = self.client.get("/v1/opened").json()["districts"]
+            self.assertEqual([(d["bitmap_number"], d["bio"], d["posts"]) for d in listed], [(OTHER, "新开的小街", 1)])
+            kinds = [b["kind"] for b in self.client.get(f"/v1/people/{CAROL.address}").json()["badges"]]
+            self.assertIn("opening", kinds)
+        finally:
+            with self.conn.cursor() as cur:
+                cur.execute(clean)
+
     def test_polls(self):
         new = lambda w, **kw: self.client.post(f"/v1/districts/{DISTRICT}/polls", json={"question": "修个广场？", "options": ["好", "不好"], **kw}, headers=self.h(w))
         self.assertEqual(new(BOB).status_code, 403)
@@ -491,7 +554,7 @@ class SocialApi(unittest.TestCase):
                 put = self.client.put(f"/v1/districts/{DISTRICT}/showcase", json={"assets": ["dog", "cat"]}, headers=self.h(ALICE))
                 self.assertEqual(put.status_code, 200, put.text)
                 self.assertEqual([p["asset"] for p in put.json()["shown"]], ["dog", "cat"])
-                self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}").json()["pets"][0], {"asset": "dog", "tier": 2, "amount": "2500000.5"})
+                self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}").json()["pets"][0], {"asset": "dog", "tier": 2, "amount": "2500000.5", "face": None, "pats": 0, "patted": False})
                 tiles = {t["bitmap_number"]: t for t in self.client.get(f"/v1/land?start={DISTRICT}&end={OTHER}").json()["tiles"]}
                 self.assertEqual((tiles[DISTRICT]["pets"], tiles[OTHER]["pets"]), (["dog:2", "cat:1"], []))
                 # 刷新 is rate limited; a provider failure keeps the old cache.
@@ -576,6 +639,122 @@ class SocialApi(unittest.TestCase):
                     "delete from social.wallet_links; delete from social.showcase; delete from social.holdings; "
                     "delete from social.holdings_checked;"
                 )
+
+    def test_parcel_pets(self):
+        from decimal import Decimal
+
+        from api import holdings
+
+        class Fake:
+            def rune_balances(self, address):
+                return {"DOGGOTOTHEMOON": Decimal(600000)} if address == BOB.address else {}
+
+            def inscription_ids(self, address):
+                return iter([])
+
+        holdings.provider = Fake()
+        url = f"/v1/districts/{DISTRICT}/parcels/1/showcase"
+        try:
+            # Only the parcel's holder picks its pet, and only from what they hold.
+            self.assertEqual(self.client.get(url, headers=self.h(ALICE)).status_code, 403)
+            self.assertEqual(self.client.put(url, json={"asset": "dog"}, headers=self.h(ALICE)).status_code, 403)
+            view = self.client.get(url, headers=self.h(BOB)).json()
+            self.assertEqual(({h["asset"]: h["tier"] for h in view["held"]}["dog"], view["chosen"], view["shown"]), (1, None, None))
+            self.assertEqual(self.client.put(url, json={"asset": "unicorn"}, headers=self.h(BOB)).status_code, 400)
+            self.assertEqual(self.client.put(url, json={"asset": "dog"}, headers=self.h(BOB)).json()["shown"], "dog:1")
+            self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}").json()["parcel_pets"], {"1": "dog:1"})
+            # A pet they don't hold isn't drawn; a parcel that changes hands drops the choice.
+            self.client.put(url, json={"asset": "cat"}, headers=self.h(BOB))
+            self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}").json()["parcel_pets"], {})
+            self.client.put(url, json={"asset": "dog"}, headers=self.h(BOB))
+            with self.conn.cursor() as cur:
+                cur.execute(f"update inscription_owners set address = '{CAROL.address}' where inscription_id = 'p1i0';")
+            self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}").json()["parcel_pets"], {})
+            with self.conn.cursor() as cur:
+                cur.execute(f"update inscription_owners set address = '{BOB.address}' where inscription_id = 'p1i0';")
+            self.assertEqual(self.client.put(url, json={"asset": None}, headers=self.h(BOB)).json()["shown"], None)
+        finally:
+            holdings.provider = None
+            with self.conn.cursor() as cur:
+                cur.execute(f"update inscription_owners set address = '{BOB.address}' where inscription_id = 'p1i0'; "
+                            "delete from social.parcel_showcase; delete from social.holdings; delete from social.holdings_checked;")
+
+    def test_pet_care(self):
+        from datetime import datetime, timedelta, timezone
+        from decimal import Decimal
+
+        from api import holdings, pets
+
+        class Fake:
+            def rune_balances(self, address):
+                return {"DOGGOTOTHEMOON": Decimal(600000)} if address == BOB.address else {}
+
+            def inscription_ids(self, address):
+                return iter(["f1i0", "zzi0", "f2i0"] if address == BOB.address else [])
+
+        import json
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        (holdings.Path(d) / "bitcoin-frogs.json").write_text(json.dumps(["f1i0", "f2i0"]))
+        old_dir, holdings.COLLECTIONS_DIR = holdings.COLLECTIONS_DIR, holdings.Path(d)
+        holdings.collection.cache_clear()
+        holdings.provider = Fake()
+        try:
+            # A collection's pet looks like one of the wallet's own inscriptions, the first by default.
+            frog = next(p for p in self.client.get("/v1/me/pets", headers=self.h(BOB)).json()["pets"] if p["asset"] == "frog")
+            self.assertEqual((frog["items"], frog["face"]), (["f1i0", "f2i0"], None))  # its logo until one is picked
+            self.assertEqual(self.client.put("/v1/me/pets/frog", json={"face": "zzi0"}, headers=self.h(BOB)).status_code, 400)
+            frog = self.client.put("/v1/me/pets/frog", json={"face": "f2i0"}, headers=self.h(BOB)).json()
+            self.assertEqual(frog["face"], "f2i0")
+            # Naming leaves the face as it is.
+            self.assertEqual(self.client.put("/v1/me/pets/frog", json={"name": "呱呱"}, headers=self.h(BOB)).json()["face"], "f2i0")
+            # Pets stay off the public page until shown there, and then without their care details.
+            page = f"/v1/people/{BOB.address}"
+            self.assertEqual(self.client.get(page).json()["pets"], [])
+            self.assertTrue(self.client.put("/v1/me/pets/frog", json={"public": True}, headers=self.h(BOB)).json()["public"])
+            [shown] = self.client.get(page).json()["pets"]
+            self.assertEqual((shown["asset"], shown["name"], shown["face"]), ("frog", "呱呱", "f2i0"))
+            self.assertNotIn("fed_at", shown)
+            self.assertEqual(holdings.faces(self.conn.cursor(), BOB.address), {"frog": "f2i0"})
+            self.assertIsNone(self.client.put("/v1/me/pets/frog", json={"face": None}, headers=self.h(BOB)).json()["face"])
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.pet_care;")
+            holdings.collection.cache_clear()
+            holdings.COLLECTIONS_DIR = old_dir
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.holdings; delete from social.holdings_checked; delete from social.holding_items;")
+            # Only what the wallet holds is a pet; a new one is hungry and level 1.
+            self.assertEqual(self.client.get("/v1/me/pets", headers=self.h(ALICE)).json()["pets"], [])
+            [dog] = self.client.get("/v1/me/pets", headers=self.h(BOB)).json()["pets"]
+            self.assertEqual((dog["asset"], dog["tier"], dog["level"], dog["affection"], dog["mood"]), ("dog", 1, 1, 0, "hungry"))
+            self.assertEqual(self.client.post("/v1/me/pets/cat/feed", headers=self.h(BOB)).status_code, 404)
+            self.assertEqual(self.client.post("/v1/me/pets/dog/feed", headers=self.h(ALICE)).status_code, 404)
+            # A feed fills it up until FEED_HOURS have passed.
+            dog = self.client.post("/v1/me/pets/dog/feed", headers=self.h(BOB)).json()
+            self.assertEqual((dog["affection"], dog["streak"], dog["mood"]), (pets.AFFECTION, 1, "full"))
+            self.assertEqual(self.client.post("/v1/me/pets/dog/feed", headers=self.h(BOB)).status_code, 409)
+            # Fed yesterday, it comes back hungry, and today's feed keeps the streak going.
+            with self.conn.cursor() as cur:
+                cur.execute("update social.pet_care set fed_at = now() - interval '30 hours', last_day = current_date - 1;")
+            self.assertEqual(self.client.get("/v1/me/pets", headers=self.h(BOB)).json()["pets"][0]["mood"], "hungry")
+            dog = self.client.post("/v1/me/pets/dog/feed", headers=self.h(BOB)).json()
+            self.assertEqual((dog["affection"], dog["streak"]), (2 * pets.AFFECTION + 1, 2))
+            # Names are trimmed and can be cleared.
+            self.assertEqual(self.client.put("/v1/me/pets/dog", json={"name": "  旺财 "}, headers=self.h(BOB)).json()["name"], "旺财")
+            self.assertEqual(self.client.put("/v1/me/pets/dog", json={"name": "x" * 21}, headers=self.h(BOB)).status_code, 422)
+            self.assertIsNone(self.client.put("/v1/me/pets/dog", json={"name": ""}, headers=self.h(BOB)).json()["name"])
+            # Levels and moods.
+            self.assertEqual([pets.level(a) for a in (0, 29, 30, 119, 120, 10**6)], [1, 1, 2, 2, 3, pets.MAX_LEVEL])
+            now = datetime.now(timezone.utc)
+            self.assertEqual([pets.mood(now - timedelta(hours=h), now) for h in (1, 10, 30, 100)], ["full", "ok", "hungry", "starving"])
+        finally:
+            holdings.provider = None
+            holdings.COLLECTIONS_DIR = old_dir
+            holdings.collection.cache_clear()
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.pet_care; delete from social.holdings; delete from social.holdings_checked; "
+                            "delete from social.holding_items;")
 
     def test_search(self):
         with self.conn.cursor() as cur:
@@ -894,6 +1073,160 @@ class SocialApi(unittest.TestCase):
                 )
 
 
+    def test_tour(self):
+        from datetime import date, timedelta
+
+        from api import tour
+
+        erin = Wallet(10)
+        self.tokens[erin.address] = self.login(erin)
+        with self.conn.cursor() as cur:
+            cur.execute("delete from social.tour_days; delete from social.badges where kind = 'tour';")
+        try:
+            # Three different inscribed districts; the day's stops stay put.
+            t = self.client.get("/v1/tour").json()
+            stops = [s["bitmap_number"] for s in t["stops"]]
+            with self.conn.cursor() as cur:
+                cur.execute("select bitmap_number from bitmaps;")
+                inscribed = {r[0] for r in cur.fetchall()}
+            self.assertEqual(len(set(stops) & inscribed), 3)
+            self.assertNotIn("done", t)
+            self.assertEqual([s["bitmap_number"] for s in self.client.get("/v1/tour").json()["stops"]], stops)
+            # The first stops are districts posted in this week; a stored day is kept as it is.
+            self.post(CAROL, "热闹一下", district=OTHER)
+            with self.conn.cursor() as cur:
+                day = date(2026, 1, 2)
+                cur.execute("insert into social.tour_days (day, stops) values (%s, %s);", (day - timedelta(days=1), [1]))
+                cur.execute(
+                    "select distinct p.bitmap_number from social.posts p join bitmaps b using (bitmap_number) "
+                    "where p.reply_to is null and p.removed_at is null and p.created_at > now() - interval '7 days';"
+                )
+                active = {r[0] for r in cur.fetchall()}
+                picked = tour.stops(cur, day)
+                self.assertEqual((len(picked), len(set(picked))), (3, 3))
+                self.assertTrue(set(picked[: min(tour.ACTIVE, len(active))]) <= active)
+                self.assertEqual(tour.stops(cur, day - timedelta(days=1)), [1])
+            # Checking in at each stop; the last one earns the badge.
+            for n in stops[:-1]:
+                self.assertEqual(self.client.post(f"/v1/districts/{n}/checkin", headers=self.h(erin)).json()["badges"], [])
+            mine = self.client.get("/v1/tour", headers=self.h(erin)).json()
+            self.assertEqual(([s["visited"] for s in mine["stops"]], mine["done"], mine["streak"]), ([True, True, False], False, 0))
+            won = self.client.post(f"/v1/districts/{stops[-1]}/checkin", headers=self.h(erin)).json()["badges"]
+            today = tour.day_number(tour.today())
+            self.assertEqual(won, [{"kind": "tour", "height": today, "bitmap_number": stops[-1], "rarity": "common", "streak": 1}])
+            mine = self.client.get("/v1/tour", headers=self.h(erin)).json()
+            self.assertEqual((mine["done"], mine["streak"]), (True, 1))
+            self.assertIn("tour", [b["kind"] for b in self.client.get(f"/v1/people/{erin.address}").json()["badges"]])
+            # Days in a row make the badge rarer; a missed day starts over.
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "insert into social.badges (address, kind, height, bitmap_number, rarity) "
+                    "select %s, 'tour', h, 100, 'common' from unnest(%s::int[]) h;",
+                    (erin.address, [today - 1, today - 2, today - 4]),
+                )
+                self.assertEqual(tour.streak(cur, erin.address, tour.today()), 3)
+                self.assertEqual(tour.streak(cur, erin.address, tour.today() + timedelta(days=1)), 3)  # tomorrow, not done yet
+                self.assertEqual(tour.streak(cur, erin.address, tour.today() + timedelta(days=2)), 0)
+            self.assertEqual([tour.rarity(n) for n in (1, 3, 7, 30)], ["common", "rare", "epic", "legendary"])
+        finally:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "delete from social.tour_days; delete from social.badges where kind = 'tour'; delete from social.checkins where address = %s;",
+                    (erin.address,),
+                )
+
+    def test_rewards(self):
+        from api import pets
+
+        frank = Wallet(11)
+        self.tokens[frank.address] = self.login(frank)
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "insert into social.badges (address, kind, height, bitmap_number, rarity) values "
+                    "(%s, 'lucky_visit', 1, 100, 'common'), (%s, 'tour', 2, 100, 'epic'), (%s, 'tour', 2, 100, 'rare') returning id;",
+                    (frank.address, frank.address, ALICE.address),
+                )
+                common, epic, alices = [r[0] for r in cur.fetchall()]
+            # A badge you wear shows beside your name on your posts; only your own badges.
+            self.assertEqual(self.client.put("/v1/me/badge", json={"id": alices}, headers=self.h(frank)).status_code, 404)
+            self.assertEqual(self.client.put("/v1/me/badge", json={"id": epic}, headers=self.h(frank)).json()["worn"], {"id": epic, "kind": "tour", "rarity": "epic"})
+            top = self.post(CAROL, "欢迎来逛", district=OTHER).json()["id"]
+            self.assertEqual(self.post(frank, "戴着徽章来逛逛", district=OTHER, reply_to=top).status_code, 201)
+            self.assertEqual(self.client.get(f"/v1/people/{frank.address}").json()["posts"][0]["author"]["badge"], {"kind": "tour", "rarity": "epic"})
+            badges = {b["id"]: b["worn"] for b in self.client.get(f"/v1/people/{frank.address}").json()["badges"]}
+            self.assertEqual(badges, {common: False, epic: True})
+            self.client.put("/v1/me/badge", json={"id": common}, headers=self.h(frank))
+            self.assertEqual(self.client.get(f"/v1/people/{frank.address}").json()["posts"][0]["author"]["badge"]["kind"], "lucky_visit")
+            self.assertIsNone(self.client.put("/v1/me/badge", json={"id": None}, headers=self.h(frank)).json()["worn"])
+            self.assertIsNone(self.client.get(f"/v1/people/{frank.address}").json()["posts"][0]["author"]["badge"])
+            # The pets an owner shows add their levels above 1 to the district's prosperity, while held.
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "insert into social.showcase (bitmap_number, assets, updated_by) values (100, %s, %s);"
+                    "insert into social.holdings (address, asset, amount) values (%s, 'dog', 5);"
+                    "insert into social.pet_care (address, asset, affection) values (%s, 'dog', 270), (%s, 'cat', 9999);",
+                    (["dog", "cat"], ALICE.address, ALICE.address, ALICE.address, ALICE.address),
+                )
+                self.assertEqual(pets.care_points(cur, 0, 2000), {100: pets.level(270) - 1})
+            self.assertEqual(self.client.get("/v1/districts/100").json()["prosperity"]["parts"]["pets"], 3)
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.holdings;")
+                self.assertEqual(pets.care_points(cur, 0, 2000), {})
+        finally:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "delete from social.worn_badges; delete from social.badges where address in (%s, %s); delete from social.showcase; "
+                    "delete from social.holdings; delete from social.pet_care;",
+                    (frank.address, ALICE.address),
+                )
+
+    def test_pet_pats(self):
+        from api import pets
+
+        gina = Wallet(12)
+        self.tokens[gina.address] = self.login(gina)
+        pat = lambda w, a, asset="dog": self.client.post(f"/v1/people/{a}/pets/{asset}/pat", headers=self.h(w))
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("insert into social.holdings (address, asset, amount) values (%s, 'dog', 5), (%s, 'frog', 1);", (BOB.address, BOB.address))
+            # A pet nobody can see can't be patted; nor your own.
+            self.assertEqual(pat(gina, BOB.address).status_code, 404)
+            self.client.put("/v1/me/pets/dog", json={"public": True}, headers=self.h(BOB))
+            self.assertEqual(pat(BOB, BOB.address).status_code, 400)
+            self.assertEqual(pat(gina, BOB.address, "cat").status_code, 404)
+            # Once a day each; the owner hears about it and the pet gets a little affection.
+            dog = pat(gina, BOB.address).json()
+            self.assertEqual((dog["asset"], dog["pats"], dog["patted"]), ("dog", 1, True))
+            self.assertEqual(pat(gina, BOB.address).status_code, 409)
+            self.assertEqual(self.client.get("/v1/me/pets", headers=self.h(BOB)).json()["pets"][0]["affection"], pets.PAT_AFFECTION)
+            n = self.client.get("/v1/notifications", headers=self.h(BOB)).json()["notifications"][0]
+            self.assertEqual((n["kind"], n["actor"]), ("pat", gina.address))
+            page = {p["asset"]: p for p in self.client.get(f"/v1/people/{BOB.address}", headers=self.h(gina)).json()["pets"]}
+            self.assertEqual((page["dog"]["pats"], page["dog"]["patted"]), (1, True))
+            self.assertFalse(self.client.get(f"/v1/people/{BOB.address}", headers=self.h(CAROL)).json()["pets"][0]["patted"])
+            # Pats stop adding affection past PAT_CAP a day, though they still count.
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "insert into social.pet_pats (day, owner, asset, patter) select (now() at time zone 'utc')::date, %s, 'dog', 'x' || i from generate_series(1, 9) i;",
+                    (BOB.address,),
+                )
+            self.assertEqual(pat(CAROL, BOB.address).json()["pats"], 11)
+            self.assertEqual(self.client.get("/v1/me/pets", headers=self.h(BOB)).json()["pets"][0]["affection"], pets.PAT_AFFECTION)
+            # A pet shown on a district its owner holds can be patted there too.
+            with self.conn.cursor() as cur:
+                cur.execute("insert into social.holdings (address, asset, amount) values (%s, 'frog', 1);", (ALICE.address,))
+                cur.execute("insert into social.showcase (bitmap_number, assets, updated_by) values (100, %s, %s);", (["frog"], ALICE.address))
+            self.assertEqual(pat(gina, ALICE.address, "frog").status_code, 200)
+            shown = self.client.get("/v1/districts/100", headers=self.h(gina)).json()["pets"]
+            self.assertEqual([(p["asset"], p["pats"], p["patted"]) for p in shown], [("frog", 1, True)])
+        finally:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "delete from social.pet_pats; delete from social.pet_care; delete from social.holdings; delete from social.showcase; "
+                    "delete from social.notifications where kind = 'pat';"
+                )
+
     def test_seasons(self):
         from api import seasons
 
@@ -1025,70 +1358,7 @@ class SocialApi(unittest.TestCase):
 
     def test_market(self):
         from api import btc, market
-        from tests.test_market import SegwitKey, TaprootKey, txid
-
-        class FakeChain:
-            """bitcoind and ord in one: outputs, where inscriptions sit, and a mempool that checks every signature."""
-
-            def __init__(self):
-                self.utxos = {}  # outpoint: [value, scriptPubKey, inscriptions]
-                self.sent = []
-
-            def add(self, outpoint, value, spk, inscriptions=()):
-                self.utxos[outpoint] = [value, spk, list(inscriptions)]
-
-            def txout(self, op):
-                u = self.utxos.get(op)
-                return (u[0], u[1]) if u else None
-
-            def satpoint(self, iid):
-                return next((f"{op}:0" for op, u in self.utxos.items() if iid in u[2]), None)
-
-            def output(self, op):
-                u = self.utxos.get(op)
-                return {"value": u[0], "inscriptions": u[2], "runes": {}, "spent": False} if u else {"spent": True}
-
-            def cardinal_outputs(self, address):
-                spk = btc.address_script(address, "regtest")
-                return [{"outpoint": op, "value": u[0], "inscriptions": [], "runes": {}, "spent": False} for op, u in self.utxos.items() if u[1] == spk and not u[2]]
-
-            def fee_rate(self):
-                return 3.0
-
-            def test_accept(self, raw):
-                tx = btc.Tx.parse(bytes.fromhex(raw))
-                if any(t.outpoint not in self.utxos for t in tx.inputs):
-                    return False, "missing-inputs"
-                spent = [btc.TxOut(*self.utxos[t.outpoint][:2]) for t in tx.inputs]
-                for i, t in enumerate(tx.inputs):
-                    w = t.witness
-                    try:
-                        btc.check_signature(tx, i, spent, w[0], *(w[1:2] or [None]), t.script_sig[1:] or None)
-                    except btc.BadTx as e:
-                        return False, str(e)
-                if sum(o.value for o in tx.outputs) > sum(o.value for o in spent):
-                    return False, "bad-txns-in-belowout"
-                return True, None
-
-            def send(self, raw):
-                """Spend the inputs; inscriptions follow their first sat (each sits at offset 0 of its input)."""
-                tx = btc.Tx.parse(bytes.fromhex(raw))
-                at, moves = 0, []
-                for t in tx.inputs:
-                    value, _, ins = self.utxos.pop(t.outpoint)
-                    moves += [(at, i) for i in ins]
-                    at += value
-                edges, at = [], 0
-                for n, o in enumerate(tx.outputs):
-                    edges.append((at, at + o.value, n))
-                    at += o.value
-                for n, o in enumerate(tx.outputs):
-                    self.add(f"{tx.txid}:{n}", o.value, o.script_pubkey)
-                for offset, iid in moves:
-                    n = next(n for lo, hi, n in edges if lo <= offset < hi)
-                    self.utxos[f"{tx.txid}:{n}"][2].append(iid)
-                self.sent.append(tx)
-                return tx.txid
+        from tests.test_market import FakeChain, SegwitKey, TaprootKey, txid
 
         seller, buyer, buyer_tr, parcel_buyer = SegwitKey(1), SegwitKey(2), TaprootKey(20), TaprootKey(21)
         self.assertEqual((seller.address(), buyer.address()), (ALICE.address, BOB.address))  # the test wallets' own keys
@@ -1189,6 +1459,18 @@ class SocialApi(unittest.TestCase):
             p = btc.Psbt.parse(prep["psbt"])
             buyer.sign(p, 0, [p.witness_utxo(0)], btc.SINGLE_ACP)
             parcel = post(BOB, "/v1/market/listings", {"psbt": p.b64(), "bitmap_number": 100, "tx_index": 1}).json()
+            # Someone looking for a place to live finds it city-wide, and on the district's call for residents.
+            found = self.client.get("/v1/market/parcels").json()["parcels"]
+            self.assertEqual([(x["id"], x["tx_index"], x["recruiting"]) for x in found], [(parcel["id"], 1, False)])
+            self.assertIn("level", found[0])
+            self.assertIn("residents", found[0])
+            self.assertEqual(self.client.put("/v1/districts/100/recruit", json={"message": "来住"}, headers=self.h(ALICE)).status_code, 200)
+            try:
+                self.assertTrue(self.client.get("/v1/market/parcels").json()["parcels"][0]["recruiting"])
+                self.assertEqual(self.client.get("/v1/districts/100").json()["recruit"]["for_sale"], [{"listing_id": parcel["id"], "tx_index": 1, "price_sats": 20_000, "seller": BOB.address}])
+                self.assertEqual(self.client.get("/v1/recruiting").json()["districts"][0]["for_sale"][0]["listing_id"], parcel["id"])
+            finally:
+                self.client.delete("/v1/districts/100/recruit", headers=self.h(ALICE))
             tr_spk = btc.address_script(parcel_buyer.address(), "regtest")
             for k, v in enumerate((700, 800, 90_000)):
                 fake.add(f"{txid(0xca0 + k)}:0", v, tr_spk)
@@ -1220,6 +1502,224 @@ class SocialApi(unittest.TestCase):
                     "update inscription_owners set outpoint = 'd:0' where inscription_id = 'p1i0'; "
                     "delete from social.market_quotes; delete from social.market_listings; delete from social.notifications where kind = 'sold';",
                     (ALICE.address,),
+                )
+
+    def test_offers(self):
+        from api import btc, market
+        from tests.test_market import FakeChain, SegwitKey, TaprootKey, txid
+
+        holder, bob, carol, bob_tr, carol_tr = SegwitKey(1), SegwitKey(2), SegwitKey(3), TaprootKey(22), TaprootKey(23)
+        spk = lambda a: btc.address_script(a, "regtest")
+        fake = FakeChain()
+        district_out, parcel_out = f"{txid(0xd101)}:0", f"{txid(0x9002)}:0"
+        fake.add(district_out, 546, spk(ALICE.address), ["d100i0"])
+        fake.add(parcel_out, 1_000, spk(BOB.address), ["p1i0"])
+        for k, (who, value) in enumerate([(BOB, 600), (BOB, 600), (BOB, 100_000), (CAROL, 600), (CAROL, 700), (CAROL, 80_000)]):
+            fake.add(f"{txid(0xc000 + k)}:0", value, spk(who.address))
+        old_chain, market.chain = market.chain, fake
+        with self.conn.cursor() as cur:
+            cur.execute("update inscription_owners set outpoint = %s where inscription_id = 'd100i0';", (district_out,))
+            cur.execute("update inscription_owners set outpoint = %s where inscription_id = 'p1i0';", (parcel_out,))
+        post = lambda w, path, body=None: self.client.post(path, json=body or {}, headers=self.h(w))
+        ask = {"bitmap_number": 100, "price_sats": 30_000, "payment_address": BOB.address, "receive_address": bob_tr.address()}
+        try:
+            self.assertEqual(post(BOB, "/v1/market/offers/prepare", ask).status_code, 404)  # the market is off
+            os.environ["MARKET_NETWORK"] = "regtest"
+            self.assertEqual(post(ALICE, "/v1/market/offers/prepare", {**ask, "payment_address": ALICE.address}).status_code, 400)  # already hers
+
+            # The buyer signs the whole purchase but the holder's input, paying the holder's address.
+            prep = post(BOB, "/v1/market/offers/prepare", ask).json()
+            p = btc.Psbt.parse(prep["psbt"])
+            self.assertEqual(prep["sign_inputs"], [0, 1, 3])
+            self.assertEqual(p.tx.inputs[2].outpoint, district_out)
+            self.assertEqual(p.witness_utxo(2), btc.TxOut(546, spk(ALICE.address)))
+            self.assertEqual([(o.value, o.script_pubkey) for o in p.tx.outputs[:3]], [(1200, spk(BOB.address)), (546, spk(bob_tr.address())), (30_000, spk(ALICE.address))])
+            spent = [p.witness_utxo(i) for i in range(len(p.tx.inputs))]
+            loose = btc.Psbt.parse(prep["psbt"])
+            for i in prep["sign_inputs"]:
+                bob.sign(loose, i, spent, btc.SIGHASH_NONE)
+            self.assertEqual(post(BOB, f"/v1/market/offers/{prep['offer_id']}/sign", {"psbt": loose.b64()}).status_code, 400)
+            for i in prep["sign_inputs"]:
+                bob.sign(p, i, spent)
+            self.assertEqual(post(CAROL, f"/v1/market/offers/{prep['offer_id']}/sign", {"psbt": p.b64()}).status_code, 404)
+            r = post(BOB, f"/v1/market/offers/{prep['offer_id']}/sign", {"psbt": p.b64(), "days": 3})
+            self.assertEqual(r.status_code, 200, r.text)
+            offer = r.json()
+            self.assertEqual((offer["status"], offer["seller"], offer["price_sats"]), ("active", ALICE.address, 30_000))
+            self.assertEqual(post(BOB, f"/v1/market/offers/{prep['offer_id']}/sign", {"psbt": p.b64()}).status_code, 409)
+            self.assertEqual([o["id"] for o in self.client.get("/v1/market/offers?bitmap_number=100").json()["offers"]], [offer["id"]])
+            self.assertEqual([o["id"] for o in self.client.get("/v1/market/offers?mine=true", headers=self.h(ALICE)).json()["offers"]], [offer["id"]])
+            n = self.client.get("/v1/notifications", headers=self.h(ALICE)).json()["notifications"][0]
+            self.assertEqual((n["kind"], n["actor"], n["bitmap_number"]), ("offer", BOB.address, 100))
+
+            # The holder accepts: their wallet signs input 2 with SIGHASH_ALL, and it goes out.
+            self.assertEqual(post(CAROL, f"/v1/market/offers/{offer['id']}/accept/prepare").status_code, 403)
+            acc = post(ALICE, f"/v1/market/offers/{offer['id']}/accept/prepare").json()
+            self.assertEqual(acc["sign_inputs"], [2])
+            ap = btc.Psbt.parse(acc["psbt"])
+            self.assertEqual(ap.tx.txid, p.tx.txid)
+            wrong = btc.Psbt.parse(acc["psbt"])
+            holder.sign(wrong, 2, spent, btc.SINGLE_ACP)
+            self.assertEqual(post(ALICE, f"/v1/market/offers/{offer['id']}/accept", {"psbt": wrong.b64()}).status_code, 400)
+            holder.sign(ap, 2, spent)
+            r = post(ALICE, f"/v1/market/offers/{offer['id']}/accept", {"psbt": ap.b64()})
+            self.assertEqual(r.status_code, 200, r.text)
+            sale = fake.sent[-1]
+            self.assertEqual(fake.utxos[f"{sale.txid}:1"][1:], [spk(bob_tr.address()), ["d100i0"]])
+            self.assertEqual(fake.utxos[f"{sale.txid}:2"][:2], [30_000, spk(ALICE.address)])
+            self.assertEqual(post(ALICE, f"/v1/market/offers/{offer['id']}/accept", {"psbt": ap.b64()}).status_code, 409)
+            n = self.client.get("/v1/notifications", headers=self.h(BOB)).json()["notifications"][0]
+            self.assertEqual((n["kind"], n["actor"]), ("offer_accepted", ALICE.address))
+
+            # A parcel: the holder turns one offer down; another dies when the buyer's coins move.
+            carol_ask = {"bitmap_number": 100, "tx_index": 1, "price_sats": 5_000, "payment_address": CAROL.address, "receive_address": carol_tr.address()}
+
+            def make_offer():
+                prep = post(CAROL, "/v1/market/offers/prepare", carol_ask).json()
+                cp = btc.Psbt.parse(prep["psbt"])
+                cs = [cp.witness_utxo(i) for i in range(len(cp.tx.inputs))]
+                for i in prep["sign_inputs"]:
+                    carol.sign(cp, i, cs)
+                return post(CAROL, f"/v1/market/offers/{prep['offer_id']}/sign", {"psbt": cp.b64()}).json(), cp
+
+            first, _ = make_offer()
+            self.assertEqual(self.client.delete(f"/v1/market/offers/{first['id']}", headers=self.h(ALICE)).status_code, 403)
+            self.assertEqual(self.client.delete(f"/v1/market/offers/{first['id']}", headers=self.h(BOB)).json()["status"], "declined")
+            self.assertEqual(self.client.get("/v1/market/offers?bitmap_number=100").json()["offers"], [])
+            second, cp = make_offer()
+            fake.utxos.pop(cp.tx.inputs[3].outpoint)  # Carol spent the coins it used
+            self.assertEqual(post(BOB, f"/v1/market/offers/{second['id']}/accept/prepare").status_code, 409)
+            mine = {o["id"]: o["status"] for o in self.client.get("/v1/market/offers?mine=true", headers=self.h(CAROL)).json()["offers"]}
+            self.assertEqual(mine, {first["id"]: "declined", second["id"]: "expired"})
+        finally:
+            market.chain = old_chain
+            os.environ.pop("MARKET_NETWORK", None)
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "update inscription_owners set outpoint = 'a:0' where inscription_id = 'd100i0'; "
+                    "update inscription_owners set outpoint = 'd:0' where inscription_id = 'p1i0'; "
+                    "delete from social.market_offers; delete from social.notifications where kind like 'offer%%';"
+                )
+
+    def test_park_sale(self):
+        from api import btc, market
+        from tests.test_market import FakeChain, SegwitKey, TaprootKey, txid
+
+        alice, bob, bob_tr = SegwitKey(1), SegwitKey(2), TaprootKey(24)
+        spk = lambda a: btc.address_script(a, "regtest")
+        ids = {100: "d100i0", 101: "d101i0", 108: "d108i0"}
+        fake = FakeChain()
+        outs = {100: (f"{txid(0xa100)}:0", 546), 101: (f"{txid(0xa101)}:1", 546), 108: (f"{txid(0xa108)}:0", 1_000)}
+        for n, (op, value) in outs.items():
+            fake.add(op, value, spk(ALICE.address), [ids[n]])
+        fake.offsets["d108i0"] = 400  # not every inscription sits on its output's first sat
+        fake.add(f"{txid(0xa200)}:0", 50_000, spk(ALICE.address))
+        for k, value in enumerate([600, 600, 300_000]):
+            fake.add(f"{txid(0xb200 + k)}:0", value, spk(BOB.address))
+        old_chain, market.chain = market.chain, fake
+        post = lambda w, path, body=None: self.client.post(path, json=body or {}, headers=self.h(w))
+
+        def index(outpoint, address=ALICE.address):
+            """What the indexer would write once a move or sale is mined."""
+            with self.conn.cursor() as cur:
+                cur.execute("update inscription_owners set outpoint = %s, address = %s where inscription_id = any(%s);", (outpoint, address, list(ids.values())))
+
+        def move(path):
+            prep = post(ALICE, path, {"payment_address": ALICE.address})
+            self.assertEqual(prep.status_code, 200, prep.text)
+            prep = prep.json()
+            p = btc.Psbt.parse(prep["psbt"])
+            spent = [p.witness_utxo(i) for i in range(len(p.tx.inputs))]
+            for i in prep["sign_inputs"]:
+                alice.sign(p, i, spent)
+            r = post(ALICE, f"/v1/market/moves/{prep['move_id']}/submit", {"psbt": p.b64()})
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertEqual(post(ALICE, f"/v1/market/moves/{prep['move_id']}/submit", {"psbt": p.b64()}).status_code, 409)
+            return prep, fake.sent[-1]
+
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "insert into bitmaps (inscription_id, inscription_number, bitmap_number, block_height) values "
+                "('d101i0', 10, 101, 300), ('d108i0', 11, 108, 301) on conflict do nothing;"
+                "insert into inscription_owners (inscription_id, created_height, outpoint, address, updated_height) values "
+                f"('d101i0', 300, 'e:0', '{ALICE.address}', 300), ('d108i0', 301, 'f:0', '{ALICE.address}', 301) on conflict do nothing;"
+            )
+            for n, (op, _) in outs.items():
+                cur.execute("update inscription_owners set outpoint = %s where inscription_id = %s;", (op, ids[n]))
+        park = post(ALICE, "/v1/parks", {"name": "打包园", "members": [100, 101, 108]}).json()
+        sale = f"/v1/market/parks/{park['id']}"
+        try:
+            os.environ["MARKET_NETWORK"] = "regtest"
+            self.assertFalse(self.client.get(sale).json()["packed"])
+            ask = {"price_sats": 200_000, "pay_to": ALICE.address}
+            self.assertEqual(post(ALICE, f"{sale}/listing/prepare", ask).status_code, 409)  # three outputs can't be listed as one
+            self.assertEqual(post(BOB, f"{sale}/pack", {"payment_address": BOB.address}).status_code, 403)
+
+            # Pack: the three outputs, in order, into one at Alice's address; her coin pays the miners.
+            prep, tx = move(f"{sale}/pack")
+            self.assertEqual(prep["own_inputs"], [0, 1, 2])
+            self.assertEqual([t.outpoint for t in tx.inputs[:3]], [outs[n][0] for n in (100, 101, 108)])
+            self.assertEqual((tx.outputs[0].value, tx.outputs[0].script_pubkey), (2_092, spk(ALICE.address)))
+            self.assertEqual(sorted(fake.utxos[f"{tx.txid}:0"][2]), sorted(ids.values()))
+            self.assertEqual(fake.satpoint("d108i0"), f"{tx.txid}:0:1492")
+            index(f"{tx.txid}:0")
+            self.assertTrue(self.client.get(sale).json()["packed"])
+            self.assertEqual(post(ALICE, f"{sale}/pack", {"payment_address": ALICE.address}).status_code, 409)
+            self.assertEqual(post(ALICE, "/v1/market/listings/prepare", {"bitmap_number": 100, **ask}).status_code, 409)  # not on its own any more
+
+            # Unpack: one output per district again, each starting at its district's sat.
+            _, tx = move(f"{sale}/unpack")
+            self.assertEqual([o.value for o in tx.outputs[:3]], [546, 946, 600])
+            self.assertEqual([fake.utxos[f"{tx.txid}:{k}"][2] for k in range(3)], [["d100i0"], ["d101i0"], ["d108i0"]])
+            with self.conn.cursor() as cur:
+                for k, n in enumerate((100, 101, 108)):
+                    cur.execute("update inscription_owners set outpoint = %s where inscription_id = %s;", (f"{tx.txid}:{k}", ids[n]))
+            _, tx = move(f"{sale}/pack")
+            packed = f"{tx.txid}:0"
+            index(packed)
+
+            # List the park: one signature over the one output, like a district.
+            prep = post(ALICE, f"{sale}/listing/prepare", ask).json()
+            self.assertEqual((prep["members"], prep["postage_sats"]), ([100, 101, 108], 2_092))
+            p = btc.Psbt.parse(prep["psbt"])
+            alice.sign(p, 0, [p.witness_utxo(0)], btc.SINGLE_ACP)
+            self.assertEqual(post(BOB, f"{sale}/listing", {"psbt": p.b64()}).status_code, 403)
+            r = post(ALICE, f"{sale}/listing", {"psbt": p.b64()})
+            self.assertEqual(r.status_code, 201, r.text)
+            listing = r.json()
+            self.assertEqual((listing["park_id"], listing["members"], listing["price_sats"]), (park["id"], [100, 101, 108], 200_000))
+            self.assertEqual(self.client.get(sale).json()["listing"]["id"], listing["id"])
+            self.assertEqual([l["id"] for l in self.client.get("/v1/market/listings?bitmap_number=108").json()["listings"]], [listing["id"]])
+            self.assertIsNone(self.client.get("/v1/land/100").json()["district"]["sale"])  # the district itself isn't for sale alone
+
+            # Bob buys it like any listing, and the park is his.
+            q = post(BOB, f"/v1/market/listings/{listing['id']}/quote", {"payment_address": BOB.address, "receive_address": bob_tr.address()}).json()
+            bp = btc.Psbt.parse(q["psbt"])
+            spent = [bp.witness_utxo(i) for i in range(len(bp.tx.inputs))]
+            for i in q["sign_inputs"]:
+                bob.sign(bp, i, spent)
+            r = post(BOB, f"/v1/market/quotes/{q['quote_id']}/submit", {"psbt": bp.b64()})
+            self.assertEqual(r.status_code, 200, r.text)
+            bought = fake.sent[-1]
+            self.assertEqual(fake.utxos[f"{bought.txid}:1"][1], spk(bob_tr.address()))
+            self.assertEqual(sorted(fake.utxos[f"{bought.txid}:1"][2]), sorted(ids.values()))
+            self.assertEqual(fake.utxos[f"{bought.txid}:2"][:2], [200_000, spk(ALICE.address)])
+            index(f"{bought.txid}:1", bob_tr.address())
+            now = self.client.get(f"/v1/parks/{park['id']}").json()
+            self.assertEqual((now["owner"], now["members"]), (bob_tr.address(), [100, 101, 108]))
+            self.assertIsNone(self.client.get(sale).json()["listing"])
+        finally:
+            market.chain = old_chain
+            os.environ.pop("MARKET_NETWORK", None)
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "update inscription_owners set outpoint = 'a:0', address = %s where inscription_id = 'd100i0'; "
+                    "delete from inscription_owners where inscription_id in ('d101i0', 'd108i0'); "
+                    "delete from bitmaps where inscription_id in ('d101i0', 'd108i0'); "
+                    "delete from social.park_members where park_id = %s; delete from social.parks where id = %s; "
+                    "delete from social.market_listings; delete from social.market_quotes; delete from social.market_moves; "
+                    "delete from social.notifications where kind = 'sold';",
+                    (ALICE.address, park["id"], park["id"]),
                 )
 
     def test_agent(self):
@@ -1274,7 +1774,7 @@ class SocialApi(unittest.TestCase):
             r = post(ALICE, f"/v1/districts/{DISTRICT}/agent", {"id": g["id"], "signature": ALICE.sign(g["message"])})
             self.assertEqual(r.status_code, 200, r.text)
             me = r.json()["agent"]
-            self.assertEqual((me["posts_per_day"], me["problem"], me["tasks"]), (2, None, ["welcome", "digest", "answers"]))
+            self.assertEqual((me["posts_per_day"], me["problem"], me["tasks"]), (2, None, ["welcome", "digest", "answers", "shop"]))
             self.assertEqual(view(BOB).status_code, 403)
             r = self.client.put(f"/v1/districts/{DISTRICT}/agent/settings", json={"persona": "叫我们的街「百号街」。", "tasks": ["welcome", "answers", "digest"]},
                                 headers=self.h(ALICE))
@@ -1401,7 +1901,82 @@ class SocialApi(unittest.TestCase):
             g3 = post(ALICE, f"/v1/districts/{DISTRICT}/agent/prepare", {}).json()
             v = post(ALICE, f"/v1/districts/{DISTRICT}/agent", {"id": g3["id"], "signature": ALICE.sign(g3["message"])}).json()["agent"]
             self.assertEqual((v["problem"], v["persona"]), (None, "叫我们的街「百号街」。"))
+            self.assertEqual((v["may_publish"], v["auto_tasks"]), (False, []))
+
+            # A grant that lets it post on its own: the picked tasks go out at once, within the day's limit; the rest wait.
+            g4 = post(ALICE, f"/v1/districts/{DISTRICT}/agent/prepare", {"posts_per_day": 1, "may_publish": True}).json()
+            self.assertIn("publish them on its own, up to the posts per day below", g4["message"])
+            v = post(ALICE, f"/v1/districts/{DISTRICT}/agent", {"id": g4["id"], "signature": ALICE.sign(g4["message"])}).json()["agent"]
+            self.assertEqual((v["may_publish"], v["auto_tasks"]), (True, ["welcome", "digest"]))
+            with self.conn.cursor() as cur:
+                cur.execute("insert into land_events (block_height, block_time, kind, inscription_id, bitmap_number, tx_index, to_address) "
+                            "values (1001, extract(epoch from now())::int8, 'parcel_claimed', 'p9i0', %s, 10, %s);", (DISTRICT, BOB.address))
+            agent.model = fake = FakeModel([[("draft_post", {"task": "welcome", "body": "欢迎 Bob！", "why": "new resident"}),
+                                             ("draft_post", {"task": "welcome", "body": "再欢迎一次", "why": "one over the limit"})]])
+            out = agent.run(g4["id"])
+            self.assertEqual((out["posted"], out["drafts"], out["error"]), (1, 1, None))
+            self.assertIn("go out as soon as you write them", fake.seen[0][0])
+            v = view().json()
+            self.assertEqual([d["body"] for d in v["drafts"]], ["再欢迎一次"])  # over the limit: the owner decides
+            auto = [d for d in v["recent"] if d["auto"]]
+            self.assertEqual([d["body"] for d in auto], ["欢迎 Bob！"])
+            posted = self.client.get(f"/v1/posts/{auto[0]['post_id']}").json()
+            self.assertEqual((posted["author"]["address"], posted["agent"]["grant_id"]), (ALICE.address, g4["id"]))
+            kinds = [x["kind"] for x in self.client.get("/v1/notifications", headers=self.h(ALICE)).json()["notifications"]]
+            self.assertIn("agent_posted", kinds)
+            # The owner can narrow what it posts by itself; a grant that doesn't allow it never posts.
+            r = self.client.put(f"/v1/districts/{DISTRICT}/agent/settings", json={"persona": v["agent"]["persona"], "auto_tasks": ["digest", "bogus"]},
+                                headers=self.h(ALICE))
+            self.assertEqual(r.status_code, 400)
+            r = self.client.put(f"/v1/districts/{DISTRICT}/agent/settings", json={"persona": v["agent"]["persona"], "auto_tasks": ["digest"]},
+                                headers=self.h(ALICE))
+            self.assertEqual(r.json()["agent"]["auto_tasks"], ["digest"])
+            with self.conn.cursor() as cur:
+                cur.execute("update social.agents set may_publish = false where id = %s;", (g4["id"],))
+            self.assertEqual(view().json()["agent"]["auto_tasks"], [])
             self.client.delete(f"/v1/districts/{DISTRICT}/agent", headers=self.h(ALICE))
+
+            # A resident's agent for parcel #1: only the parcel's holder grants it, and the grant names the parcel.
+            for k in ("AGENT_PRICE_SATS", "AGENT_LIGHTNING_ADDRESS"):
+                os.environ.pop(k)
+            pp = lambda path="": f"/v1/districts/{DISTRICT}/agent{path}?parcel=1"
+            self.assertEqual(post(ALICE, pp("/prepare"), {}).status_code, 403)
+            gp = post(BOB, pp("/prepare"), {"may_publish": True}).json()
+            self.assertIn("parcel: #1", gp["message"])
+            v = post(BOB, pp(), {"id": gp["id"], "signature": BOB.sign(gp["message"])}).json()
+            self.assertEqual((v["agent"]["parcel"], v["agent"]["tasks"], v["agent"]["auto_tasks"]), (1, ["answers", "shop"], ["answers"]))
+            self.assertEqual(self.client.put(pp("/settings"), json={"tasks": ["welcome"]}, headers=self.h(BOB)).status_code, 400)
+            self.assertIsNone(view().json()["agent"])  # the district's own agent is a different one
+            # It only answers people under Bob's own posts, and posts as the parcel's resident.
+            mine = self.post(BOB, "有人想一起修路灯吗？").json()
+            self.post(ALICE, "什么时候修？", reply_to=mine["id"])
+            self.post(ALICE, "下周开会，谁有问题？")
+            agent.model = fake = FakeModel([[("draft_reply", {"task": "answers", "post_id": top["id"], "body": "不是我的帖子", "why": ""}),
+                                             ("draft_reply", {"task": "answers", "post_id": mine["id"], "body": "这周六上午。", "why": "Alice asked"})]])
+            out = agent.run(gp["id"])
+            self.assertEqual((out["posted"], out["drafts"], out["error"]), (1, 0, None))
+            system, messages = fake.seen[0]
+            self.assertIn("parcel #1", system)
+            self.assertIn("什么时候修", messages[0]["content"])
+            self.assertNotIn("下周开会", messages[0]["content"])
+            self.assertIn("error", json.loads(fake.seen[1][1][-1]["content"][0]["content"]))
+            v = self.client.get(pp(), headers=self.h(BOB)).json()
+            answer = self.client.get(f"/v1/posts/{v['recent'][0]['post_id']}").json()
+            self.assertEqual((answer["author"]["address"], answer["author"]["role"], answer["author"]["parcel"], answer["reply_to"]),
+                             (BOB.address, "resident", 1, mine["id"]))
+            self.assertEqual(self.client.get(f"/v1/agent/grants/{gp['id']}").json()["parcel"], 1)
+            n = [x for x in self.client.get("/v1/notifications", headers=self.h(BOB)).json()["notifications"] if x["kind"] == "agent_posted"]
+            self.assertEqual(n[0]["agent_parcel"], 1)
+            # Muted in the district, or the parcel sold, it stops.
+            with self.conn.cursor() as cur:
+                cur.execute("insert into social.mutes (bitmap_number, address, by_address) values (%s, %s, %s);", (DISTRICT, BOB.address, ALICE.address))
+            self.assertEqual(self.client.get(pp(), headers=self.h(BOB)).json()["agent"]["problem"], "muted")
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.mutes; update inscription_owners set address = %s where inscription_id = 'p1i0';", (CAROL.address,))
+                a = agent._row(cur, "id = %s", (gp["id"],))
+                self.assertEqual(agent.problem(cur, a), "owner_changed")
+                cur.execute("update inscription_owners set address = %s where inscription_id = 'p1i0';", (BOB.address,))
+            self.assertEqual(self.client.delete(pp(), headers=self.h(BOB)).status_code, 200)
             # Its posts stay, still checkable against the old grant.
             self.assertEqual(self.client.get(f"/v1/posts/{p['id']}").json()["agent"]["grant_id"], me["id"])
         finally:
@@ -1411,6 +1986,259 @@ class SocialApi(unittest.TestCase):
             with self.conn.cursor() as cur:
                 cur.execute("delete from social.listings; delete from social.listings_checked; delete from land_events where inscription_id = 'p9i0'; "
                             "delete from social.notifications where kind like 'agent%%';")
+
+    def test_shop(self):
+        from api import agent, tips
+
+        class Lnurl:
+            paid, verify, asked = set(), True, None
+
+            @staticmethod
+            def pay_request(a):
+                return {"callback": "https://wallet.test/cb", "minSendable": 1000, "maxSendable": 10**11}
+
+            @staticmethod
+            def ask_invoice(a, sats, comment):
+                Lnurl.asked = (a, sats, comment)
+                return f"lnbc{sats * 10}n1shop", f"https://wallet.test/shop/{sats}" if Lnurl.verify else None
+
+            @staticmethod
+            def settled(url):
+                return url in Lnurl.paid
+
+        class FakeModel:
+            def __init__(self, script):
+                self.script, self.seen = list(script), []
+
+            def __call__(self, system, messages, tools):
+                self.seen.append((system, list(messages)))
+                calls = self.script.pop(0) if self.script else []
+                content = [{"type": "tool_use", "id": f"s{len(self.seen)}{i}", "name": name, "input": args} for i, (name, args) in enumerate(calls)]
+                return {"content": content or [{"type": "text", "text": "done"}], "stop_reason": "tool_use" if calls else "end_turn"}
+
+        post = lambda w, path, body=None: self.client.post(path, json=body, headers=self.h(w))
+        put = lambda w, path, body: self.client.put(path, json=body, headers=self.h(w))
+        get = lambda w, path: self.client.get(path, headers=self.h(w) if w else {})
+        shop = lambda w=None: get(w, f"/v1/districts/{DISTRICT}/shop").json()["items"]
+        with self.conn.cursor() as cur:
+            cur.execute("select address, lightning_address from social.lightning_addresses;")
+            kept = cur.fetchall()
+        old_lnurl, old_model = tips.lnurl, agent.model
+        tips.lnurl = Lnurl
+        try:
+            item = {"title": "街区壁纸包", "description": "四张 840 系列壁纸", "price_sats": 2100, "content": "https://files.test/wall.zip", "stock": 1}
+            # Only the district's owner sells as the district, a resident only for their own parcel, and only with a Lightning address.
+            self.assertEqual(post(BOB, f"/v1/districts/{DISTRICT}/shop", item).status_code, 403)
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.lightning_addresses;")
+            self.assertEqual(post(ALICE, f"/v1/districts/{DISTRICT}/shop", item).status_code, 409)
+            put(ALICE, "/v1/me/lightning", {"lightning_address": "alice@wallet.test"})
+            r = post(ALICE, f"/v1/districts/{DISTRICT}/shop", item)
+            self.assertEqual(r.status_code, 201, r.text)
+            mine = r.json()
+            self.assertEqual((mine["content"], mine["left"], mine["on_sale"]), (item["content"], 1, True))
+            put(BOB, "/v1/me/lightning", {"lightning_address": "bob@wallet.test"})
+            self.assertEqual(post(BOB, f"/v1/districts/{DISTRICT}/shop", {**item, "parcel": 2}).status_code, 403)
+            card = post(BOB, f"/v1/districts/{DISTRICT}/shop", {**item, "parcel": 1, "title": "#1 号地块明信片", "stock": None, "price_sats": 500}).json()
+            # Anyone sees what is on sale, but not what buyers get.
+            items = shop()
+            self.assertEqual([(i["title"], i["tx_index"]) for i in items], [("街区壁纸包", None), ("#1 号地块明信片", 1)])
+            self.assertNotIn("content", items[0])
+
+            # Buying: an invoice from the seller's own wallet; what was bought shows once the payment is confirmed.
+            self.assertEqual(post(ALICE, f"/v1/shop/items/{mine['id']}/buy").status_code, 400)
+            order = post(CAROL, f"/v1/shop/items/{mine['id']}/buy").json()
+            self.assertEqual((order["amount_sats"], Lnurl.asked[:2]), (2100, ("alice@wallet.test", 2100)))
+            self.assertEqual(get(BOB, f"/v1/shop/orders/{order['id']}").status_code, 404)
+            st = get(CAROL, f"/v1/shop/orders/{order['id']}").json()
+            self.assertEqual(st["status"], "pending")
+            self.assertNotIn("content", st)
+            Lnurl.paid.add("https://wallet.test/shop/2100")
+            with self.conn.cursor() as cur:
+                cur.execute("update social.shop_orders set checked_at = null;")
+            st = get(CAROL, f"/v1/shop/orders/{order['id']}").json()
+            self.assertEqual((st["status"], st["content"]), ("settled", item["content"]))
+            self.assertEqual([i["title"] for i in shop(CAROL)], ["#1 号地块明信片"])  # the last one is gone
+            self.assertEqual(post(BOB, f"/v1/shop/items/{mine['id']}/buy").status_code, 409)
+            seller_view = {i["id"]: i for i in shop(ALICE)}[mine["id"]]
+            self.assertEqual((seller_view["left"], seller_view["sold"], seller_view["on_sale"]), (0, 1, False))
+            n = self.client.get("/v1/notifications", headers=self.h(ALICE)).json()["notifications"][0]
+            self.assertEqual((n["kind"], n["actor"], n["title"], n["amount_sats"]), ("shop_sold", CAROL.address, "街区壁纸包", 2100))
+            mine_shop = get(CAROL, "/v1/me/shop").json()
+            self.assertEqual([(b["title"], b["content"]) for b in mine_shop["bought"]], [("街区壁纸包", item["content"])])
+            self.assertEqual([x["buyer"] for x in get(ALICE, "/v1/me/shop").json()["sold"]], [CAROL.address])
+            # A seller whose wallet can't confirm payments can't deliver, so nothing is sold.
+            Lnurl.verify = False
+            self.assertEqual(post(CAROL, f"/v1/shop/items/{card['id']}/buy").status_code, 502)
+            Lnurl.verify = True
+
+            # Its seller edits it; nobody else can. Selling the parcel takes its items down.
+            self.assertEqual(put(BOB, f"/v1/shop/items/{card['id']}", {"price_sats": 600}).json()["price_sats"], 600)
+            self.assertEqual(put(ALICE, f"/v1/shop/items/{card['id']}", {"price_sats": 1}).status_code, 404)
+            with self.conn.cursor() as cur:
+                cur.execute("update inscription_owners set address = %s where inscription_id = 'p1i0';", (CAROL.address,))
+            self.assertEqual(shop(), [])
+            self.assertEqual(post(ALICE, f"/v1/shop/items/{card['id']}/buy").status_code, 409)
+            with self.conn.cursor() as cur:
+                cur.execute("update inscription_owners set address = %s where inscription_id = 'p1i0';", (BOB.address,))
+            self.assertEqual(self.client.delete(f"/v1/shop/items/{card['id']}", headers=self.h(BOB)).status_code, 200)
+            self.assertEqual(shop(), [])
+
+            # The district's agent tells people about a new item, and can look the shop up to answer questions.
+            os.environ["ANTHROPIC_API_KEY"] = "test"
+            g = post(ALICE, f"/v1/districts/{DISTRICT}/agent/prepare", {}).json()
+            a = post(ALICE, f"/v1/districts/{DISTRICT}/agent", {"id": g["id"], "signature": ALICE.sign(g["message"])}).json()["agent"]
+            self.client.put(f"/v1/districts/{DISTRICT}/agent/settings", json={"tasks": ["shop"]}, headers=self.h(ALICE))
+            post(ALICE, f"/v1/districts/{DISTRICT}/shop", {**item, "title": "街区地图海报", "stock": None})
+            agent.model = fake = FakeModel([[("shop_items", {})], [("draft_post", {"task": "shop", "body": "新上架：街区地图海报，2100 聪。", "why": "new item"})]])
+            self.assertEqual(agent.run(a["id"])["drafts"], 1)
+            self.assertIn("[shop]", fake.seen[0][1][0]["content"])
+            self.assertIn("街区地图海报", fake.seen[0][1][0]["content"])
+            self.assertNotIn("街区壁纸包", fake.seen[0][1][0]["content"])  # listed before it was switched on
+            listed = json.loads(fake.seen[1][1][-1]["content"][0]["content"])
+            self.assertEqual([(x["title"], x["seller"]) for x in listed], [("街区地图海报", "owner")])
+            self.client.delete(f"/v1/districts/{DISTRICT}/agent", headers=self.h(ALICE))
+        finally:
+            tips.lnurl, agent.model = old_lnurl, old_model
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.shop_orders; delete from social.shop_items; delete from social.lightning_addresses; "
+                            "delete from social.notifications where kind in ('shop_sold', 'agent_draft'); delete from social.agent_drafts; "
+                            "delete from social.posts where agent_id is not null; delete from social.agents;")
+                for row in kept:
+                    cur.execute("insert into social.lightning_addresses (address, lightning_address) values (%s, %s);", tuple(row))
+
+    def test_metrics(self):
+        dave, eve = "bcrt1qdavemetrics", "bcrt1qevemetrics"
+        get = lambda w: self.client.get("/v1/admin/metrics?weeks=4", headers=self.h(w))
+        os.environ["ADMIN_ADDRESSES"] = CAROL.address
+        try:
+            self.assertEqual(get(ALICE).status_code, 403)
+            before = get(CAROL).json()
+            self.assertEqual((len(before["weeks"]), before["gates"]["tipped_districts"]), (4, 50))
+            with self.conn.cursor() as cur:
+                # Dave signed in two weeks ago and checks in now: returning. Eve's first post is now: new.
+                cur.execute(
+                    "insert into social.sessions (token_hash, address, created_at, expires_at) values ('m1', %s, now() - interval '14 days', now()); "
+                    "insert into social.checkins (address, bitmap_number, day) values (%s, 999, current_date); "
+                    "insert into social.posts (bitmap_number, author_address, author_role, body, media, signed_message, signature) "
+                    "values (999, %s, 'visitor', 'hi', '[]', 'm', 'metrics-sig'); "
+                    "insert into social.tips (tipper, recipient, bitmap_number, amount_sats, invoice, status, settled_at) "
+                    "values (%s, 'x', 999, 2100, 'lnbcm', 'settled', now()); "
+                    "insert into social.market_listings (inscription_id, bitmap_number, seller, price_sats, pay_to_script, outpoint, postage_sats, psbt, status) "
+                    "values ('mi0', 999, 'x', 50000, '', 'o:0', 546, '', 'sold'); "
+                    "insert into social.shop_items (bitmap_number, seller, title, price_sats, content) values (999, 'x', 't', 300, 'c') returning id;",
+                    (dave, dave, eve, eve),
+                )
+                item = cur.fetchone()[0]
+                cur.execute("insert into social.shop_orders (item_id, buyer, seller, amount_sats, invoice, verify_url, status, settled_at) "
+                            "values (%s, %s, 'x', 300, 'lnbcs', 'v', 'settled', now());", (item, eve))
+            after = get(CAROL).json()["weeks"]
+            now, then = after[-1], before["weeks"][-1]
+            delta = {k: now[k] - then[k] for k in now if k != "week"}
+            self.assertEqual((delta["tipped_districts"], delta["tip_sats"], delta["trades"], delta["trade_sats"], delta["shop_orders"], delta["shop_sats"]),
+                             (1, 2100, 1, 50000, 1, 300))
+            self.assertEqual((delta["active"], delta["returning"], delta["new"]), (2, 1, 1))
+            self.assertEqual(after[-3]["active"] - before["weeks"][-3]["active"], 1)  # Dave, two weeks ago
+        finally:
+            os.environ.pop("ADMIN_ADDRESSES", None)
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.sessions where token_hash = 'm1'; delete from social.checkins where address = %s; "
+                            "delete from social.posts where signature = 'metrics-sig'; delete from social.tips where invoice = 'lnbcm'; "
+                            "delete from social.market_listings where inscription_id = 'mi0'; delete from social.shop_orders where invoice = 'lnbcs'; "
+                            "delete from social.shop_items where content = 'c' and seller = 'x';", (dave,))
+
+    def test_nostr(self):
+        from coincurve import PublicKeyXOnly
+
+        from api import nostr, tips
+
+        class Key:
+            def __init__(self, seed):
+                self.secret = PrivateKey(bytes([seed]) * 32)
+                self.pubkey = PublicKeyXOnly.from_secret(self.secret.secret).format().hex()
+
+            def sign(self, kind, content, tags=(), created_at=None):
+                ev = {"pubkey": self.pubkey, "created_at": created_at or int(time.time()), "kind": kind, "tags": [list(t) for t in tags], "content": content}
+                ev["id"] = nostr.event_id(ev)
+                ev["sig"] = self.secret.sign_schnorr(bytes.fromhex(ev["id"])).hex()
+                return ev
+
+        bob, alice = Key(7), Key(8)
+
+        class Fake:
+            asked = []
+            zaps = True
+
+            @staticmethod
+            def pay_request(a):
+                return {"tag": "payRequest", "callback": "https://wallet.test/cb", "allowsNostr": Fake.zaps, "nostrPubkey": "ab" * 32}
+
+            @staticmethod
+            def ask_invoice(a, sats, comment, zap=None):
+                Fake.asked.append(zap)
+                return f"lnbc{sats * 10}n1zap{len(Fake.asked)}", f"https://wallet.test/z/{len(Fake.asked)}"
+
+            @staticmethod
+            def settled(url):
+                return False
+
+        old, tips.lnurl = tips.lnurl, Fake
+        try:
+            link = lambda w, ev: self.client.put("/v1/me/nostr", json={"event": ev}, headers=self.h(w))
+            # Linking takes a fresh, correctly signed event naming this address.
+            self.assertEqual(link(BOB, bob.sign(22242, nostr.link_text(ALICE.address))).status_code, 400)
+            self.assertEqual(link(BOB, bob.sign(22242, nostr.link_text(BOB.address), created_at=int(time.time()) - 3600)).status_code, 400)
+            forged = bob.sign(22242, nostr.link_text(BOB.address))
+            forged["pubkey"] = alice.pubkey
+            self.assertEqual(link(BOB, forged).status_code, 400)
+            self.assertEqual(link(BOB, bob.sign(1, nostr.link_text(BOB.address))).status_code, 400)
+            self.assertEqual(link(BOB, bob.sign(22242, nostr.link_text(BOB.address))).json(), {"pubkey": bob.pubkey})
+            self.assertEqual(self.client.get("/v1/me", headers=self.h(BOB)).json()["nostr"], bob.pubkey)
+            self.assertEqual(link(ALICE, bob.sign(22242, nostr.link_text(ALICE.address))).status_code, 409)  # one address per key
+
+            # The author records the note they published; it must be their key and carry the post.
+            post = self.post(BOB, "gm from the city").json()
+            self.assertEqual(post["author"]["nostr"], bob.pubkey)
+            mirror = lambda w, ev: self.client.post(f"/v1/posts/{post['id']}/nostr", json={"event": ev}, headers=self.h(w))
+            note = f"gm from the city\n\nhttps://unimap.test/post/{post['id']}"
+            self.assertEqual(mirror(ALICE, alice.sign(1, note)).status_code, 403)
+            self.assertEqual(mirror(BOB, alice.sign(1, note)).status_code, 400)
+            self.assertEqual(mirror(BOB, bob.sign(1, "something else https://unimap.test/post/" + str(post["id"]))).status_code, 400)
+            self.assertEqual(mirror(BOB, bob.sign(1, f"gm from the city https://unimap.test/post/{post['id']}0")).status_code, 400)
+            ev = bob.sign(1, note, [("r", f"https://unimap.test/post/{post['id']}")])
+            self.assertEqual(mirror(BOB, ev).json(), {"nostr_event_id": ev["id"]})
+            self.assertEqual(self.client.get(f"/v1/posts/{post['id']}").json()["nostr_event_id"], ev["id"])
+
+            # A tip to someone with a key and a zap-taking wallet can carry a zap request.
+            self.client.put("/v1/me/lightning", json={"lightning_address": "bob@wallet.test"}, headers=self.h(BOB))
+            target = self.client.get(f"/v1/tips/zap?post_id={post['id']}", headers=self.h(ALICE)).json()
+            self.assertEqual(target, {"zap": {"pubkey": bob.pubkey, "event_id": ev["id"]}})
+            relays = ("relays", "wss://relay.test")
+            zr = lambda **kw: alice.sign(9734, "nice", [relays, ("amount", kw.get("amount", "500000")), ("p", kw.get("p", bob.pubkey)), ("e", kw.get("e", ev["id"]))])
+            tip = lambda **body: self.client.post("/v1/tips", json={"post_id": post["id"], "amount_sats": 500, "comment": "nice", **body}, headers=self.h(ALICE))
+            self.assertEqual(tip(zap_request=zr(amount="1000")).status_code, 400)
+            self.assertEqual(tip(zap_request=zr(p=alice.pubkey)).status_code, 400)
+            self.assertEqual(tip(zap_request=zr(e="00" * 32)).status_code, 400)
+            self.assertEqual(tip(zap_request=alice.sign(9734, "", [("p", bob.pubkey)])).status_code, 400)  # no relays
+            good = zr()
+            t = tip(zap_request=good).json()
+            self.assertTrue(t["zap"])
+            self.assertEqual(json.loads(Fake.asked[-1]), good)
+            self.assertFalse(tip().json()["zap"])  # without one it is a plain tip
+            self.assertIsNone(Fake.asked[-1])
+            # No zaps when the wallet doesn't take them, or the recipient has no key.
+            Fake.zaps = False
+            self.assertEqual(self.client.get(f"/v1/tips/zap?post_id={post['id']}", headers=self.h(ALICE)).json(), {"zap": None})
+            Fake.zaps = True
+            self.assertEqual(self.client.delete("/v1/me/nostr", headers=self.h(BOB)).json(), {"pubkey": None})
+            self.assertEqual(self.client.get(f"/v1/tips/zap?post_id={post['id']}", headers=self.h(ALICE)).json(), {"zap": None})
+            self.assertEqual(tip(zap_request=good).status_code, 400)
+        finally:
+            tips.lnurl = old
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.tips; delete from social.lightning_addresses; delete from social.nostr_keys; "
+                            "update social.posts set nostr_event_id = null;")
 
     def test_lnurl_checks(self):
         from api import tips

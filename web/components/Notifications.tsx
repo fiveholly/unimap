@@ -121,10 +121,39 @@ function sentence(item: Item): [React.ReactNode, string] {
         tn("你在 {place} 第 {n} 赛季的街区活动里获奖了，主人 {who} 会用闪电把奖金发给你", { place, n: Math.floor((n.block_height ?? 0) / SEASON), who }),
         `/district/${n.bitmap_number}?tab=contests`,
       ];
+    case "offer":
+      return [tn("{who} 给你的 {place} 出了价，去看看", { who, place }), `/district/${n.bitmap_number}`];
+    case "offer_accepted":
+      return [tn("{who} 接受了你对 {place} 的出价，交易已经发出", { who, place }), `/district/${n.bitmap_number}`];
     case "agent_draft":
-      return [tn("你的街区 {place} 的 agent 写好了草稿，等你确认", { place }), `/district/${n.bitmap_number}?tab=agent`];
+      return [
+        n.agent_parcel != null
+          ? tn("你在 {place} 的地块 #{i} 的 agent 写好了草稿，等你确认", { place, i: n.agent_parcel })
+          : tn("你的街区 {place} 的 agent 写好了草稿，等你确认", { place }),
+        `/district/${n.bitmap_number}?tab=agent`,
+      ];
+    case "agent_posted":
+      return [
+        n.agent_parcel != null
+          ? tn("你在 {place} 的地块 #{i} 的 agent 自己发了帖子", { place, i: n.agent_parcel })
+          : tn("你的街区 {place} 的 agent 自己发了帖子", { place }),
+        n.post_id ? `/post/${n.post_id}` : `/district/${n.bitmap_number}?tab=agent`,
+      ];
+    case "shop_sold": {
+      const sats = <b className="mono tip-amount">{(n.amount_sats ?? 0).toLocaleString("en-US")}</b>;
+      return [tn("{who} 在 {place} 的店铺买了你的「{title}」，{sats} 聪", { who, place, title: n.title ?? "", sats }), `/district/${n.bitmap_number}?tab=shop`];
+    }
     case "agent_alert":
-      return [tn("你的街区 agent 发现 {place} 在售，价格在你设的范围内", { place }), `/district/${n.bitmap_number}`];
+      return [
+        n.agent_parcel != null
+          ? tn("你的地块 agent 发现 {place} 在售，价格在你设的范围内", { place })
+          : tn("你的街区 agent 发现 {place} 在售，价格在你设的范围内", { place }),
+        `/district/${n.bitmap_number}`,
+      ];
+    case "tenant":
+      return [tn("{who} 同意你暂住在 {place}，现在可以在那里发帖和投票了", { who, place }), `/district/${n.bitmap_number}`];
+    case "pat":
+      return [tn("{who} 来摸了摸你的宠物", { who }), "/me"];
     case "lucky":
       return [
         tn("区块 {h} 抽中你的街区 {place} 做今日幸运街区，你得到一枚徽章", { h: <span className="mono">{(n.block_height ?? 0).toLocaleString("en-US")}</span>, place }),
