@@ -14,6 +14,7 @@ export type ProsperityParts = {
   neighbors30: number; // posts in the 5 districts on each side, last 30 days
   tippers30: number; // people who tipped sats here, last 30 days
   lucky: number; // 1 while it is the lucky district (lib/game.ts)
+  pets: number; // levels above 1 of the pets its owner shows here (api/pets.py care_points)
 };
 
 export type Prosperity = { score: number; level: Level; parts: ProsperityParts; next: number | null };
@@ -28,6 +29,7 @@ export const WEIGHTS: Record<keyof ProsperityParts, number> = {
   neighbors30: 0.3,
   tippers30: 2,
   lucky: 30,
+  pets: 1,
 };
 export const PART_NAMES: Record<keyof ProsperityParts, string> = {
   residents: "居民",
@@ -38,6 +40,7 @@ export const PART_NAMES: Record<keyof ProsperityParts, string> = {
   neighbors30: "邻居的热闹",
   tippers30: "近 30 天打赏的人",
   lucky: "今日幸运街区",
+  pets: "宠物等级",
 };
 
 /** Score needed for each level; level 1 is where every district starts. */
