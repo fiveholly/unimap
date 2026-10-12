@@ -6,6 +6,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useTip } from "@/components/BlockWatch";
 import { CityMap } from "@/components/CityMap";
 import { LuckyStrip } from "@/components/GameBits";
+import { Today } from "@/components/Today";
 import { TourCard } from "@/components/Tour";
 import { Welcome } from "@/components/Welcome";
 import { LAND, WorldMap } from "@/components/WorldMap";
@@ -113,6 +114,7 @@ function HomeView() {
           </aside>
         </div>
       )}
+      {tip != null && <Today />}
       {tip != null && <LuckyStrip tip={tip} />}
       {tip != null && <TourCard />}
       {tip != null && <Welcome tip={tip} />}

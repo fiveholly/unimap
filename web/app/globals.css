@@ -3447,3 +3447,48 @@ h1 .worn-badge {
 .badge-list li.worn {
   border-color: var(--accent);
 }
+
+/* 今天可以做的事 */
+.today {
+  margin: 12px 0;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  border-radius: 12px;
+  background: var(--surface);
+}
+.today .section-title {
+  margin: 0 0 8px;
+}
+.today ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.today li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.today li:first-child {
+  border-top: 0;
+}
+.today li.done .grow {
+  color: var(--fg-2);
+  text-decoration: line-through;
+}
+.today-check {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  font-size: 11px;
+  color: var(--accent);
+}
+.today li.done .today-check {
+  border-color: var(--accent);
+}
