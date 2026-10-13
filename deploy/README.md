@@ -66,7 +66,9 @@
 | `unimap-agent` | 街区 agent：定时起草帖子、提醒挂单（没设 `ANTHROPIC_API_KEY` 时什么也不做） | |
 | `unimap-web` | 网站 | 3000 |
 
-Caddy 把 `https://域名/v1/*` 转给 API，其余转给网站。网站和 API 同源，所以不需要跨域设置。
+Caddy 把 `https://域名/v1/*` 转给 API，其余转给网站。网站和 API 同源，所以不需要跨域设置。Caddy 还给所有响应加上安全头（HSTS、CSP、禁止被嵌入等，见 `Caddyfile` 里的注释）。网站要加载新的外部脚本、框架或连接时，记得同时改 CSP。
+
+所有服务都以 `unimap` 用户运行，并开了 systemd 沙箱：整个文件系统只读，只有节点和两个 ord 能写 `DATA_DIR` 下各自的目录，网站能写 `web/.next`；`/home` 不可见。因此 `DATA_DIR` 不能放在 `/home` 下。脚本以 root 运行时，写进 `/etc` 的配置和服务文件都取自你运行脚本的这个仓库目录，而不是 unimap 可写的 `/opt/unimap/src`；`/opt/unimap`、`/opt/unimap/bin` 和 `/opt/unimap/node` 归 root 所有。
 
 常用命令：
 

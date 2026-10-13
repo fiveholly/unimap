@@ -1,6 +1,24 @@
 # install.sh copies this to /etc/caddy/Caddyfile. Caddy fetches the TLS certificate itself.
 @DOMAIN@ {
 	encode zstd gzip
+	# Security headers on every response, the API's included. The CSP is what the web app needs:
+	# - script-src: Next.js puts its bootstrap data in inline <script> tags, and without nonces
+	#   that needs 'unsafe-inline'; platform.twitter.com serves widgets.js for embedded posts.
+	# - style-src: React style attributes and the tweet widget's injected styles are inline.
+	# - img-src: posts, district covers, X avatars and pets may link images on any https host
+	#   (inscription content, ordiscan, hiro), so this stays open to https: rather than a list.
+	# - connect-src: the API is on this origin; Nostr relays are whatever wss:// relays the
+	#   person's extension lists.
+	# - frame-src: embedded posts are iframes from platform.twitter.com / syndication.twitter.com.
+	# The Lightning QR code is inline SVG and wallets are browser extensions, so neither needs more.
+	header {
+		defer
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://platform.twitter.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' wss:; frame-src https://platform.twitter.com https://syndication.twitter.com; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'"
+	}
 	# The API answers under /v1, the web app everything else, on one origin.
 	handle /v1/* {
 		reverse_proxy 127.0.0.1:8000

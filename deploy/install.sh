@@ -47,7 +47,14 @@ apt-get install -y -q build-essential pkg-config libssl-dev clang git curl jq rs
   postgresql python3-venv python3-dev caddy
 
 id unimap >/dev/null 2>&1 || useradd --system --create-home --home-dir /home/unimap --shell /usr/sbin/nologin unimap
-install -d -o unimap -g unimap "$OPT" "$OPT/bin" "$DATA_DIR" "$DATA_DIR/bitcoin" "$DATA_DIR/ord" "$DATA_DIR/opi-ord"
+# Root runs the binaries in $OPT/bin and $OPT/node (version checks, status.sh), so those and $OPT
+# itself stay root-owned; unimap only gets the directories it builds into. Everything root
+# installs into /etc below comes from this checkout ($ROOT), never from the unimap-owned copy.
+install -d -o root -g root -m 755 "$OPT" "$OPT/bin"
+[ ! -d "$OPT/node" ] || chown -R root:root "$OPT/node"
+chown -R root:root "$OPT/bin"
+install -d -o unimap -g unimap "$OPT/src" "$OPT/opi" "$OPT/venv" "$OPT/opi-venv" \
+  "$DATA_DIR" "$DATA_DIR/bitcoin" "$DATA_DIR/ord" "$DATA_DIR/opi-ord"
 as_unimap() { sudo -u unimap -H --preserve-env=HTTPS_PROXY,HTTP_PROXY,NO_PROXY,NODE_EXTRA_CA_CERTS env PATH="$OPT/node/bin:/home/unimap/.cargo/bin:/usr/local/bin:/usr/bin:/bin" "$@"; }
 
 DL=$(mktemp -d)
@@ -79,8 +86,8 @@ if [ "$("$OPT/node/bin/node" --version 2>/dev/null)" != "v$NODE_VERSION" ]; then
   curl -fsSL -o "$DL/$f" "https://nodejs.org/dist/v$NODE_VERSION/$f"
   curl -fsSL -o "$DL/SHASUMS256.txt" "https://nodejs.org/dist/v$NODE_VERSION/SHASUMS256.txt"
   (cd "$DL" && grep " $f\$" SHASUMS256.txt | sha256sum -c -)
-  rm -rf "$OPT/node" && install -d -o unimap -g unimap "$OPT/node"
-  tar -xJf "$DL/$f" -C "$OPT/node" --strip-components 1
+  rm -rf "$OPT/node" && install -d -m 755 "$OPT/node"
+  tar -xJf "$DL/$f" -C "$OPT/node" --strip-components 1 --no-same-owner
 fi
 ln -sf "$OPT/node/bin/node" /usr/local/bin/node
 ln -sf "$OPT/node/bin/npm" /usr/local/bin/npm
@@ -111,25 +118,32 @@ pg -tc "select 1 from pg_database where datname = '$DB_DATABASE'" | grep -q 1 ||
   pg -c "create database \"$DB_DATABASE\" owner \"$DB_USER\""
 upg() { PGPASSWORD="$DB_PASSWD" psql -v ON_ERROR_STOP=1 -q -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" "$DB_DATABASE" "$@"; }
 # OPI's schema has no IF NOT EXISTS, so only on a fresh database; ours are safe to re-run.
-upg -tc "select to_regclass('public.bitmaps')" | grep -q bitmaps || upg -f "$OPT/opi/modules/bitmap_index/db_init.sql"
-upg -f "$OPT/src/parcel_index/db_init.sql"
-upg -f "$OPT/src/api/social.sql"
+# OPI's checkout belongs to unimap, so its schema is run as unimap (psql's \! runs shell commands).
+upg -tc "select to_regclass('public.bitmaps')" | grep -q bitmaps ||
+  PGPASSWORD="$DB_PASSWD" sudo -u unimap -H --preserve-env=PGPASSWORD psql -v ON_ERROR_STOP=1 -q -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" "$DB_DATABASE" \
+    -f "$OPT/opi/modules/bitmap_index/db_init.sql"
+upg -f "$ROOT/parcel_index/db_init.sql"
+upg -f "$ROOT/api/social.sql"
 
 # ---- config files -------------------------------------------------------------
 dbcache=$(( $(awk '/MemTotal/ {print $2}' /proc/meminfo) / 1024 / 4 ))
 sed -e "s|@BITCOIN_RPC_USER@|$BITCOIN_RPC_USER|" -e "s|@BITCOIN_RPC_PASSWD@|$BITCOIN_RPC_PASSWD|" -e "s|@DBCACHE@|$dbcache|" \
-  "$OPT/src/deploy/bitcoin.conf.template" >/etc/unimap/bitcoin.conf
+  "$ROOT/deploy/bitcoin.conf.template" >/etc/unimap/bitcoin.conf
 printf 'ORD_BITCOIN_RPC_URL=127.0.0.1:8332\nORD_BITCOIN_RPC_USERNAME=%s\nORD_BITCOIN_RPC_PASSWORD=%s\n' \
   "$BITCOIN_RPC_USER" "$BITCOIN_RPC_PASSWD" >/etc/unimap/ord.env
 chown root:unimap /etc/unimap/*.env /etc/unimap/bitcoin.conf
 chmod 640 /etc/unimap/*.env /etc/unimap/bitcoin.conf
-sed "s|@DOMAIN@|$DOMAIN|" "$OPT/src/deploy/Caddyfile" >/etc/caddy/Caddyfile
+sed "s|@DOMAIN@|$DOMAIN|" "$ROOT/deploy/Caddyfile" >/etc/caddy/Caddyfile
 
 # ---- web app ------------------------------------------------------------------
 (cd "$OPT/src/web" && as_unimap npm ci --no-audit --no-fund && as_unimap env NEXT_PUBLIC_API_URL="https://$DOMAIN" NEXT_PUBLIC_SITE_URL="https://$DOMAIN" npm run build)
 
 # ---- services -----------------------------------------------------------------
-install -m 644 "$OPT/src/deploy/systemd/"*.service /etc/systemd/system/
+# The units' sandboxing names the data directories, which systemd can't read from the env file.
+for u in "$ROOT/deploy/systemd/"*.service; do
+  sed "s|@DATA_DIR@|$DATA_DIR|g" "$u" >"/etc/systemd/system/$(basename "$u")"
+  chmod 644 "/etc/systemd/system/$(basename "$u")"
+done
 systemctl daemon-reload
 # The node and the two ord indexers are only started if they aren't running: restarting them
 # costs minutes of cache flushing. Pass --restart-all after changing their versions.
@@ -144,5 +158,5 @@ done
 systemctl reload-or-restart caddy
 
 echo
-echo "Started. The first mainnet sync takes days; follow it with: $OPT/src/deploy/status.sh"
+echo "Started. The first mainnet sync takes days; follow it with: sudo $ROOT/deploy/status.sh"
 echo "Site: https://$DOMAIN (the map fills in as the indexers catch up)"
