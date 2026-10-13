@@ -563,6 +563,7 @@ def discard(draft_id: int, address: str = Depends(current_address)):
 # --- paying for it ------------------------------------------------------------------------------
 
 
+# The generic payment flow in api/billing.py came later; this could become a product there one day.
 @router.post("/v1/districts/{bitmap_number}/agent/pay")
 def pay(bitmap_number: int, parcel: int | None = None, address: str = Depends(current_address)):
     """An invoice from unimap's Lightning wallet for PAID_DAYS more of the agent."""

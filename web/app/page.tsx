@@ -9,6 +9,7 @@ import { LuckyStrip } from "@/components/GameBits";
 import { Today } from "@/components/Today";
 import { TourCard } from "@/components/Tour";
 import { OpenedList } from "@/components/Opening";
+import { Promoted } from "@/components/Promoted";
 import { Welcome } from "@/components/Welcome";
 import { LAND, WorldMap } from "@/components/WorldMap";
 import { epochName } from "@/lib/format";
@@ -118,6 +119,7 @@ function HomeView() {
       {tip != null && <Today />}
       {tip != null && <LuckyStrip tip={tip} />}
       {tip != null && <TourCard />}
+      {tip != null && <Promoted />}
       {tip != null && <OpenedList />}
       {tip != null && <Welcome tip={tip} />}
     </div>

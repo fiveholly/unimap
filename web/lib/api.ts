@@ -372,7 +372,12 @@ export type Contest = {
   created_at: string;
   standings?: { address: string; score: number }[];
   winners?: { place: number; address: string; score: number; prize_sats: number; paid: "settled" | "pending" | null }[];
+  sponsor?: Sponsor;
 };
+/** A sponsor named on the season's pool or an event: plain text, with an https link when given. */
+export type Sponsor = { name: string; url: string | null };
+/** 推广 (api/billing.py): a district a site admin put in a slot. */
+export type Promotion = { bitmap_number: number; name: string; note: string; ends_at: string | null };
 export type SeasonRow = { bitmap_number: number; owner: string | null; score: number; parts?: Record<"posts" | "replies" | "checkins", number> };
 export type Season = {
   number: number | null;
@@ -385,6 +390,7 @@ export type Season = {
   weights: Record<"posts" | "replies" | "checkins", number>;
   pool_sats: number;
   pool_split: number[];
+  sponsor?: Sponsor | null;
 };
 
 /** 指标 (api/metrics.py), for site admins. */

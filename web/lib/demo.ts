@@ -1111,6 +1111,7 @@ function route(path: string, opts: Opts): unknown {
     return { worn: b ? { id, kind: b.kind, rarity: b.rarity } : null };
   }
   if (p === "/v1/season") return seasonView();
+  if (p === "/v1/promotions") return { promotions: [] }; // nothing is promoted in the demo, as on a new server
   if ((m = p.match(/^\/v1\/game\/treasures\/(\d+)\/open$/)) && method === "POST") {
     const a = needMe(), h = +m[1], d = drawAt(h);
     if (h > demoTip() || d.bitmap_number == null) fail(404, "no treasure at this block");

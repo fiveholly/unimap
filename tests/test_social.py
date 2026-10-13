@@ -2537,5 +2537,234 @@ class SocialApi(unittest.TestCase):
             with self.assertRaises(tips.LnurlError, msg=url):
                 tips._get(url)
 
+    # --- platform billing hooks (api/billing.py): all off by default ---
+
+    def test_billing_payments_and_entitlements(self):
+        from api import billing, tips
+
+        class Fake:
+            paid = set()
+            asked = []
+            pay_request = staticmethod(lambda a: {"tag": "payRequest"})
+
+            @staticmethod
+            def ask_invoice(a, sats, comment):
+                Fake.asked.append((a, sats, comment))
+                return f"lnbc{sats * 10}n1bill{len(Fake.asked)}", f"https://wallet.test/bill/{len(Fake.asked)}"
+
+            settled = staticmethod(lambda url: url in Fake.paid)
+
+        dave = Wallet(4)
+        saved, tips.lnurl = tips.lnurl, Fake
+        os.environ["ADMIN_ADDRESSES"] = CAROL.address
+        pay = lambda w, **body: self.client.post("/v1/billing/pay", json=body, headers=self.h(w))
+        try:
+            # Nothing for sale by default; a priced product needs somewhere to be paid too.
+            self.assertEqual(self.client.get("/v1/billing/products").json(), {"products": [], "cosmetics": False})
+            self.assertEqual(pay(ALICE, product="promotion", ref="100").status_code, 409)
+            self.assertEqual(pay(ALICE, product="nope").status_code, 404)
+            os.environ["BILLING_PRICE_PROMOTION_SATS"] = "5000"
+            self.assertEqual(self.client.get("/v1/billing/products").json()["products"], [])
+            os.environ["AGENT_LIGHTNING_ADDRESS"] = "agents@unimap.test"
+            os.environ["PLATFORM_LIGHTNING_ADDRESS"] = "Pay@Unimap.test"
+            self.assertEqual(self.client.get("/v1/billing/products").json()["products"], [{"product": "promotion", "amount_sats": 5000}])
+            # Style options sell only while cosmetics are switched on.
+            os.environ["BILLING_PRICE_STYLE_SATS"] = "1000"
+            self.assertEqual(len(self.client.get("/v1/billing/products").json()["products"]), 1)
+
+            # A promotion is bought for a district the payer owns; paid, it waits for an admin.
+            self.assertEqual(pay(BOB, product="promotion", ref="100").status_code, 403)
+            bill = pay(ALICE, product="promotion", ref="100").json()
+            self.assertEqual((bill["invoice"], bill["status"], Fake.asked[-1]), ("lnbc50000n1bill1", "pending", ("pay@unimap.test", 5000, "unimap promotion 100")))
+            status = lambda w: self.client.get(f"/v1/billing/payments/{bill['id']}", headers=self.h(w))
+            self.assertEqual(status(BOB).status_code, 404)
+            self.assertEqual(status(ALICE).json()["status"], "pending")
+            Fake.paid.add("https://wallet.test/bill/1")
+            self.assertEqual(status(ALICE).json()["status"], "pending")  # checked a moment ago; asked again in a few seconds
+            with self.conn.cursor() as cur:
+                cur.execute("update social.payments set checked_at = null;")
+            self.assertEqual(status(ALICE).json()["status"], "settled")
+            self.assertEqual(self.client.get("/v1/promotions?slot=home").json(), {"promotions": []})
+            waiting = self.client.get("/v1/admin/promotions", headers=self.h(CAROL)).json()["promotions"]
+            self.assertEqual([(p["bitmap_number"], p["starts_at"], p["payment_id"]) for p in waiting], [(100, None, bill["id"])])
+            self.assertEqual(self.client.post(f"/v1/admin/promotions/{waiting[0]['id']}/approve", json={"days": 3}, headers=self.h(ALICE)).status_code, 403)
+            self.client.post(f"/v1/admin/promotions/{waiting[0]['id']}/approve", json={"days": 3}, headers=self.h(CAROL))
+            self.assertEqual([p["bitmap_number"] for p in self.client.get("/v1/promotions").json()["promotions"]], [100])
+
+            # An unpaid invoice gets one last look after the hour, then expires.
+            late = pay(ALICE, product="promotion", ref="100").json()
+            with self.conn.cursor() as cur:
+                cur.execute("update social.payments set created_at = now() - interval '2 hours' where id = %s;", (late["id"],))
+            self.assertEqual(self.client.get(f"/v1/billing/payments/{late['id']}", headers=self.h(ALICE)).json()["status"], "expired")
+            # Paid at the last minute still counts.
+            last = pay(ALICE, product="promotion", ref="100").json()
+            Fake.paid.add(f"https://wallet.test/bill/{len(Fake.asked)}")
+            with self.conn.cursor() as cur:
+                cur.execute("update social.payments set created_at = now() - interval '2 hours' where id = %s;", (last["id"],))
+            self.assertEqual(self.client.get(f"/v1/billing/payments/{last['id']}", headers=self.h(ALICE)).json()["status"], "settled")
+            # Asking for invoices is rate limited per wallet group.
+            for _ in range(billing.PAY_PER_10_MINUTES - 1):  # the two above are hours old
+                pay(ALICE, product="promotion", ref="100")
+            self.assertEqual(pay(ALICE, product="promotion", ref="100").status_code, 429)
+
+            # Entitlements: granted by an admin, counted across linked wallets, until they expire.
+            self.assertFalse(self._has(dave.address, "style:gold"))
+            g = self.client.post("/v1/admin/entitlements", json={"address": CAROL.address, "item": "style:gold", "days": 30}, headers=self.h(CAROL)).json()
+            self.assertEqual(self.client.post("/v1/admin/entitlements", json={"address": CAROL.address, "item": "style:gold", "source": "gift"},
+                                              headers=self.h(CAROL)).status_code, 400)
+            self.assertEqual(self.client.post("/v1/admin/entitlements", json={"address": CAROL.address, "item": "x"}, headers=self.h(BOB)).status_code, 403)
+            with self.conn.cursor() as cur:
+                cur.execute("insert into social.wallet_links (address, main_address) values (%s, %s);", (dave.address, CAROL.address))
+            self.assertTrue(self._has(dave.address, "style:gold"))
+            self.assertEqual([e["item"] for e in self.client.get("/v1/me/entitlements", headers=self.h(CAROL)).json()["entitlements"]], ["style:gold"])
+            with self.conn.cursor() as cur:
+                cur.execute("update social.entitlements set expires_at = now() - interval '1 second' where id = %s;", (g["id"],))
+            self.assertFalse(self._has(CAROL.address, "style:gold"))
+            g = self.client.post("/v1/admin/entitlements", json={"address": dave.address, "item": "style:gold"}, headers=self.h(CAROL)).json()
+            self.assertTrue(self._has(CAROL.address, "style:gold"))
+            self.client.delete(f"/v1/admin/entitlements/{g['id']}", headers=self.h(CAROL))
+            self.assertFalse(self._has(CAROL.address, "style:gold"))
+
+            # Revenue: confirmed payments by month and product, the agent's included.
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.agent_payments;")  # test_agent's
+                cur.execute("insert into social.agent_payments (agent_id, payer, amount_sats, invoice, verify_url, status, settled_at) "
+                            "values (1, %s, 2100, 'lnbc', 'https://x', 'settled', now());", (ALICE.address,))
+            self.assertEqual(self.client.get("/v1/admin/revenue", headers=self.h(ALICE)).status_code, 403)
+            r = self.client.get("/v1/admin/revenue", headers=self.h(CAROL)).json()
+            self.assertEqual({(m["product"], m["payments"], m["sats"]) for m in r["months"]}, {("agent", 1, 2100), ("promotion", 2, 10000)})
+            self.assertEqual(r["total_sats"], 12100)
+            self.assertIn("on-chain", r["note"])
+        finally:
+            tips.lnurl = saved
+            for k in ("ADMIN_ADDRESSES", "BILLING_PRICE_PROMOTION_SATS", "BILLING_PRICE_STYLE_SATS", "AGENT_LIGHTNING_ADDRESS", "PLATFORM_LIGHTNING_ADDRESS"):
+                os.environ.pop(k, None)
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.payments; delete from social.entitlements; delete from social.promotions; "
+                            "delete from social.agent_payments; delete from social.wallet_links;")
+
+    def _has(self, address, item):
+        from api import billing
+
+        with self.conn.cursor() as cur:
+            return billing.has(cur, address, item)
+
+    def test_premium_cosmetics(self):
+        from api import style, tips
+
+        class Fake:
+            paid = set()
+            pay_request = staticmethod(lambda a: {"tag": "payRequest"})
+            ask_invoice = staticmethod(lambda a, sats, comment: (f"lnbc{sats * 10}n1style", "https://wallet.test/style"))
+            settled = staticmethod(lambda url: url in Fake.paid)
+
+        put = lambda color: self.client.put(f"/v1/districts/{DISTRICT}/style", json={"color": color, "deco": ["flag"]}, headers=self.h(ALICE))
+        saved, tips.lnurl = tips.lnurl, Fake
+        style.PREMIUM.add("red")
+        try:
+            # Marked premium, but with BILLING_COSMETICS off it is free as before.
+            self.assertEqual(put("red").status_code, 200)
+            os.environ["BILLING_COSMETICS"] = "1"
+            self.assertEqual(put("red").status_code, 402)
+            self.assertEqual(put("blue").status_code, 200)  # other options stay free
+            # Bought: the paid payment grants style:red.
+            os.environ.update(BILLING_PRICE_STYLE_SATS="1000", PLATFORM_LIGHTNING_ADDRESS="pay@unimap.test")
+            self.assertEqual(self.client.post("/v1/billing/pay", json={"product": "style", "ref": "blue"}, headers=self.h(ALICE)).status_code, 404)
+            bill = self.client.post("/v1/billing/pay", json={"product": "style", "ref": "red"}, headers=self.h(ALICE)).json()
+            Fake.paid.add("https://wallet.test/style")
+            self.assertEqual(self.client.get(f"/v1/billing/payments/{bill['id']}", headers=self.h(ALICE)).json()["status"], "settled")
+            self.assertEqual(put("red").status_code, 200)
+            self.assertEqual(self.client.post("/v1/billing/pay", json={"product": "style", "ref": "red"}, headers=self.h(ALICE)).status_code, 409)
+        finally:
+            tips.lnurl = saved
+            style.PREMIUM.discard("red")
+            for k in ("BILLING_COSMETICS", "BILLING_PRICE_STYLE_SATS", "PLATFORM_LIGHTNING_ADDRESS"):
+                os.environ.pop(k, None)
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.payments; delete from social.entitlements; update social.profiles set style = null where bitmap_number = %s;", (DISTRICT,))
+
+    def test_promotions(self):
+        os.environ["ADMIN_ADDRESSES"] = CAROL.address
+        try:
+            self.assertEqual(self.client.get("/v1/promotions?slot=home").json(), {"promotions": []})
+            self.assertEqual(self.client.post("/v1/admin/promotions", json={"bitmap_number": 105}, headers=self.h(ALICE)).status_code, 403)
+            self.assertEqual(self.client.post("/v1/admin/promotions", json={"bitmap_number": 105, "slot": "sidebar"}, headers=self.h(CAROL)).status_code, 400)
+            p = self.client.post("/v1/admin/promotions", json={"bitmap_number": 105, "note": " 新开张 "}, headers=self.h(CAROL)).json()
+            self.client.post("/v1/admin/promotions", json={"bitmap_number": 100, "starts_at": "2099-01-01T00:00:00Z"}, headers=self.h(CAROL))
+            self.client.post("/v1/admin/promotions", json={"bitmap_number": 999, "starts_at": "2020-01-01T00:00:00Z", "ends_at": "2020-01-08T00:00:00Z"},
+                             headers=self.h(CAROL))
+            # Only what runs now shows; one not started yet, or over, doesn't.
+            self.assertEqual(self.client.get("/v1/promotions").json()["promotions"], [
+                {"bitmap_number": 105, "name": "105.bitmap", "note": "新开张", "ends_at": p["ends_at"]}])
+            self.assertEqual(self.client.get("/v1/promotions?slot=other").json()["promotions"], [])
+            self.client.delete(f"/v1/admin/promotions/{p['id']}", headers=self.h(CAROL))
+            self.assertEqual(self.client.get("/v1/promotions").json()["promotions"], [])
+        finally:
+            os.environ.pop("ADMIN_ADDRESSES", None)
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.promotions;")
+
+    def test_sponsors(self):
+        hashes = {h: f"{h:061x}def" for h in range(1958, 2102)}
+        with self.conn.cursor() as cur:
+            cur.execute("insert into bitmap_block_hashes (block_height, block_hash) values (2100, 'h2100');")
+            cur.execute("insert into parcel_block_hashes (block_height, block_hash) select * from unnest(%s::int[], %s::text[]);", (list(hashes), list(hashes.values())))
+        try:
+            self.assertIsNone(self.client.get("/v1/season").json()["sponsor"])
+            os.environ.update(GAME_SEASON_SPONSOR_NAME=" 某矿池 ", GAME_SEASON_SPONSOR_URL="http://pool.example")
+            self.assertEqual(self.client.get("/v1/season").json()["sponsor"], {"name": "某矿池", "url": None})  # https only
+            os.environ["GAME_SEASON_SPONSOR_URL"] = "https://pool.example/"
+            self.assertEqual(self.client.get("/v1/season").json()["sponsor"], {"name": "某矿池", "url": "https://pool.example/"})
+            make = lambda **body: self.client.post("/v1/districts/100/events", json={"metric": "posts", "prizes": [300], **body}, headers=self.h(ALICE))
+            self.assertEqual(make(sponsor_name="Shop", sponsor_url="javascript:alert(1)").status_code, 400)
+            self.assertEqual(make(sponsor_url="https://shop.example").status_code, 400)  # a link needs a name
+            plain = make(next_season=True).json()
+            self.assertNotIn("sponsor", plain)
+            self.client.delete(f"/v1/events/{plain['id']}", headers=self.h(ALICE))
+            ev = make(sponsor_name=" Shop ", sponsor_url="https://shop.example").json()
+            self.assertEqual(ev["sponsor"], {"name": "Shop", "url": "https://shop.example"})
+            listed = {e["id"]: e for e in self.client.get("/v1/districts/100/events").json()["events"]}
+            self.assertEqual((listed[ev["id"]]["sponsor"]["name"], "sponsor" in listed[plain["id"]]), ("Shop", False))
+        finally:
+            os.environ.pop("GAME_SEASON_SPONSOR_NAME", None)
+            os.environ.pop("GAME_SEASON_SPONSOR_URL", None)
+            with self.conn.cursor() as cur:
+                cur.execute("delete from bitmap_block_hashes where block_height = 2100; delete from parcel_block_hashes; delete from social.block_draws; "
+                            "delete from social.badges; delete from social.seasons; delete from social.events; "
+                            "delete from social.notifications where kind in ('treasure', 'lucky', 'crown', 'event_win');")
+
+    def test_api_key_tier(self):
+        os.environ.update(ADMIN_ADDRESSES=CAROL.address, RATE_LIMIT_KEY_WRITES="4", RATE_LIMIT_KEY_WRITES_PRO="6")
+        follow = lambda headers={}: self.client.put(f"/v1/districts/{OTHER}/follow", headers={**self.h(BOB), **headers}).status_code
+        try:
+            self.assertEqual(self.client.post("/v1/admin/api-keys", json={"tier": "pro"}, headers=self.h(ALICE)).status_code, 403)
+            basic = self.client.post("/v1/admin/api-keys", json={"owner": "data buyer"}, headers=self.h(CAROL)).json()
+            pro = self.client.post("/v1/admin/api-keys", json={"tier": "pro"}, headers=self.h(CAROL)).json()
+            self.assertTrue(basic["key"].startswith("um_"))
+            listed = self.client.get("/v1/admin/api-keys", headers=self.h(CAROL)).json()["keys"]
+            self.assertNotIn(basic["key"], json.dumps(listed))  # shown once, only the hash is kept
+            os.environ["RATE_LIMIT_WRITES"] = "2"
+            self.assertEqual([follow({"X-API-Key": basic["key"]}) for _ in range(5)], [200] * 4 + [429])
+            self.assertEqual([follow({"X-API-Key": pro["key"]}) for _ in range(7)], [200] * 6 + [429])
+            # A wrong or revoked key gets the per-IP limit.
+            self.assertEqual([follow({"X-API-Key": "um_wrong"}) for _ in range(3)], [200, 200, 429])
+            os.environ["RATE_LIMIT_WRITES"] = "0"
+            self.client.delete(f"/v1/admin/api-keys/{pro['id']}", headers=self.h(CAROL))
+            os.environ["RATE_LIMIT_WRITES"] = "1"
+            self.assertEqual([follow({"X-API-Key": pro["key"]}) for _ in range(2)], [429, 429])  # this IP's bucket is spent
+            self.assertEqual(self.client.get(f"/v1/districts/{OTHER}").status_code, 200)  # reads need no key
+        finally:
+            for k in ("ADMIN_ADDRESSES", "RATE_LIMIT_KEY_WRITES", "RATE_LIMIT_KEY_WRITES_PRO"):
+                os.environ.pop(k, None)
+            os.environ["RATE_LIMIT_WRITES"] = "0"
+            self.client.delete(f"/v1/districts/{OTHER}/follow", headers=self.h(BOB))
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.api_keys;")
+            limiter = self.client.app.middleware_stack
+            while not hasattr(limiter, "buckets"):
+                limiter = limiter.app
+            limiter.buckets.clear()  # test_ip_rate_limit starts from a full bucket
+
+
 if __name__ == "__main__":
     unittest.main()

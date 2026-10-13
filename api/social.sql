@@ -667,3 +667,68 @@ CREATE TABLE IF NOT EXISTS social.agent_calls (
 	calls int4 NOT NULL DEFAULT 0,
 	CONSTRAINT agent_calls_pk PRIMARY KEY (day, owner)
 );
+
+-- 平台收费 (api/billing.py): payments to unimap's own Lightning wallet for its paid products.
+-- Nothing is for sale until a BILLING_PRICE_<PRODUCT>_SATS is set, so by default this stays empty.
+CREATE TABLE IF NOT EXISTS social.payments (
+	id bigserial NOT NULL,
+	payer text NOT NULL, -- the main address of the payer's wallet group
+	product text NOT NULL, -- a key of billing.PRODUCTS
+	ref text NOT NULL DEFAULT '', -- what of the product: a style option, a district number
+	amount_sats int8 NOT NULL,
+	invoice text NOT NULL,
+	verify_url text NOT NULL,
+	status text NOT NULL DEFAULT 'pending', -- pending | settled | expired
+	checked_at timestamptz NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	settled_at timestamptz NULL,
+	CONSTRAINT payments_pk PRIMARY KEY (id)
+);
+CREATE INDEX IF NOT EXISTS payments_payer_idx ON social.payments USING btree (payer, created_at);
+CREATE INDEX IF NOT EXISTS payments_settled_idx ON social.payments USING btree (settled_at) WHERE status = 'settled';
+
+-- What an address may use (api/billing.py): a premium style option, say. Granted free, paid,
+-- by a sponsor or by an admin; checked across the owner's linked wallets.
+CREATE TABLE IF NOT EXISTS social.entitlements (
+	id bigserial NOT NULL,
+	owner text NOT NULL, -- main address of the wallet group when granted
+	item text NOT NULL, -- e.g. style:gold
+	ref text NULL,
+	source text NOT NULL, -- free | paid | sponsor | admin
+	granted_at timestamptz NOT NULL DEFAULT now(),
+	expires_at timestamptz NULL, -- null: for good
+	CONSTRAINT entitlements_pk PRIMARY KEY (id)
+);
+CREATE INDEX IF NOT EXISTS entitlements_owner_idx ON social.entitlements USING btree (owner, item);
+
+-- 推广位 (api/billing.py): districts shown in a labelled slot, put up by an admin. A paid one waits
+-- with no starts_at until an admin approves it.
+CREATE TABLE IF NOT EXISTS social.promotions (
+	id bigserial NOT NULL,
+	bitmap_number int4 NOT NULL,
+	slot text NOT NULL, -- home
+	starts_at timestamptz NULL, -- null: waiting for an admin
+	ends_at timestamptz NULL,
+	note text NOT NULL DEFAULT '',
+	created_by text NOT NULL, -- the admin, or the payer of payment_id
+	payment_id int8 NULL,
+	CONSTRAINT promotions_pk PRIMARY KEY (id)
+);
+CREATE INDEX IF NOT EXISTS promotions_slot_idx ON social.promotions USING btree (slot, ends_at);
+
+-- Keys for a future paid data API (api/billing.py, api/app.py): only the sha256 of a key is kept.
+CREATE TABLE IF NOT EXISTS social.api_keys (
+	id bigserial NOT NULL,
+	key_hash text NOT NULL,
+	owner text NOT NULL DEFAULT '', -- who it is for: an address, a name, an email
+	tier text NOT NULL,
+	note text NOT NULL DEFAULT '',
+	created_at timestamptz NOT NULL DEFAULT now(),
+	revoked_at timestamptz NULL,
+	CONSTRAINT api_keys_pk PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS api_keys_hash_idx ON social.api_keys USING btree (key_hash);
+
+-- A sponsor named on a 街区活动 (api/events.py), set by its host; hidden when empty.
+ALTER TABLE social.events ADD COLUMN IF NOT EXISTS sponsor_name text NULL;
+ALTER TABLE social.events ADD COLUMN IF NOT EXISTS sponsor_url text NULL; -- https only

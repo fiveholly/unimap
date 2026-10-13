@@ -48,4 +48,6 @@ export const common: Record<string, string> = {
   "第四纪元": "Epoch 4",
   "第五纪元": "Epoch 5",
   "第六纪元": "Epoch 6",
+  "推广": "Promoted",
+  "高级": "Premium",
 };

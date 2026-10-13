@@ -7,7 +7,7 @@ import { Avatar } from "./Avatar";
 import { TipDialog } from "./Tip";
 import { api, type Contest, type ContestMetric } from "@/lib/api";
 import { short } from "@/lib/format";
-import { t } from "@/lib/i18n";
+import { t, tn } from "@/lib/i18n";
 
 const sats = (n: number) => n.toLocaleString("en-US");
 const PLACES = 3;
@@ -98,6 +98,19 @@ function ContestCard({ contest: c, me, isHost, onPay, onCancel }: { contest: Con
         ))}
       </ol>
       {c.note && <p className="contest-note">“{c.note}”</p>}
+      {c.sponsor && (
+        <p className="muted small">
+          {tn("赞助：{name}", {
+            name: c.sponsor.url ? (
+              <a href={c.sponsor.url} target="_blank" rel="sponsored noopener">
+                {c.sponsor.name}
+              </a>
+            ) : (
+              c.sponsor.name
+            ),
+          })}
+        </p>
+      )}
       <p className="muted small">
         {t("主人 {who} 出资，赛季结束后用闪电直接发给获奖者，unimap 不经手。在这里{metric}就算参加，免费；主人自己不参与排名。", {
           who: short(c.host),
@@ -156,6 +169,8 @@ function NewContest({ n, token, seasons, current, onCreated }: { n: number; toke
   const [prizes, setPrizes] = useState<string[]>(["10000", "5000", "2000"]);
   const [places, setPlaces] = useState(3);
   const [note, setNote] = useState("");
+  const [sponsorName, setSponsorName] = useState("");
+  const [sponsorUrl, setSponsorUrl] = useState("");
   const [season, setSeason] = useState(seasons[0]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -170,9 +185,10 @@ function NewContest({ n, token, seasons, current, onCreated }: { n: number; toke
     setError(null);
     if (amounts.some((a) => !Number.isFinite(a) || a < MIN_PRIZE || a > MAX_PRIZE)) return setError(t("每份奖金是 100 到 1,000,000 聪"));
     if (amounts.some((a, i) => i > 0 && a > amounts[i - 1])) return setError(t("后面名次的奖金不能比前面多"));
+    if (sponsorUrl.trim() && (!sponsorName.trim() || !/^https:\/\/[^\s/]+/.test(sponsorUrl.trim()))) return setError(t("赞助商链接要以 https:// 开头，并写上赞助商名字"));
     setBusy(true);
     try {
-      await api(`/v1/districts/${n}/events`, { method: "POST", token, body: { metric, prizes: amounts, note, next_season: season !== current } });
+      await api(`/v1/districts/${n}/events`, { method: "POST", token, body: { metric, prizes: amounts, note, next_season: season !== current, sponsor_name: sponsorName, sponsor_url: sponsorUrl } });
       setOpen(false);
       onCreated();
     } catch (e) {
@@ -224,6 +240,10 @@ function NewContest({ n, token, seasons, current, onCreated }: { n: number; toke
         ))}
       </div>
       <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={140} placeholder={t("说一句话（可选），比如：欢迎新邻居多来坐坐")} aria-label={t("说一句话")} />
+      <div className="row">
+        <input className="grow" value={sponsorName} onChange={(e) => setSponsorName(e.target.value)} maxLength={60} placeholder={t("赞助商（可选）")} aria-label={t("赞助商")} />
+        <input className="grow" value={sponsorUrl} onChange={(e) => setSponsorUrl(e.target.value)} maxLength={300} placeholder="https://" aria-label={t("赞助商链接")} />
+      </div>
       {error && <p className="error small">{error}</p>}
       <div className="row end">
         <button type="button" className="ghost" onClick={() => setOpen(false)} disabled={busy}>

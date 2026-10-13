@@ -10,8 +10,9 @@ import time
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
-from api import agent, auth, events, game, market, holdings, land, listings, metrics, moderation, nostr, notify, opening, parks, pets, polls, recruit, search, seasons, shop, social, style, tenants, tips, tour, wallets, xlink
+from api import agent, auth, billing, events, game, market, holdings, land, listings, metrics, moderation, nostr, notify, opening, parks, pets, polls, recruit, search, seasons, shop, social, style, tenants, tips, tour, wallets, xlink
 
 WRITES = ("POST", "PUT", "PATCH", "DELETE")
 AUTH_PATHS = ("/v1/auth/nonce", "/v1/auth/login")
@@ -33,7 +34,8 @@ class RateLimit:
     """Per-IP token buckets for writes: RATE_LIMIT_WRITES a minute for any POST, PUT, PATCH or
     DELETE (default 60), and RATE_LIMIT_AUTH a minute for asking for a sign-in nonce and signing
     in (default 20, so 10 sign-ins). 0 turns one off. Too many gets 429. The buckets live in each
-    process, and the API runs 2 uvicorn workers, so in practice an IP gets up to twice these."""
+    process, and the API runs 2 uvicorn workers, so in practice an IP gets up to twice these.
+    A write with a valid X-API-Key (api/billing.py) counts against the key instead, at its tier's limit."""
 
     MAX_KEYS = 50_000
 
@@ -58,7 +60,12 @@ class RateLimit:
             auth_call = scope["method"] == "POST" and scope["path"] in AUTH_PATHS
             kind = "auth" if auth_call else "writes"
             per_minute = int(os.getenv("RATE_LIMIT_AUTH" if auth_call else "RATE_LIMIT_WRITES") or (20 if auth_call else 60))
-            if per_minute > 0 and not self.take(kind, client_ip(scope), per_minute):
+            who = client_ip(scope)
+            key = None if auth_call or per_minute <= 0 else dict(scope.get("headers") or []).get(b"x-api-key")
+            tier = key and await run_in_threadpool(billing.key_tier, key.decode("latin-1"))
+            if tier:
+                kind, who, per_minute = "key", key, billing.key_writes(tier)
+            if per_minute > 0 and not self.take(kind, who, per_minute):
                 response = JSONResponse({"detail": "too many requests, slow down"}, status_code=429, headers={"Retry-After": "60"})
                 await response(scope, receive, send)
                 return
@@ -75,5 +82,5 @@ if origins:
 app.include_router(land.router)
 app.include_router(auth.router)
 app.include_router(social.router)
-for extra in (recruit, polls, style, parks, holdings, pets, notify, xlink, wallets, search, moderation, listings, tips, game, seasons, events, market, agent, shop, metrics, nostr, tour, tenants, opening):
+for extra in (billing, recruit, polls, style, parks, holdings, pets, notify, xlink, wallets, search, moderation, listings, tips, game, seasons, events, market, agent, shop, metrics, nostr, tour, tenants, opening):
     app.include_router(extra.router)

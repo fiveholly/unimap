@@ -1,14 +1,17 @@
 """A district's look on the map: a colour and up to MAX_DECOS decorations.
 
 Decorations unlock with prosperity (api/prosperity.py) and hide again if the district falls
-below their level. Mirrors web/lib/style.ts; keep the keys and levels in step.
+below their level. Mirrors web/lib/style.ts; keep the keys, levels and PREMIUM in step.
+
+An option listed in PREMIUM also needs the entitlement `style:<option>` (api/billing.py), but only
+while BILLING_COSMETICS=1; otherwise, and by default, every option is free as before.
 """
 
 from fastapi import APIRouter, Depends, HTTPException
 from psycopg2.extras import Json
 from pydantic import BaseModel, Field
 
-from api import parks, roles
+from api import billing, parks, roles
 from api.auth import current_address
 from api.db import cursor
 
@@ -17,6 +20,7 @@ router = APIRouter()
 COLORS = {"orange": 1, "red": 1, "blue": 1, "green": 1, "purple": 3, "gold": 5}  # colour: level it unlocks at
 DECOS = {"flag": 1, "flowers": 2, "lamps": 3, "fountain": 4, "statue": 5}
 MAX_DECOS = 3
+PREMIUM = set()  # colour or decoration keys that cost extra when BILLING_COSMETICS=1; none yet
 
 
 def visible(style, level):
@@ -53,6 +57,10 @@ def set_style(bitmap_number: int, req: StyleBody, address: str = Depends(current
         locked = [k for k in [req.color, *req.deco] if {**COLORS, **DECOS}[k] > level]
         if locked:
             raise HTTPException(403, f"{', '.join(locked)} not unlocked at level {level}")
+        if billing.cosmetics():
+            unpaid = [k for k in [req.color, *req.deco] if k in PREMIUM and not billing.has(cur, address, f"style:{k}")]
+            if unpaid:
+                raise HTTPException(402, f"{', '.join(unpaid)}: premium, not unlocked")
         style = {"color": req.color, "deco": req.deco}
         cur.execute(
             "insert into social.profiles (bitmap_number, style, updated_by) values (%s, %s, %s) "

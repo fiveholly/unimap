@@ -1,9 +1,10 @@
 // A district's look on the map: a colour and up to MAX_DECOS decorations, each unlocked at a
-// prosperity level. Mirrors api/style.py; keep the keys and levels in step.
+// prosperity level. Mirrors api/style.py; keep the keys, levels and premium marks in step.
+// premium: an option the API asks an entitlement for while BILLING_COSMETICS=1 (none yet).
 
 export type DistrictStyle = { color: string; deco: string[] };
 
-export const COLORS: Record<string, { name: string; hex: string; level: number }> = {
+export const COLORS: Record<string, { name: string; hex: string; level: number; premium?: boolean }> = {
   orange: { name: "橙", hex: "#F7931A", level: 1 },
   red: { name: "红", hex: "#D9483B", level: 1 },
   blue: { name: "蓝", hex: "#3E7FD9", level: 1 },
@@ -11,7 +12,7 @@ export const COLORS: Record<string, { name: string; hex: string; level: number }
   purple: { name: "紫", hex: "#8E5BD0", level: 3 },
   gold: { name: "金", hex: "#E8B04A", level: 5 },
 };
-export const DECOS: Record<string, { name: string; level: number }> = {
+export const DECOS: Record<string, { name: string; level: number; premium?: boolean }> = {
   flag: { name: "旗帜", level: 1 },
   flowers: { name: "花坛", level: 2 },
   lamps: { name: "路灯", level: 3 },

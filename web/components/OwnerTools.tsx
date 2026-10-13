@@ -142,6 +142,7 @@ function Look({ n, zone, level, current, onSave }: { n: number; zone: Zone | nul
                   <i style={{ background: c.hex }} />
                   {t(c.name)}
                   {locked && <span className="dim small">{t("{n} 级", { n: c.level })}</span>}
+                  {c.premium && <span className="dim small">{t("高级")}</span>}
                 </button>
               );
             })}
@@ -157,6 +158,7 @@ function Look({ n, zone, level, current, onSave }: { n: number; zone: Zone | nul
                 <button key={k} type="button" className={`chip${on ? " active" : ""}`} disabled={locked || (!on && deco.length >= MAX_DECOS)} aria-pressed={on} onClick={() => toggle(k)}>
                   {t(d.name)}
                   {locked && <span className="dim small"> {t("{n} 级解锁", { n: d.level })}</span>}
+                  {d.premium && <span className="dim small"> {t("高级")}</span>}
                 </button>
               );
             })}
