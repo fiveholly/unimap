@@ -98,8 +98,8 @@ export const game: Record<string, string> = {
   "本赛季奖池 {sats} 聪，赛季结束后由项目方用闪电发给前三名的主人：{split}":
     "This season's prize pool is {sats} sats. When it ends, the project pays the owners of the top three over Lightning: {split}",
   "这个赛季刚开始，还没有街区得分。": "The season has just begun, and no district has scored yet.",
-  "得分：赛季里的帖子 × {p}，回复 × {r}，签到 × {c}，打赏的人 × {x}。前三名的街区戴王冠到下个赛季结束，主人得到一枚王冠徽章。":
-    "Score: posts in the season × {p}, replies × {r}, check-ins × {c}, people who tipped × {x}. The top three districts wear a crown until the end of the next season, and their owners get a Crown badge.",
+  "得分：赛季里的帖子 × {p}，回复 × {r}，签到 × {c}。前三名的街区戴王冠到下个赛季结束，主人得到一枚王冠徽章。":
+    "Score: posts in the season × {p}, replies × {r}, check-ins × {c}. The top three districts wear a crown until the end of the next season, and their owners get a Crown badge.",
   "第 {n} 赛季的王冠": "Crowns from season {n}",
   "赛季王冠": "Season crown",
   "上个赛季第 {n} 名": "No. {n} last season",

@@ -141,6 +141,20 @@ class SocialApi(unittest.TestCase):
         me = self.client.get("/v1/me", headers=self.h(BOB)).json()
         self.assertEqual(me["parcels"], [{"bitmap_number": 100, "tx_index": 1}])
 
+    def test_login_names_the_site(self):
+        from api.auth import site_origin
+
+        site = site_origin()
+        n = self.client.post("/v1/auth/nonce", json={"address": ALICE.address}).json()
+        lines = n["message"].split("\n")
+        self.assertEqual(lines[0], f"{site.split('://')[1]} wants you to sign in on unimap")
+        self.assertIn(f"URI: {site}", lines)
+        self.assertIn(f"Network: {os.getenv('NETWORK_TYPE') or 'mainnet'}", lines)
+        body = {"address": ALICE.address, "nonce": n["nonce"], "signature": ALICE.sign(n["message"])}
+        # A browser on another site is turned away (and the nonce is still good); this site gets in.
+        self.assertEqual(self.client.post("/v1/auth/login", json=body, headers={"Origin": "https://unimap.evil"}).status_code, 403)
+        self.assertEqual(self.client.post("/v1/auth/login", json=body, headers={"Origin": site}).status_code, 200)
+
     # --- posting rules ---
 
     def test_roles(self):
@@ -586,6 +600,7 @@ class SocialApi(unittest.TestCase):
         from decimal import Decimal
 
         from api import holdings
+        from api.auth import site_origin
 
         dave = Wallet(4)
 
@@ -596,14 +611,15 @@ class SocialApi(unittest.TestCase):
             def inscription_ids(self, address):
                 return iter([])
 
-        def link(me, other, sign_with=None):
+        def link(me, other, sign_with=None, headers=None):
             r = self.client.post("/v1/me/wallets/nonce", json={"address": other.address}, headers=self.h(me))
             if r.status_code != 200:
                 return r
             n = r.json()
             self.assertIn(f"to: {me.address}", n["message"])
+            self.assertIn(f"URI: {site_origin()}", n["message"])
             body = {"address": other.address, "nonce": n["nonce"], "signature": (sign_with or other).sign(n["message"])}
-            return self.client.post("/v1/me/wallets", json=body, headers=self.h(me))
+            return self.client.post("/v1/me/wallets", json=body, headers={**self.h(me), **(headers or {})})
 
         holdings.provider = Fake()
         try:
@@ -613,7 +629,8 @@ class SocialApi(unittest.TestCase):
             r = self.client.post("/v1/me/wallets/nonce", json={"address": dave.address}, headers=self.h(ALICE)).json()
             login = self.client.post("/v1/auth/login", json={"address": dave.address, "nonce": r["nonce"], "signature": dave.sign(r["message"])})
             self.assertEqual(login.status_code, 401)
-            r = link(ALICE, dave)
+            self.assertEqual(link(ALICE, dave, headers={"Origin": "https://unimap.evil"}).status_code, 403)
+            r = link(ALICE, dave, headers={"Origin": site_origin()})
             self.assertEqual(r.status_code, 200, r.text)
             self.assertEqual([w["address"] for w in r.json()["wallets"]], [ALICE.address, dave.address])
             self.assertEqual(link(ALICE, dave).status_code, 409)
@@ -626,9 +643,16 @@ class SocialApi(unittest.TestCase):
             self.client.put(f"/v1/districts/{DISTRICT}/showcase", json={"assets": ["dog"]}, headers=self.h(ALICE))
             self.assertEqual(self.client.get(f"/v1/land?start={DISTRICT}&end={DISTRICT}").json()["tiles"][0]["pets"], ["dog:2"])
             # Bob's wallet joins the group through Alice; Bob sees the same group from his side.
+            early = self.client.post("/v1/me/wallets/nonce", json={"address": CAROL.address}, headers=self.h(BOB))
+            self.assertEqual(early.status_code, 200)
             self.assertEqual(link(ALICE, BOB).status_code, 200)
             bob = self.client.get("/v1/me/wallets", headers=self.h(BOB)).json()["wallets"]
             self.assertEqual([(w["address"], w["main"], w["me"]) for w in bob][0], (ALICE.address, True, False))
+            # Only the main wallet adds to the group, even with a message Bob got before he joined it.
+            self.assertEqual(link(BOB, CAROL).status_code, 403)
+            n = early.json()
+            body = {"address": CAROL.address, "nonce": n["nonce"], "signature": CAROL.sign(n["message"])}
+            self.assertEqual(self.client.post("/v1/me/wallets", json=body, headers=self.h(BOB)).status_code, 403)
             self.assertEqual(self.client.delete(f"/v1/me/wallets/{ALICE.address}", headers=self.h(BOB)).status_code, 404)
             self.assertEqual(self.client.delete(f"/v1/me/wallets/{BOB.address}", headers=self.h(BOB)).status_code, 200)
             r = self.client.delete(f"/v1/me/wallets/{dave.address}", headers=self.h(ALICE))
@@ -641,6 +665,33 @@ class SocialApi(unittest.TestCase):
                     "delete from social.wallet_links; delete from social.showcase; delete from social.holdings; "
                     "delete from social.holdings_checked;"
                 )
+
+    def test_wallet_link_is_checked_under_lock(self):
+        import threading
+
+        import psycopg2
+
+        dave = Wallet(4)
+        n = self.client.post("/v1/me/wallets/nonce", json={"address": dave.address}, headers=self.h(ALICE)).json()
+        body = {"address": dave.address, "nonce": n["nonce"], "signature": dave.sign(n["message"])}
+        # While another link to Alice's group holds the lock, this one waits, then sees dave taken.
+        other = psycopg2.connect(PGURL)
+        try:
+            with other.cursor() as cur:
+                cur.execute("select pg_advisory_xact_lock(hashtext(%s));", (ALICE.address,))
+                done = []
+                t = threading.Thread(target=lambda: done.append(self.client.post("/v1/me/wallets", json=body, headers=self.h(ALICE))))
+                t.start()
+                t.join(1)
+                self.assertEqual(done, [])
+                cur.execute("insert into social.wallet_links (address, main_address) values (%s, %s);", (dave.address, CAROL.address))
+            other.commit()
+            t.join(10)
+            self.assertEqual(done[0].status_code, 409)
+        finally:
+            other.close()
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.wallet_links;")
 
     def test_parcel_pets(self):
         from decimal import Decimal
@@ -1109,6 +1160,72 @@ class SocialApi(unittest.TestCase):
             tips.lnurl = old
             with self.conn.cursor() as cur:
                 cur.execute("delete from social.tips; delete from social.lightning_addresses; delete from social.notifications where kind = 'tip';")
+
+    def test_tip_verify_url_and_expiry(self):
+        from api import tips
+
+        # A verify URL only counts on the Lightning address's own domain or its callback's host.
+        answers = {}
+        saved_get = tips._get
+
+        def fake_get(url, params=None):
+            if "/.well-known/lnurlp/" in url:
+                return {"tag": "payRequest", "callback": "https://cb.wallet.test/pay", "minSendable": 1000, "maxSendable": 10**9}
+            return {"pr": "lnbc5000n1x", "verify": answers["verify"]}
+
+        tips._get = fake_get
+        try:
+            for verify, kept in (("https://wallet.test/v/1", True), ("https://cb.wallet.test/v/1", True),
+                                 ("https://evil.test/v/1", False), ("https://wallet.test.evil.test/v", False)):
+                answers["verify"] = verify
+                self.assertEqual(tips.ask_invoice("bob@wallet.test", 500, ""), ("lnbc5000n1x", verify if kept else None))
+        finally:
+            tips._get = saved_get
+
+        # A pending tip past the hour is asked once more before it is marked expired.
+        class Fake:
+            paid = set()
+            pay_request = staticmethod(lambda a: {"tag": "payRequest", "callback": "https://wallet.test/cb"})
+            ask_invoice = staticmethod(lambda a, sats, comment: (f"lnbc{sats * 10}n1late", f"https://wallet.test/late/{sats}"))
+            settled = staticmethod(lambda url: url in Fake.paid)
+
+        old = tips.lnurl
+        tips.lnurl = Fake
+        try:
+            post = self.post(BOB, "late tips").json()
+            self.client.put("/v1/me/lightning", json={"lightning_address": "bob@wallet.test"}, headers=self.h(BOB))
+            tip = lambda sats: self.client.post("/v1/tips", json={"post_id": post["id"], "amount_sats": sats}, headers=self.h(ALICE)).json()
+            late, never = tip(300), tip(400)
+            Fake.paid.add("https://wallet.test/late/300")
+            with self.conn.cursor() as cur:
+                cur.execute("update social.tips set created_at = now() - interval '2 hours', checked_at = null;")
+            status = lambda i: self.client.get(f"/v1/tips/{i}", headers=self.h(ALICE)).json()["status"]
+            self.assertEqual((status(late["id"]), status(never["id"])), ("settled", "expired"))
+        finally:
+            tips.lnurl = old
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.tips; delete from social.lightning_addresses; delete from social.notifications where kind = 'tip';")
+
+    def test_tips_dont_score_seasons(self):
+        import datetime as dt
+
+        from api import seasons
+
+        # Whether a tip was paid is the recipient's wallet's word, so even many "settled" tips don't move a season.
+        until = dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=1)
+        since = until - dt.timedelta(days=1)
+        with self.conn.cursor() as cur:
+            before = seasons.scores(cur, since, until)
+            cur.execute(
+                "insert into social.tips (tipper, recipient, bitmap_number, amount_sats, invoice, verify_url, status, settled_at) "
+                "select 'sybil' || g, %s, %s, 1000000, 'lnbc', 'https://self.test/v', 'settled', now() - interval '1 hour' "
+                "from generate_series(1, 50) g;",
+                (CAROL.address, OTHER),
+            )
+            try:
+                self.assertEqual(seasons.scores(cur, since, until), before)
+            finally:
+                cur.execute("delete from social.tips where tipper like 'sybil%';")
 
     def test_game(self):
         import hashlib
@@ -1904,6 +2021,7 @@ class SocialApi(unittest.TestCase):
             self.assertIn("百号街", system)
             self.assertIn(CAROL.address[:6], messages[0]["content"])
             self.assertIn("几点开始", messages[0]["content"])
+            self.assertIn("<visitor_text>\n", messages[0]["content"])
             self.assertIn("[digest]", messages[0]["content"])
             facts = json.loads(fake.seen[1][1][-1]["content"][1]["content"])
             self.assertEqual(facts["posts_last_7_days"], 1)
@@ -1914,7 +2032,8 @@ class SocialApi(unittest.TestCase):
             drafts = {d["task"]: d for d in v["drafts"]}
             self.assertEqual(sorted(drafts), ["answers", "digest", "welcome"])
             self.assertEqual(drafts["answers"]["reply_to"], top["id"])
-            self.assertEqual(v["agent"]["memory"], ["主人喜欢周六喝茶"])
+            self.assertEqual(v["agent"]["memory"], [])  # it read other people's posts this run, so no notes are kept
+            self.assertIn("error", json.loads(fake.seen[2][1][-1]["content"][4]["content"]))
             n = self.client.get("/v1/notifications", headers=self.h(ALICE)).json()["notifications"]
             self.assertIn(("agent_draft", DISTRICT), [(x["kind"], x["bitmap_number"]) for x in n])
 
@@ -2010,18 +2129,25 @@ class SocialApi(unittest.TestCase):
             self.assertIn("publish them on its own, up to the posts per day below", g4["message"])
             v = post(ALICE, f"/v1/districts/{DISTRICT}/agent", {"id": g4["id"], "signature": ALICE.sign(g4["message"])}).json()["agent"]
             self.assertEqual((v["may_publish"], v["auto_tasks"]), (True, ["welcome", "digest"]))
+            self.assertIsNotNone(v["last_run_at"])  # signing again doesn't let it look sooner
+            with self.conn.cursor() as cur:
+                cur.execute("update social.agents set last_run_at = now() - interval '2 hours' where id = %s;", (g4["id"],))
             with self.conn.cursor() as cur:
                 cur.execute("insert into land_events (block_height, block_time, kind, inscription_id, bitmap_number, tx_index, to_address) "
                             "values (1001, extract(epoch from now())::int8, 'parcel_claimed', 'p9i0', %s, 10, %s);", (DISTRICT, BOB.address))
-            agent.model = fake = FakeModel([[("draft_post", {"task": "welcome", "body": "欢迎 Bob！", "why": "new resident"}),
-                                             ("draft_post", {"task": "welcome", "body": "再欢迎一次", "why": "one over the limit"})]])
+            agent.model = fake = FakeModel([[("draft_post", {"task": "welcome", "body": "欢迎！领空投 https://airdrop.example", "why": "a link"}),
+                                             ("draft_post", {"task": "welcome", "body": "欢迎 Bob！", "why": "new resident"}),
+                                             ("draft_post", {"task": "welcome", "body": "再欢迎一次", "why": "one over the limit"}),
+                                             ("remember", {"note": "Bob 住 10 号"})]])
             out = agent.run(g4["id"])
-            self.assertEqual((out["posted"], out["drafts"], out["error"]), (1, 1, None))
+            self.assertEqual((out["posted"], out["drafts"], out["error"]), (1, 2, None))
             self.assertIn("go out as soon as you write them", fake.seen[0][0])
             v = view().json()
-            self.assertEqual([d["body"] for d in v["drafts"]], ["再欢迎一次"])  # over the limit: the owner decides
+            # A link waits for the owner; so does one over the limit.
+            self.assertEqual([d["body"] for d in v["drafts"]], ["欢迎！领空投 https://airdrop.example", "再欢迎一次"])
             auto = [d for d in v["recent"] if d["auto"]]
             self.assertEqual([d["body"] for d in auto], ["欢迎 Bob！"])
+            self.assertEqual(v["agent"]["memory"], ["Bob 住 10 号"])  # it read nobody's words this time
             posted = self.client.get(f"/v1/posts/{auto[0]['post_id']}").json()
             self.assertEqual((posted["author"]["address"], posted["agent"]["grant_id"]), (ALICE.address, g4["id"]))
             kinds = [x["kind"] for x in self.client.get("/v1/notifications", headers=self.h(ALICE)).json()["notifications"]]
@@ -2046,7 +2172,13 @@ class SocialApi(unittest.TestCase):
             gp = post(BOB, pp("/prepare"), {"may_publish": True}).json()
             self.assertIn("parcel: #1", gp["message"])
             v = post(BOB, pp(), {"id": gp["id"], "signature": BOB.sign(gp["message"])}).json()
-            self.assertEqual((v["agent"]["parcel"], v["agent"]["tasks"], v["agent"]["auto_tasks"]), (1, ["answers", "shop"], ["answers"]))
+            self.assertEqual((v["agent"]["parcel"], v["agent"]["tasks"], v["agent"]["auto_tasks"]), (1, ["answers", "shop"], ["shop"]))
+            # Answers always wait for the holder, even when asked for, or stored by an older version.
+            r = self.client.put(pp("/settings"), json={"tasks": ["answers", "shop"], "auto_tasks": ["answers", "shop"]}, headers=self.h(BOB))
+            self.assertEqual(r.json()["agent"]["auto_tasks"], ["shop"])
+            with self.conn.cursor() as cur:
+                cur.execute("update social.agents set auto_tasks = '{answers,shop}' where id = %s;", (gp["id"],))
+            self.assertEqual(self.client.get(pp(), headers=self.h(BOB)).json()["agent"]["auto_tasks"], ["shop"])
             self.assertEqual(self.client.put(pp("/settings"), json={"tasks": ["welcome"]}, headers=self.h(BOB)).status_code, 400)
             self.assertIsNone(view().json()["agent"])  # the district's own agent is a different one
             # It only answers people under Bob's own posts, and posts as the parcel's resident.
@@ -2056,19 +2188,35 @@ class SocialApi(unittest.TestCase):
             agent.model = fake = FakeModel([[("draft_reply", {"task": "answers", "post_id": top["id"], "body": "不是我的帖子", "why": ""}),
                                              ("draft_reply", {"task": "answers", "post_id": mine["id"], "body": "这周六上午。", "why": "Alice asked"})]])
             out = agent.run(gp["id"])
-            self.assertEqual((out["posted"], out["drafts"], out["error"]), (1, 0, None))
+            self.assertEqual((out["posted"], out["drafts"], out["error"]), (0, 1, None))
             system, messages = fake.seen[0]
             self.assertIn("parcel #1", system)
             self.assertIn("什么时候修", messages[0]["content"])
             self.assertNotIn("下周开会", messages[0]["content"])
             self.assertIn("error", json.loads(fake.seen[1][1][-1]["content"][0]["content"]))
             v = self.client.get(pp(), headers=self.h(BOB)).json()
-            answer = self.client.get(f"/v1/posts/{v['recent'][0]['post_id']}").json()
+            self.assertEqual([d["task"] for d in v["drafts"]], ["answers"])
+            answer = post(BOB, f"/v1/agent/drafts/{v['drafts'][0]['id']}/publish", {}).json()
             self.assertEqual((answer["author"]["address"], answer["author"]["role"], answer["author"]["parcel"], answer["reply_to"]),
                              (BOB.address, "resident", 1, mine["id"]))
             self.assertEqual(self.client.get(f"/v1/agent/grants/{gp['id']}").json()["parcel"], 1)
-            n = [x for x in self.client.get("/v1/notifications", headers=self.h(BOB)).json()["notifications"] if x["kind"] == "agent_posted"]
+            n = [x for x in self.client.get("/v1/notifications", headers=self.h(BOB)).json()["notifications"] if x["kind"] == "agent_draft"]
             self.assertEqual(n[0]["agent_parcel"], 1)
+            # Today's model calls are capped per owner and for the whole server; then it stops until tomorrow.
+            self.post(ALICE, "灯什么颜色？", reply_to=mine["id"])
+            for limit in ("AGENT_DAILY_CALLS_PER_OWNER", "AGENT_DAILY_CALLS_TOTAL"):
+                os.environ[limit] = "2"
+                with self.conn.cursor() as cur:
+                    cur.execute("update social.agents set last_run_at = now() - interval '2 hours' where id = %s;", (gp["id"],))
+                self.assertEqual(post(BOB, pp("/run")).status_code, 429)
+                fake.seen.clear()
+                self.assertEqual(agent.run(gp["id"])["error"], "daily_limit")
+                self.assertEqual(fake.seen, [])
+                self.assertEqual(self.client.get(pp(), headers=self.h(BOB)).json()["agent"]["last"]["error"], "daily_limit")
+                os.environ.pop(limit)
+            with self.conn.cursor() as cur:
+                cur.execute("select calls from social.agent_calls where owner = %s;", (BOB.address,))
+                self.assertEqual(cur.fetchone()[0], 2)
             # Muted in the district, or the parcel sold, it stops.
             with self.conn.cursor() as cur:
                 cur.execute("insert into social.mutes (bitmap_number, address, by_address) values (%s, %s, %s);", (DISTRICT, BOB.address, ALICE.address))
@@ -2083,11 +2231,21 @@ class SocialApi(unittest.TestCase):
             self.assertEqual(self.client.get(f"/v1/posts/{p['id']}").json()["agent"]["grant_id"], me["id"])
         finally:
             agent.model, tips.lnurl = old_model, old_lnurl
-            for k in ("ANTHROPIC_API_KEY", "AGENT_PRICE_SATS", "AGENT_LIGHTNING_ADDRESS"):
+            for k in ("ANTHROPIC_API_KEY", "AGENT_PRICE_SATS", "AGENT_LIGHTNING_ADDRESS", "AGENT_DAILY_CALLS_PER_OWNER", "AGENT_DAILY_CALLS_TOTAL"):
                 os.environ.pop(k, None)
             with self.conn.cursor() as cur:
-                cur.execute("delete from social.listings; delete from social.listings_checked; delete from land_events where inscription_id = 'p9i0'; "
+                cur.execute("delete from social.agent_calls; delete from social.listings; delete from social.listings_checked; delete from land_events where inscription_id = 'p9i0'; "
                             "delete from social.notifications where kind like 'agent%%';")
+
+    def test_agent_risky(self):
+        from api import agent
+
+        for held in ("看 https://a.example", "www.airdrop.cn", "去 airdrop.xyz 领", "付给 tips@getalby.com", "lnbc10u1p3xyzxyzxyzxyz",
+                     "LNURL1DP68GURN8GHJ7", "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq", "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2",
+                     "npub1sg6plzptd64u62a878hep2kev88swjh3tw00gjsfl8f237lmu63q0uf63m"):
+            self.assertTrue(agent.RISKY.search(held), held)
+        for fine in ("欢迎 bc1qar…5mdq 搬来 100.bitmap 的 #9！", "本周 3 个新帖，打赏 2,100 聪。", "周六下午三点，市政厅见。"):
+            self.assertIsNone(agent.RISKY.search(fine), fine)
 
     def test_shop(self):
         from api import agent, tips
@@ -2173,6 +2331,28 @@ class SocialApi(unittest.TestCase):
             Lnurl.verify = False
             self.assertEqual(post(CAROL, f"/v1/shop/items/{card['id']}/buy").status_code, 502)
             Lnurl.verify = True
+            # Editing the item after the sale doesn't change what the buyer got.
+            put(ALICE, f"/v1/shop/items/{mine['id']}", {"content": "something else"})
+            self.assertEqual(get(CAROL, f"/v1/shop/orders/{order['id']}").json()["content"], item["content"])
+            self.assertEqual(get(CAROL, "/v1/me/shop").json()["bought"][0]["content"], item["content"])
+            # Another buyer's unpaid order holds the last one; once it is an hour old it doesn't, and it is
+            # asked once more before it expires, so a late payment still delivers.
+            last = post(ALICE, f"/v1/districts/{DISTRICT}/shop", {**item, "price_sats": 777}).json()
+            first = post(CAROL, f"/v1/shop/items/{last['id']}/buy").json()
+            self.assertEqual(post(BOB, f"/v1/shop/items/{last['id']}/buy").status_code, 409)
+            self.assertEqual(post(CAROL, f"/v1/shop/items/{last['id']}/buy").status_code, 200)  # their own order doesn't block them
+            with self.conn.cursor() as cur:
+                cur.execute("update social.shop_orders set created_at = now() - interval '2 hours', checked_at = null where item_id = %s;", (last["id"],))
+            self.assertEqual(post(BOB, f"/v1/shop/items/{last['id']}/buy").status_code, 200)
+            Lnurl.paid.add("https://wallet.test/shop/777")
+            st = get(CAROL, f"/v1/shop/orders/{first['id']}").json()
+            self.assertEqual((st["status"], st["content"]), ("settled", item["content"]))
+            Lnurl.paid.discard("https://wallet.test/shop/777")
+            with self.conn.cursor() as cur:
+                cur.execute("select id from social.shop_orders where item_id = %s and buyer = %s and status = 'pending';", (last["id"], CAROL.address))
+                again = cur.fetchone()[0]
+            self.assertEqual(get(CAROL, f"/v1/shop/orders/{again}").json()["status"], "expired")
+            self.client.delete(f"/v1/shop/items/{last['id']}", headers=self.h(ALICE))
 
             # Its seller edits it; nobody else can. Selling the parcel takes its items down.
             self.assertEqual(put(BOB, f"/v1/shop/items/{card['id']}", {"price_sats": 600}).json()["price_sats"], 600)
@@ -2191,6 +2371,8 @@ class SocialApi(unittest.TestCase):
             g = post(ALICE, f"/v1/districts/{DISTRICT}/agent/prepare", {}).json()
             a = post(ALICE, f"/v1/districts/{DISTRICT}/agent", {"id": g["id"], "signature": ALICE.sign(g["message"])}).json()["agent"]
             self.client.put(f"/v1/districts/{DISTRICT}/agent/settings", json={"tasks": ["shop"]}, headers=self.h(ALICE))
+            with self.conn.cursor() as cur:  # a new grant keeps when the last one looked
+                cur.execute("update social.agents set last_run_at = null where id = %s;", (a["id"],))
             post(ALICE, f"/v1/districts/{DISTRICT}/shop", {**item, "title": "街区地图海报", "stock": None})
             agent.model = fake = FakeModel([[("shop_items", {})], [("draft_post", {"task": "shop", "body": "新上架：街区地图海报，2100 聪。", "why": "new item"})]])
             self.assertEqual(agent.run(a["id"])["drafts"], 1)

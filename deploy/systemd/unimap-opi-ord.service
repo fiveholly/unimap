@@ -11,6 +11,24 @@ Restart=always
 RestartSec=10
 NoNewPrivileges=true
 PrivateTmp=true
+# Sandboxing: everything is read-only except the directory it writes (install.sh fills in @DATA_DIR@).
+ProtectSystem=strict
+ReadWritePaths=@DATA_DIR@/opi-ord
+ProtectHome=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 EnvironmentFile=/etc/unimap/ord.env
 # OPI's ord reads DB_READER_API_URL as a bare host:port to listen on; the Python indexers
 # want it as a URL, so keep theirs away from it (it then listens on 127.0.0.1:11030).

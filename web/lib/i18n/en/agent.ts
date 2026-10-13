@@ -88,8 +88,10 @@ export const agent: Record<string, string> = {
   "自己发的": "Posted on its own",
   "它自己发的帖子，你在帖子上随时可以删掉。": "It posted this on its own. You can delete it from the post any time.",
   "允许它自己发帖": "Let it post on its own",
-  "授权里会写上这一条。欢迎新居民和周报写好就直接发，不超过每天的条数；回答问题默认仍然等你确认，可以在设置里改。":
-    "The grant will say so. Welcomes and the weekly digest go out as soon as they're written, within the daily limit. Answers to questions still wait for you unless you change it in settings.",
+  "授权里会写上这一条。欢迎新居民和周报写好就直接发，不超过每天的条数；回答问题总是等你确认。":
+    "The grant will say so. Welcomes and the weekly digest go out as soon as they're written, within the daily limit. Answers to questions always wait for you.",
+  "回答问题总是等你确认；带链接或地址的帖子也会留成草稿等你。": "Answers to questions always wait for you, and so does any post with a link or an address in it.",
+  "今天的模型调用用完了，明天会接着看。": "It has used up today's model calls. It will carry on tomorrow.",
   "哪些不用等你确认，写好就发": "What goes out without waiting for you",
   "一天最多发授权里写的条数，超出的照样写成草稿等你。": "It posts at most the daily limit in the grant. Anything over that waits as a draft.",
   "你的街区 {place} 的 agent 自己发了帖子": "The agent for your district {place} posted on its own",
@@ -104,7 +106,8 @@ export const agent: Record<string, string> = {
   "它帮你照看你在这里的地块：有人在你的帖子下面提问时起草回复，还能帮你盯着附近的挂单。":
     "It looks after your parcel here: it drafts answers when people ask under your posts, and can watch nearby listings for you.",
   "随时可以撤销。地块卖掉以后，授权自动失效。": "Revoke it any time. If the parcel is sold, the grant ends by itself.",
-  "授权里会写上这一条。回答写好就直接发，不超过每天的条数。": "The grant will say so. Answers go out as soon as they're written, within the daily limit.",
+  "授权里会写上这一条。介绍店里新商品的帖子写好就直接发，不超过每天的条数；回答问题总是等你确认。":
+    "The grant will say so. Posts about your new shop items go out as soon as they're written, within the daily limit. Answers to questions always wait for you.",
   "人设：告诉它怎么说话、你是个什么样的邻居": "Persona: how it should talk, and what kind of neighbour you are",
   "你在 {place} 的地块 #{i} 的 agent 写好了草稿，等你确认": "The agent for your parcel #{i} in {place} has drafts for you to approve",
   "你在 {place} 的地块 #{i} 的 agent 自己发了帖子": "The agent for your parcel #{i} in {place} posted on its own",

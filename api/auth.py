@@ -2,6 +2,7 @@
 (BIP-322 or legacy message signing), and the server hands back a bearer token."""
 
 import hashlib
+import os
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -24,12 +25,35 @@ def normalize_address(address):
     return address
 
 
+def site_origin():
+    """The web app's origin: https://$DOMAIN, or the Next.js dev server when DOMAIN isn't set."""
+    domain = os.getenv("DOMAIN")
+    return f"https://{domain}" if domain else "http://localhost:3000"
+
+
+def signed_header(action):
+    """First line of a message a wallet signs. Like EIP-4361 it names the site, so a lookalike
+    site can't pass a message from this one off as its own."""
+    return f"{site_origin().split('://', 1)[1]} wants you to {action} on unimap\n"
+
+
+def site_lines():
+    return f"URI: {site_origin()}\nNetwork: {os.getenv('NETWORK_TYPE') or 'mainnet'}\n"
+
+
+def check_origin(origin: str | None = Header(default=None)):
+    """Browsers send Origin; it must be this site. Clients that send none (scripts) are let through."""
+    if origin is not None and origin != site_origin():
+        raise HTTPException(403, "wrong site")
+
+
 def login_message(address, nonce, expires_at):
     return (
-        "Sign in to unimap\n"
-        f"address: {address}\n"
-        f"nonce: {nonce}\n"
-        f"expires: {expires_at.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+        signed_header("sign in")
+        + f"address: {address}\n"
+        + site_lines()
+        + f"nonce: {nonce}\n"
+        + f"expires: {expires_at.strftime('%Y-%m-%dT%H:%M:%SZ')}"
     )
 
 
@@ -66,7 +90,7 @@ def nonce(req: NonceRequest):
     return {"nonce": value, "message": message, "expires_at": expires_at.isoformat()}
 
 
-@router.post("/v1/auth/login")
+@router.post("/v1/auth/login", dependencies=[Depends(check_origin)])
 def login(req: LoginRequest):
     address = normalize_address(req.address)
     # Spend the nonce first, in its own transaction, so a failed attempt can't be retried.
@@ -74,8 +98,8 @@ def login(req: LoginRequest):
         cur.execute(
             "update social.login_nonces set used_at = now() "
             "where nonce = %s and address = %s and used_at is null and expires_at > now() "
-            "and message like 'Sign in to unimap%%' returning message;",
-            (req.nonce, address),
+            "and starts_with(message, %s) returning message;",
+            (req.nonce, address, signed_header("sign in")),
         )
         row = cur.fetchone()
     if row is None:

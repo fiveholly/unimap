@@ -10,6 +10,26 @@ Restart=always
 RestartSec=10
 NoNewPrivileges=true
 PrivateTmp=true
+# Sandboxing: everything is read-only except .next, where Next.js keeps its cache.
+ProtectSystem=strict
+ReadWritePaths=-/opt/unimap/src/web/.next
+ProtectHome=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+# Next.js would otherwise try to save telemetry settings in the hidden home directory.
+Environment=NEXT_TELEMETRY_DISABLED=1
 WorkingDirectory=/opt/unimap/src/web
 Environment=NODE_ENV=production
 # Share card images fetch from the API on the server; skip the round trip through Caddy.

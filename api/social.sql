@@ -555,6 +555,10 @@ CREATE TABLE IF NOT EXISTS social.shop_orders (
 CREATE INDEX IF NOT EXISTS shop_orders_item_idx ON social.shop_orders USING btree (item_id) WHERE status = 'settled';
 CREATE INDEX IF NOT EXISTS shop_orders_buyer_idx ON social.shop_orders USING btree (buyer, created_at);
 CREATE INDEX IF NOT EXISTS shop_orders_seller_idx ON social.shop_orders USING btree (seller, id) WHERE status = 'settled';
+-- What the buyer got, copied from the item when the order settles, so a later edit can't change it.
+ALTER TABLE social.shop_orders ADD COLUMN IF NOT EXISTS content text NULL;
+UPDATE social.shop_orders o SET content = i.content FROM social.shop_items i
+	WHERE i.id = o.item_id AND o.status = 'settled' AND o.content IS NULL;
 -- Sale notifications carry the order, so each sale is told even from the same buyer.
 DO $$
 BEGIN
@@ -654,4 +658,12 @@ CREATE TABLE IF NOT EXISTS social.notify_mutes (
 	muted text NOT NULL, -- whom
 	created_at timestamptz NOT NULL DEFAULT now(),
 	CONSTRAINT notify_mutes_pk PRIMARY KEY (address, muted)
+);
+
+-- Model calls the agents made each day, per owner (main wallet of their group), against AGENT_DAILY_CALLS_*.
+CREATE TABLE IF NOT EXISTS social.agent_calls (
+	day date NOT NULL,
+	owner text NOT NULL,
+	calls int4 NOT NULL DEFAULT 0,
+	CONSTRAINT agent_calls_pk PRIMARY KEY (day, owner)
 );

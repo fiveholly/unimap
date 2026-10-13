@@ -11,6 +11,24 @@ Restart=always
 RestartSec=10
 NoNewPrivileges=true
 PrivateTmp=true
+# Sandboxing: everything is read-only except the directory it writes (install.sh fills in @DATA_DIR@).
+ProtectSystem=strict
+ReadWritePaths=@DATA_DIR@/bitcoin
+ProtectHome=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 LimitNOFILE=65536
 ExecStart=/opt/unimap/bin/bitcoind -conf=/etc/unimap/bitcoin.conf -datadir=${DATA_DIR}/bitcoin
 # Flushing the UTXO cache on shutdown can take minutes.

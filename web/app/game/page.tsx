@@ -210,11 +210,10 @@ function SeasonCard({ tip }: { tip: number | null }) {
         <p className="muted small">{t("这个赛季刚开始，还没有街区得分。")}</p>
       )}
       <p className="muted small">
-        {t("得分：赛季里的帖子 × {p}，回复 × {r}，签到 × {c}，打赏的人 × {x}。前三名的街区戴王冠到下个赛季结束，主人得到一枚王冠徽章。", {
+        {t("得分：赛季里的帖子 × {p}，回复 × {r}，签到 × {c}。前三名的街区戴王冠到下个赛季结束，主人得到一枚王冠徽章。", {
           p: w.posts,
           r: w.replies,
           c: w.checkins,
-          x: w.tippers,
         })}
       </p>
       {season.last && season.last.winners.length > 0 && (

@@ -121,6 +121,8 @@ def ask_invoice(lightning_address, amount_sats, comment, zap=None):
     if not isinstance(invoice, str) or invoice_msat(invoice) != msat:
         raise LnurlError("the wallet's invoice doesn't ask for the amount you chose")
     verify = js.get("verify") if isinstance(js.get("verify"), str) else None
+    if verify is not None and urlsplit(verify).hostname not in (ADDRESS.match(lightning_address).group(2), urlsplit(callback).hostname):
+        verify = None  # a verify URL elsewhere could answer for any invoice: treat the tip as unverifiable
     return invoice, verify
 
 
@@ -345,15 +347,16 @@ def tip_status(tip_id: int, address: str = Depends(current_address)):
         tipper, recipient, n, post_id, verify, status, old, due = row
         if status != "pending" or verify is None or not due:
             return {"id": tip_id, "status": status, "verifiable": verify is not None}
-        if old:
-            cur.execute("update social.tips set status = 'expired' where id = %s;", (tip_id,))
-            return {"id": tip_id, "status": "expired", "verifiable": True}
         cur.execute("update social.tips set checked_at = now() where id = %s;", (tip_id,))
     try:
         paid = lnurl.settled(verify)
     except LnurlError:
         paid = False
     if not paid:
+        if old:  # asked once more after the hour, in case it was paid at the last minute
+            with cursor() as cur:
+                cur.execute("update social.tips set status = 'expired' where id = %s and status = 'pending';", (tip_id,))
+            return {"id": tip_id, "status": "expired", "verifiable": True}
         return {"id": tip_id, "status": "pending", "verifiable": True}
     with cursor() as cur:
         cur.execute(
