@@ -16,6 +16,19 @@
 2. 钱包对 `message` 签名（BIP-322 simple，或旧式 Bitcoin Signed Message）。
 3. `POST /v1/auth/login {"address", "nonce", "signature"}` 返回 `token`，之后带 `Authorization: Bearer <token>`，有效期 30 天。
 
+消息仿照 EIP-4361 写明网站和网络，仿冒站拿真站的消息给访客签，访客在钱包里能看出不是自己打开的网站：
+
+```
+unimap.example.com wants you to sign in on unimap
+address: <地址>
+URI: https://unimap.example.com
+Network: mainnet
+nonce: …
+expires: …
+```
+
+网站取自 `DOMAIN`（没设时是开发用的 `http://localhost:3000`），网络取自 `NETWORK_TYPE`。浏览器发来的登录和关联钱包请求带 `Origin` 头，不是这个网站就返回 403；不带 `Origin` 的（脚本、命令行）照常处理。
+
 支持的地址：P2TR、P2WPKH（BIP-322 或旧式签名），P2SH-P2WPKH、P2PKH（旧式签名）。P2TR 的旧式签名按无脚本树的 key tweak 校验，对应 UniSat 的 ecdsa 模式。
 
 ## 发帖签名
@@ -257,9 +270,11 @@ media: none
 一个人的土地和藏品常常放在不同地址。登录一个地址后，在“我的土地”里选一个钱包、在钱包里切换到另一个账户，签一条消息：
 
 ```
-Link this wallet on unimap
+unimap.example.com wants you to link this wallet on unimap
 address: <要关联的地址>
 to: <主地址>
+URI: https://unimap.example.com
+Network: mainnet
 nonce: …
 expires: …
 ```
@@ -267,7 +282,7 @@ expires: …
 签名用 BIP-322，和登录一样，十分钟有效、只能用一次；消息开头不同，不能拿来登录那个地址。验证通过后两个地址成为一组（`social.wallet_links`），第一个登录的是主地址。
 
 - 一个地址只能在一组里；已经关联在别处、或者自己带着关联钱包的地址要先在那边解除。一组最多再关联 10 个。
-- 组里任何地址登录都能看到同一组，可以解除除主地址以外的成员。
+- 只有主地址能关联新钱包；组里任何地址登录都能看到同一组，可以解除除主地址以外的成员。
 - 关联只影响藏品数量的合计，发帖、角色和管理街区仍然按各自的地址。
 
 ## 通知

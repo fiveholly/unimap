@@ -416,10 +416,12 @@ function WalletsSection({ token, initial }: { token: string; initial: LinkedWall
             </button>
           </div>
         </div>
-      ) : (
+      ) : wallets[0]?.me ? (
         <button type="button" className="ghost" onClick={() => setPicking(true)}>
           {t("关联另一个钱包")}
         </button>
+      ) : (
+        <p className="muted small">{t("用主地址登录才能关联新的钱包。")}</p>
       )}
       {error && <p className="error small">{error}</p>}
     </section>

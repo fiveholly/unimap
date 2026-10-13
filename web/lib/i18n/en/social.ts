@@ -33,6 +33,7 @@ export const social: Record<string, string> = {
   "土地和藏品放在不同地址？用另一个钱包签个名证明它也是你的，街区上的宠物会合计所有关联钱包的数量。发帖和管理街区仍按各自地址。":
     "Keep your land and collectibles at different addresses? Sign with the other wallet to prove it's yours too, and the pets on your districts will count what all linked wallets hold. Posting and running a district still go by each address.",
   "主地址": "Main",
+  "用主地址登录才能关联新的钱包。": "Sign in with the main address to link more wallets.",
   "当前登录": "Signed in",
   "解除": "Unlink",
   "选一个钱包，在钱包里切换到要关联的账户，再签名。签名不花钱，也不会发起交易。":

@@ -139,6 +139,20 @@ class SocialApi(unittest.TestCase):
         me = self.client.get("/v1/me", headers=self.h(BOB)).json()
         self.assertEqual(me["parcels"], [{"bitmap_number": 100, "tx_index": 1}])
 
+    def test_login_names_the_site(self):
+        from api.auth import site_origin
+
+        site = site_origin()
+        n = self.client.post("/v1/auth/nonce", json={"address": ALICE.address}).json()
+        lines = n["message"].split("\n")
+        self.assertEqual(lines[0], f"{site.split('://')[1]} wants you to sign in on unimap")
+        self.assertIn(f"URI: {site}", lines)
+        self.assertIn(f"Network: {os.getenv('NETWORK_TYPE') or 'mainnet'}", lines)
+        body = {"address": ALICE.address, "nonce": n["nonce"], "signature": ALICE.sign(n["message"])}
+        # A browser on another site is turned away (and the nonce is still good); this site gets in.
+        self.assertEqual(self.client.post("/v1/auth/login", json=body, headers={"Origin": "https://unimap.evil"}).status_code, 403)
+        self.assertEqual(self.client.post("/v1/auth/login", json=body, headers={"Origin": site}).status_code, 200)
+
     # --- posting rules ---
 
     def test_roles(self):
@@ -584,6 +598,7 @@ class SocialApi(unittest.TestCase):
         from decimal import Decimal
 
         from api import holdings
+        from api.auth import site_origin
 
         dave = Wallet(4)
 
@@ -594,14 +609,15 @@ class SocialApi(unittest.TestCase):
             def inscription_ids(self, address):
                 return iter([])
 
-        def link(me, other, sign_with=None):
+        def link(me, other, sign_with=None, headers=None):
             r = self.client.post("/v1/me/wallets/nonce", json={"address": other.address}, headers=self.h(me))
             if r.status_code != 200:
                 return r
             n = r.json()
             self.assertIn(f"to: {me.address}", n["message"])
+            self.assertIn(f"URI: {site_origin()}", n["message"])
             body = {"address": other.address, "nonce": n["nonce"], "signature": (sign_with or other).sign(n["message"])}
-            return self.client.post("/v1/me/wallets", json=body, headers=self.h(me))
+            return self.client.post("/v1/me/wallets", json=body, headers={**self.h(me), **(headers or {})})
 
         holdings.provider = Fake()
         try:
@@ -611,7 +627,8 @@ class SocialApi(unittest.TestCase):
             r = self.client.post("/v1/me/wallets/nonce", json={"address": dave.address}, headers=self.h(ALICE)).json()
             login = self.client.post("/v1/auth/login", json={"address": dave.address, "nonce": r["nonce"], "signature": dave.sign(r["message"])})
             self.assertEqual(login.status_code, 401)
-            r = link(ALICE, dave)
+            self.assertEqual(link(ALICE, dave, headers={"Origin": "https://unimap.evil"}).status_code, 403)
+            r = link(ALICE, dave, headers={"Origin": site_origin()})
             self.assertEqual(r.status_code, 200, r.text)
             self.assertEqual([w["address"] for w in r.json()["wallets"]], [ALICE.address, dave.address])
             self.assertEqual(link(ALICE, dave).status_code, 409)
@@ -624,9 +641,16 @@ class SocialApi(unittest.TestCase):
             self.client.put(f"/v1/districts/{DISTRICT}/showcase", json={"assets": ["dog"]}, headers=self.h(ALICE))
             self.assertEqual(self.client.get(f"/v1/land?start={DISTRICT}&end={DISTRICT}").json()["tiles"][0]["pets"], ["dog:2"])
             # Bob's wallet joins the group through Alice; Bob sees the same group from his side.
+            early = self.client.post("/v1/me/wallets/nonce", json={"address": CAROL.address}, headers=self.h(BOB))
+            self.assertEqual(early.status_code, 200)
             self.assertEqual(link(ALICE, BOB).status_code, 200)
             bob = self.client.get("/v1/me/wallets", headers=self.h(BOB)).json()["wallets"]
             self.assertEqual([(w["address"], w["main"], w["me"]) for w in bob][0], (ALICE.address, True, False))
+            # Only the main wallet adds to the group, even with a message Bob got before he joined it.
+            self.assertEqual(link(BOB, CAROL).status_code, 403)
+            n = early.json()
+            body = {"address": CAROL.address, "nonce": n["nonce"], "signature": CAROL.sign(n["message"])}
+            self.assertEqual(self.client.post("/v1/me/wallets", json=body, headers=self.h(BOB)).status_code, 403)
             self.assertEqual(self.client.delete(f"/v1/me/wallets/{ALICE.address}", headers=self.h(BOB)).status_code, 404)
             self.assertEqual(self.client.delete(f"/v1/me/wallets/{BOB.address}", headers=self.h(BOB)).status_code, 200)
             r = self.client.delete(f"/v1/me/wallets/{dave.address}", headers=self.h(ALICE))
@@ -639,6 +663,33 @@ class SocialApi(unittest.TestCase):
                     "delete from social.wallet_links; delete from social.showcase; delete from social.holdings; "
                     "delete from social.holdings_checked;"
                 )
+
+    def test_wallet_link_is_checked_under_lock(self):
+        import threading
+
+        import psycopg2
+
+        dave = Wallet(4)
+        n = self.client.post("/v1/me/wallets/nonce", json={"address": dave.address}, headers=self.h(ALICE)).json()
+        body = {"address": dave.address, "nonce": n["nonce"], "signature": dave.sign(n["message"])}
+        # While another link to Alice's group holds the lock, this one waits, then sees dave taken.
+        other = psycopg2.connect(PGURL)
+        try:
+            with other.cursor() as cur:
+                cur.execute("select pg_advisory_xact_lock(hashtext(%s));", (ALICE.address,))
+                done = []
+                t = threading.Thread(target=lambda: done.append(self.client.post("/v1/me/wallets", json=body, headers=self.h(ALICE))))
+                t.start()
+                t.join(1)
+                self.assertEqual(done, [])
+                cur.execute("insert into social.wallet_links (address, main_address) values (%s, %s);", (dave.address, CAROL.address))
+            other.commit()
+            t.join(10)
+            self.assertEqual(done[0].status_code, 409)
+        finally:
+            other.close()
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.wallet_links;")
 
     def test_parcel_pets(self):
         from decimal import Decimal

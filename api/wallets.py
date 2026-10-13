@@ -4,7 +4,8 @@ prove they hold it too; the two then form a group, and the pets a district can s
 what the whole group holds.
 
 A group has a main address (the one signed in when the first link was made) and the
-addresses linked to it. An address belongs to one group at most; to move it, unlink it first.
+addresses linked to it; only the main address links more. An address belongs to one group at
+most; to move it, unlink it first.
 Linking says nothing about land: roles, posting and admin rights stay with each address.
 """
 
@@ -15,7 +16,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 
 from api import bip322
-from api.auth import NONCE_TTL, current_address, normalize_address
+from api.auth import NONCE_TTL, check_origin, current_address, normalize_address, signed_header, site_lines
 from api.db import cursor
 
 router = APIRouter()
@@ -25,11 +26,12 @@ MAX_LINKED = 10  # addresses besides the main one
 
 def link_message(main, address, nonce, expires_at):
     return (
-        "Link this wallet on unimap\n"
-        f"address: {address}\n"
-        f"to: {main}\n"
-        f"nonce: {nonce}\n"
-        f"expires: {expires_at.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+        signed_header("link this wallet")
+        + f"address: {address}\n"
+        + f"to: {main}\n"
+        + site_lines()
+        + f"nonce: {nonce}\n"
+        + f"expires: {expires_at.strftime('%Y-%m-%dT%H:%M:%SZ')}"
     )
 
 
@@ -79,6 +81,8 @@ class LinkRequest(BaseModel):
 
 
 def _linkable(cur, me, other):
+    if main_of(cur, me) != me:
+        raise HTTPException(403, "only your main wallet can link wallets")
     if other == me or other in group(cur, me):
         raise HTTPException(409, "already in your wallets")
     if main_of(cur, other) != other:
@@ -108,7 +112,7 @@ def nonce(req: NonceRequest, address: str = Depends(current_address)):
     expires_at = datetime.now(timezone.utc).replace(microsecond=0) + NONCE_TTL
     with cursor() as cur:
         _linkable(cur, address, other)
-        message = link_message(main_of(cur, address), other, value, expires_at)
+        message = link_message(address, other, value, expires_at)
         cur.execute("delete from social.login_nonces where expires_at < now();")
         cur.execute(
             "insert into social.login_nonces (nonce, address, message, expires_at) values (%s, %s, %s, %s);",
@@ -117,7 +121,7 @@ def nonce(req: NonceRequest, address: str = Depends(current_address)):
     return {"nonce": value, "message": message, "expires_at": expires_at.isoformat()}
 
 
-@router.post("/v1/me/wallets")
+@router.post("/v1/me/wallets", dependencies=[Depends(check_origin)])
 def link(req: LinkRequest, tasks: BackgroundTasks, address: str = Depends(current_address)):
     from api import holdings
 
@@ -125,8 +129,8 @@ def link(req: LinkRequest, tasks: BackgroundTasks, address: str = Depends(curren
     with cursor() as cur:
         cur.execute(
             "update social.login_nonces set used_at = now() where nonce = %s and address = %s and used_at is null "
-            "and expires_at > now() and message like 'Link this wallet on unimap%%' returning message;",
-            (req.nonce, other),
+            "and expires_at > now() and starts_with(message, %s) returning message;",
+            (req.nonce, other, signed_header("link this wallet")),
         )
         row = cur.fetchone()
     if row is None:
@@ -138,11 +142,14 @@ def link(req: LinkRequest, tasks: BackgroundTasks, address: str = Depends(curren
     if not ok:
         raise HTTPException(401, "bad signature")
     with cursor() as cur:
-        main = main_of(cur, address)
-        if f"\nto: {main}\n" not in row[0]:
-            raise HTTPException(409, "your wallets changed; try again")
+        # Hold both groups still until the insert commits, so concurrent links can't pass the cap
+        # or chain groups together (locks taken in a fixed order, so two links can't deadlock).
+        for a in sorted({address, other}):
+            cur.execute("select pg_advisory_xact_lock(hashtext(%s));", (a,))
         _linkable(cur, address, other)
-        cur.execute("insert into social.wallet_links (address, main_address) values (%s, %s);", (other, main))
+        if f"\nto: {address}\n" not in row[0]:
+            raise HTTPException(409, "your wallets changed; try again")
+        cur.execute("insert into social.wallet_links (address, main_address) values (%s, %s);", (other, address))
         result = {"wallets": view(cur, address)}
     tasks.add_task(holdings.refresh, other, holdings.MIN_REFRESH_MINUTES)
     return result
