@@ -13,7 +13,7 @@ import secrets
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from api import bip322
 from api.auth import NONCE_TTL, check_origin, current_address, normalize_address, signed_header, site_lines
@@ -71,13 +71,13 @@ def view(cur, address):
 
 
 class NonceRequest(BaseModel):
-    address: str
+    address: str = Field(max_length=100)
 
 
 class LinkRequest(BaseModel):
-    address: str
-    nonce: str
-    signature: str
+    address: str = Field(max_length=100)
+    nonce: str = Field(max_length=100)
+    signature: str = Field(max_length=2000)
 
 
 def _linkable(cur, me, other):

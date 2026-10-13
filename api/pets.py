@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from api import holdings, notify, wallets
 from api.auth import current_address
 from api.db import cursor
+from api.moderation import writer_address
 
 router = APIRouter()
 
@@ -240,7 +241,7 @@ class PetBody(BaseModel):
 
 
 @router.put("/v1/me/pets/{asset}")
-def update(asset: str, req: PetBody, address: str = Depends(current_address)):
+def update(asset: str, req: PetBody, address: str = Depends(writer_address)):
     """Name the pet, or pick which of its inscriptions it looks like (or its logo); fields left out stay."""
     with cursor() as cur:
         pet = _pet(cur, address, asset)

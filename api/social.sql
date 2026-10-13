@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS social.mutes (
 CREATE TABLE IF NOT EXISTS social.moderation (
 	id bigserial NOT NULL,
 	bitmap_number int4 NOT NULL,
-	action text NOT NULL, -- mute | unmute | remove_post | pin | unpin | profile
+	action text NOT NULL, -- mute | unmute | remove_post | pin | unpin | profile | admin_clear_profile
 	target_address text NULL,
 	post_id int8 NULL,
 	by_address text NOT NULL,
@@ -197,6 +197,8 @@ CREATE TABLE IF NOT EXISTS social.notifications (
 	CONSTRAINT notifications_once UNIQUE NULLS NOT DISTINCT (address, kind, actor, bitmap_number, post_id)
 );
 CREATE INDEX IF NOT EXISTS notifications_address_idx ON social.notifications USING btree (address, id);
+-- for the per-hour cap in api/notify.py
+CREATE INDEX IF NOT EXISTS notifications_kind_idx ON social.notifications USING btree (address, kind, created_at);
 
 -- X (Twitter) accounts linked to addresses (api/xlink.py), proven through X's OAuth sign-in.
 -- One X account can be linked to several addresses (one person, several wallets).
@@ -649,6 +651,15 @@ CREATE TABLE IF NOT EXISTS social.tenants (
 	created_at timestamptz NOT NULL DEFAULT now(),
 	CONSTRAINT tenants_pk PRIMARY KEY (bitmap_number, address)
 );
+
+-- Addresses someone muted for themselves (api/notify.py): they get no notifications from them.
+CREATE TABLE IF NOT EXISTS social.notify_mutes (
+	address text NOT NULL, -- who muted
+	muted text NOT NULL, -- whom
+	created_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT notify_mutes_pk PRIMARY KEY (address, muted)
+);
+
 -- Model calls the agents made each day, per owner (main wallet of their group), against AGENT_DAILY_CALLS_*.
 CREATE TABLE IF NOT EXISTS social.agent_calls (
 	day date NOT NULL,

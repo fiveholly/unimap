@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from api import prosperity
 from api.auth import current_address
 from api.db import cursor
+from api.moderation import writer_address
 
 router = APIRouter()
 
@@ -163,7 +164,7 @@ def park(park_id: int):
 
 
 @router.post("/v1/parks", status_code=201)
-def create_park(req: ParkBody, address: str = Depends(current_address)):
+def create_park(req: ParkBody, address: str = Depends(writer_address)):
     with cursor() as cur:
         members = _check(cur, req, address)
         cur.execute(
@@ -184,7 +185,7 @@ def _own_park(cur, park_id, address):
 
 
 @router.put("/v1/parks/{park_id}")
-def update_park(park_id: int, req: ParkBody, address: str = Depends(current_address)):
+def update_park(park_id: int, req: ParkBody, address: str = Depends(writer_address)):
     with cursor() as cur:
         _own_park(cur, park_id, address)
         cur.execute("delete from social.park_members where park_id = %s;", (park_id,))

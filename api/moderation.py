@@ -3,7 +3,10 @@
 Anyone signed in can report a post once, giving a reason. Site admins, the addresses listed
 in ADMIN_ADDRESSES (comma separated), see open reports grouped by post and either remove the
 post or dismiss the reports; either way every open report on that post is closed. Admins can
-also ban an address from posting anywhere, for some days or for good, and lift the ban.
+also ban an address from posting anywhere, for some days or for good, and lift the ban. A ban
+stops every write of text others see (posts and replies, district profiles, polls, recruit
+notices and applications, events, park and pet names, shop items, tip comments): those routes
+take writer_address instead of current_address. Admins can also clear a district's bio and cover.
 
 District owners keep their own tools (removing posts in their district, muting); this is for
 what crosses districts: spam, scams and abuse.
@@ -39,6 +42,25 @@ def require_admin(address: str = Depends(current_address)):
 def banned(cur, address):
     cur.execute(
         "select 1 from social.bans where address = %s and (expires_at is null or expires_at > now());", (address,)
+    )
+    return cur.fetchone() is not None
+
+
+def writer_address(address: str = Depends(current_address)):
+    """current_address, for routes that write text others see: 403 while the address is banned."""
+    with cursor() as cur:
+        if banned(cur, address):
+            raise HTTPException(403, "this address is banned")
+    return address
+
+
+def muted(cur, bitmap_number, address):
+    """True if the district's current owner muted address there; mutes by an earlier owner lapse."""
+    cur.execute(
+        "select 1 from social.mutes m join bitmaps b on b.bitmap_number = m.bitmap_number "
+        "join inscription_owners o on o.inscription_id = b.inscription_id and o.address = m.by_address "
+        "where m.bitmap_number = %s and m.address = %s;",
+        (bitmap_number, address),
     )
     return cur.fetchone() is not None
 
@@ -179,4 +201,19 @@ def ban(req: BanBody, admin: str = Depends(require_admin)):
 def unban(address: str, _: str = Depends(require_admin)):
     with cursor() as cur:
         cur.execute("delete from social.bans where address = %s;", (normalize_address(address),))
+    return {"ok": True}
+
+
+@router.delete("/v1/admin/districts/{bitmap_number}/profile")
+def clear_profile(bitmap_number: int, admin: str = Depends(require_admin)):
+    """Clear a district's bio and cover, say ones a scammer wrote before the ban."""
+    with cursor() as cur:
+        cur.execute(
+            "update social.profiles set bio = '', cover = null, updated_by = %s, updated_at = now() where bitmap_number = %s;",
+            (admin, bitmap_number),
+        )
+        cur.execute(
+            "insert into social.moderation (bitmap_number, action, by_address) values (%s, 'admin_clear_profile', %s);",
+            (bitmap_number, admin),
+        )
     return {"ok": True}

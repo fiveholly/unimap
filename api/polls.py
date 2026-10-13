@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from api import roles
 from api.auth import current_address, optional_address
 from api.db import cursor
+from api.moderation import writer_address
 
 router = APIRouter()
 
@@ -75,7 +76,7 @@ def _one(cur, poll_id, me):
 
 
 @router.post("/v1/districts/{bitmap_number}/polls", status_code=201)
-def create_poll(bitmap_number: int, req: NewPoll, address: str = Depends(current_address)):
+def create_poll(bitmap_number: int, req: NewPoll, address: str = Depends(writer_address)):
     options = [o.strip() for o in req.options]
     if any(not o or len(o) > 60 for o in options) or len(set(options)) != len(options):
         raise HTTPException(400, "answers must be different and 1 to 60 characters")

@@ -77,7 +77,7 @@ class SocialApi(unittest.TestCase):
             )
         from fastapi.testclient import TestClient
 
-        from api import listings, social
+        from api import listings, notify, social
         from api.app import app
 
         class NoListings:
@@ -90,6 +90,8 @@ class SocialApi(unittest.TestCase):
         listings.provider = NoListings()  # map reads refresh listings in the background; keep them offline
         cls.social = social
         social.POSTS_PER_MINUTE = 1000  # test_rate_limit lowers it
+        notify.PER_HOUR = 1000  # test_notification_cap_and_mute lowers it
+        os.environ.update(RATE_LIMIT_WRITES="0", RATE_LIMIT_AUTH="0")  # test_ip_rate_limit turns them on
         cls.client = TestClient(app)
         cls.tokens = {w.address: cls.login(w) for w in (ALICE, BOB, CAROL)}
 
@@ -895,6 +897,106 @@ class SocialApi(unittest.TestCase):
             os.environ.pop("ADMIN_ADDRESSES", None)
             with self.conn.cursor() as cur:
                 cur.execute("delete from social.reports; delete from social.bans;")
+
+    def test_ban_stops_every_public_write(self):
+        os.environ["ADMIN_ADDRESSES"] = CAROL.address
+        try:
+            self.client.put(f"/v1/districts/{DISTRICT}/profile", json={"bio": "SEND BTC TO bc1qscam"}, headers=self.h(ALICE))
+            for w in (ALICE, BOB):
+                self.client.post("/v1/admin/bans", json={"address": w.address, "days": 1}, headers=self.h(CAROL))
+            writes = [
+                (ALICE, "put", f"/v1/districts/{DISTRICT}/profile", {"bio": "still here"}),
+                (ALICE, "post", f"/v1/districts/{DISTRICT}/polls", {"question": "?", "options": ["a", "b"]}),
+                (ALICE, "put", f"/v1/districts/{DISTRICT}/recruit", {"message": "来住"}),
+                (ALICE, "post", f"/v1/districts/{DISTRICT}/events", {"metric": "posts", "note": "scam"}),
+                (ALICE, "post", "/v1/parks", {"name": "scam", "members": [DISTRICT, DISTRICT + 1]}),
+                (ALICE, "post", f"/v1/districts/{DISTRICT}/shop", {"title": "x", "price_sats": 1000, "content": "x"}),
+                (BOB, "put", f"/v1/districts/{OTHER}/application", {"note": "scam"}),
+                (BOB, "put", "/v1/me/pets/nodemonkes", {"name": "scam"}),
+                (BOB, "post", "/v1/tips", {"post_id": 1, "amount_sats": 100, "comment": "scam"}),
+            ]
+            for w, method, path, body in writes:
+                r = getattr(self.client, method)(path, json=body, headers=self.h(w))
+                self.assertEqual(r.status_code, 403, (path, r.text))
+            self.assertEqual(self.post(ALICE, "hi").status_code, 403)
+            # Likes and follows aren't text; they still work.
+            self.assertEqual(self.client.put(f"/v1/districts/{OTHER}/follow", headers=self.h(BOB)).status_code, 200)
+            self.client.delete(f"/v1/districts/{OTHER}/follow", headers=self.h(BOB))
+            # An admin can clear what was written before the ban.
+            self.assertEqual(self.client.delete(f"/v1/admin/districts/{DISTRICT}/profile", headers=self.h(BOB)).status_code, 403)
+            self.assertEqual(self.client.delete(f"/v1/admin/districts/{DISTRICT}/profile", headers=self.h(CAROL)).status_code, 200)
+            self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}").json()["profile"]["bio"], "")
+        finally:
+            os.environ.pop("ADMIN_ADDRESSES", None)
+            with self.conn.cursor() as cur:
+                cur.execute("delete from social.bans;")
+
+    def test_mutes_lapse_with_the_owner(self):
+        top = self.post(ALICE, "top for mutes").json()["id"]
+        self.client.put(f"/v1/districts/{DISTRICT}/mutes/{CAROL.address}", headers=self.h(ALICE))
+        self.assertEqual(self.post(CAROL, "muted", reply_to=top).status_code, 403)
+        self.assertTrue(self.client.get(f"/v1/districts/{DISTRICT}", headers=self.h(CAROL)).json()["viewer"]["muted"])
+        with self.conn.cursor() as cur:
+            cur.execute("update inscription_owners set address = %s where inscription_id = 'd100i0';", (BOB.address,))
+        try:
+            # ALICE's mute doesn't bind BOB's district, nor show in his list; his own does.
+            self.assertFalse(self.client.get(f"/v1/districts/{DISTRICT}", headers=self.h(CAROL)).json()["viewer"]["muted"])
+            self.assertEqual(self.client.get(f"/v1/districts/{DISTRICT}/mutes", headers=self.h(BOB)).json()["mutes"], [])
+            self.assertEqual(self.post(CAROL, "free", reply_to=top).status_code, 201)
+            self.client.put(f"/v1/districts/{DISTRICT}/mutes/{CAROL.address}", headers=self.h(BOB))
+            self.assertEqual(self.post(CAROL, "muted again", reply_to=top).status_code, 403)
+        finally:
+            with self.conn.cursor() as cur:
+                cur.execute("update inscription_owners set address = %s where inscription_id = 'd100i0';", (ALICE.address,))
+                cur.execute("delete from social.mutes;")
+
+    def test_notification_cap_and_mute(self):
+        from api import notify
+
+        with self.conn.cursor() as cur:
+            cur.execute("delete from social.notifications;")
+        kinds = lambda: [(n["kind"], n["actor"]) for n in self.client.get("/v1/notifications", headers=self.h(BOB)).json()["notifications"]]
+        posts = [self.post(BOB, f"cap {i}").json()["id"] for i in range(4)]
+        notify.PER_HOUR = 2
+        try:
+            for p in posts:
+                self.client.put(f"/v1/posts/{p}/like", headers=self.h(CAROL))
+            self.assertEqual(kinds(), [("like", CAROL.address)] * 2)
+        finally:
+            notify.PER_HOUR = 1000
+        # BOB mutes CAROL for himself: nothing from her reaches him until he unmutes.
+        self.assertEqual(self.client.put(f"/v1/me/mutes/{BOB.address}", headers=self.h(BOB)).status_code, 400)
+        self.assertEqual(self.client.put(f"/v1/me/mutes/{CAROL.address.upper()}", headers=self.h(BOB)).status_code, 200)
+        self.assertEqual(self.client.get("/v1/me/mutes", headers=self.h(BOB)).json()["mutes"], [CAROL.address])
+        self.post(CAROL, "muted reply", reply_to=posts[0])
+        self.assertEqual(len(kinds()), 2)
+        self.client.delete(f"/v1/me/mutes/{CAROL.address}", headers=self.h(BOB))
+        self.post(CAROL, "heard reply", reply_to=posts[0])
+        self.assertEqual(kinds()[0], ("reply", CAROL.address))
+
+    def test_ip_rate_limit(self):
+        from api.app import client_ip
+
+        local = {"client": ("127.0.0.1", 1), "headers": [(b"x-forwarded-for", b"6.6.6.6, 1.2.3.4")]}
+        self.assertEqual(client_ip(local), "1.2.3.4")  # Caddy's hop
+        self.assertEqual(client_ip({**local, "client": ("5.5.5.5", 1)}), "5.5.5.5")  # not from Caddy: ignored
+        os.environ.update(RATE_LIMIT_WRITES="2", RATE_LIMIT_AUTH="1")
+        try:
+            codes = [self.client.post("/v1/auth/nonce", json={"address": ALICE.address}).status_code for _ in range(2)]
+            self.assertEqual(codes, [200, 429])
+            codes = [self.client.put(f"/v1/districts/{OTHER}/follow", headers=self.h(BOB)).status_code for _ in range(3)]
+            self.assertEqual(codes, [200, 200, 429])
+            self.assertEqual(self.client.get(f"/v1/districts/{OTHER}").status_code, 200)  # reads aren't limited
+        finally:
+            os.environ.update(RATE_LIMIT_WRITES="0", RATE_LIMIT_AUTH="0")
+            self.client.delete(f"/v1/districts/{OTHER}/follow", headers=self.h(BOB))
+
+    def test_request_size_bounds(self):
+        self.assertEqual(self.client.post("/v1/auth/login", json={"address": ALICE.address, "nonce": "x", "signature": "A" * 3000}).status_code, 422)
+        big = {"pubkey": "0" * 64, "id": "0" * 64, "sig": "0" * 128, "created_at": 1, "kind": 1, "tags": [], "content": "x" * 20_000}
+        self.assertEqual(self.client.put("/v1/me/nostr", json={"event": big}, headers=self.h(ALICE)).status_code, 422)
+        r = self.client.post("/v1/tips", json={"post_id": 1, "amount_sats": 100, "zap_request": big}, headers=self.h(BOB))
+        self.assertEqual(r.status_code, 422)
 
     # --- land changes hands ---
 

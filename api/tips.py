@@ -20,7 +20,7 @@ import requests
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import events, nostr, notify, wallets
+from api import events, moderation, nostr, notify, wallets
 from api.auth import current_address
 from api.db import cursor
 
@@ -193,7 +193,7 @@ class TipBody(BaseModel):
     place: int | None = None
     amount_sats: int = Field(ge=MIN_SATS, le=MAX_SATS)
     comment: str = Field(default="", max_length=MAX_COMMENT)
-    zap_request: dict | None = None  # NIP-57, signed by the tipper's Nostr extension (api/nostr.py)
+    zap_request: nostr.Event | None = None  # NIP-57, signed by the tipper's Nostr extension (api/nostr.py)
 
 
 def takes_zaps(p):
@@ -230,6 +230,8 @@ def _target(cur, req, tipper):
 def create_tip(req: TipBody, address: str = Depends(current_address)):
     """Ask the recipient's wallet for an invoice. Returns it with the tip's id to check on."""
     with cursor() as cur:
+        if req.comment.strip() and moderation.banned(cur, address):
+            raise HTTPException(403, "this address is banned; tip without a comment")
         recipient, n, post_id = _target(cur, req, address)
         if wallets.main_of(cur, recipient) == wallets.main_of(cur, address):
             raise HTTPException(400, "you can't tip yourself")
