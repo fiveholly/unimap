@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Ranking } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { continent, HALVING } from "@/lib/terrain";
-import { blocksAt, CELL_BLOCKS, cellOf, cellsOf, hash, ISLANDS } from "@/lib/world";
+import { blocksAt, CELL_BLOCKS, cellOf, cellsOf, coastline, hash, ISLANDS } from "@/lib/world";
 import { LANDMARKS } from "@/lib/zones";
 
 /** Land colour of each continent, lighter than its shore colour on the city map. */
@@ -33,7 +33,7 @@ const num = (n: number) => n.toLocaleString("en-US");
 export function WorldMap({ tip, highlight, onEnter }: { tip: number; highlight: number | null; onEnter: (n: number) => void }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const land = useRef<{ img: HTMLCanvasElement; key: string } | null>(null);
-  const geo = useRef({ ox: 0, oy: 0, hw: 1, tops: [] as [number, number][] });
+  const geo = useRef({ ox: 0, oy: 0, hw: 1, tops: [] as [number, number][], shapes: [] as (Path2D | null)[] });
   const markers = useRef<Marker[]>([]);
   const cursor = useRef<[number, number] | null>(null);
   const [hot, setHot] = useState<Ranking[]>([]);
@@ -65,7 +65,8 @@ export function WorldMap({ tip, highlight, onEnter }: { tip: number; highlight: 
       const hw = Math.min((w - 2 * pad) / (maxX - minX + 2), (h - pad - top) / (maxY - minY + 2));
       const ox = w / 2 - ((minX + maxX) / 2) * hw, oy = top + (h - pad - top) / 2 - ((minY + maxY) / 2) * hw;
       const tops: [number, number][] = [];
-      geo.current = { ox, oy, hw, tops };
+      const shapes: (Path2D | null)[] = [];
+      geo.current = { ox, oy, hw, tops, shapes };
       const img = document.createElement("canvas");
       img.width = Math.round(w * dpr);
       img.height = Math.round(h * dpr);
@@ -87,20 +88,33 @@ export function WorldMap({ tip, highlight, onEnter }: { tip: number; highlight: 
         ctx.stroke();
       }
       const at = (u: number, v: number): [number, number] => [ox + (u - v) * hw, oy + ((u + v) / 2) * hw];
-      const diamond = (x: number, y: number, dy = 0) => {
+      // A cell, a touch larger than its own diamond so neighbours overlap and leave no seams.
+      const diamond = (x: number, y: number, dy = 0, grow = 1.06) => {
         ctx.beginPath();
-        ctx.moveTo(x, y - hw / 2 + dy);
-        ctx.lineTo(x + hw, y + dy);
-        ctx.lineTo(x, y + hw / 2 + dy);
-        ctx.lineTo(x - hw, y + dy);
+        ctx.moveTo(x, y - (hw / 2) * grow + dy);
+        ctx.lineTo(x + hw * grow, y + dy);
+        ctx.lineTo(x, y + (hw / 2) * grow + dy);
+        ctx.lineTo(x - hw * grow, y + dy);
         ctx.closePath();
+      };
+      // A set of cells as one smooth shape (lib/world.ts coastline), on screen, dy lower.
+      const shape = (cells: [number, number][], dy = 0) => {
+        const path = new Path2D();
+        for (const loop of coastline(cells)) {
+          loop.forEach(([u, v], i) => {
+            const [x, y] = at(u, v);
+            if (i) path.lineTo(x, y + dy);
+            else path.moveTo(x, y + dy);
+          });
+          path.closePath();
+        }
+        return path;
       };
       const cliff = Math.max(1.5, hw * 0.9);
       for (let e = 0; e < shown; e++) {
         const all = cellsOf(e);
         const future = e >= epochs;
         const filled = future ? 0 : Math.min(all.length, Math.ceil((Math.min(tip, (e + 1) * HALVING - 1) - e * HALVING + 1) / CELL_BLOCKS));
-        const mine = new Set(all.slice(0, future ? all.length : filled).map(([u, v]) => `${u},${v}`));
         const order = all.map((c, k) => [c[0], c[1], k] as const).sort((a, b) => a[0] + a[1] - (b[0] + b[1]));
         // A continent's name goes just above its northernmost cell, over the middle of the land.
         const cut = future ? all.length : filled;
@@ -110,21 +124,40 @@ export function WorldMap({ tip, highlight, onEnter }: { tip: number; highlight: 
         if (future || filled < all.length) {
           // Where the continent will reach: a faint outline in the sea.
           ctx.fillStyle = "rgba(220,215,200,0.05)";
-          for (const [u, v, k] of order) if (future || k >= filled) (diamond(...at(u, v)), ctx.fill());
-          if (future) continue;
+          ctx.fill(shape(all), "evenodd");
+          if (future) {
+            shapes[e] = null;
+            continue;
+          }
         }
         const base = LAND[e] ?? LAND[LAND.length - 1];
-        const coast = (u: number, v: number) => !mine.has(`${u + 1},${v}`) || !mine.has(`${u},${v + 1}`) || !mine.has(`${u - 1},${v}`) || !mine.has(`${u},${v - 1}`);
+        const land = all.slice(0, filled);
+        const coast = shape(land);
+        shapes[e] = coast;
+        // The cliff under the coast, then the land.
         ctx.fillStyle = shade(base, -0.55);
-        for (const [u, v, k] of order) if (k < filled && (!mine.has(`${u + 1},${v}`) || !mine.has(`${u},${v + 1}`))) (diamond(...at(u, v), cliff), ctx.fill());
+        ctx.fill(shape(land, cliff), "evenodd");
+        ctx.fillStyle = shade(base, 0.04);
+        ctx.fill(coast, "evenodd");
+        ctx.save();
+        ctx.clip(coast, "evenodd");
         for (const [u, v, k] of order) {
           if (k >= filled) continue;
           // Older blocks, nearer the middle, a little lighter; and some grain everywhere.
           const f = 0.12 * (1 - k / all.length) + (hash(u, v) - 0.5) * 0.14;
-          ctx.fillStyle = coast(u, v) ? BEACH : shade(base, f);
+          ctx.fillStyle = shade(base, f);
           diamond(...at(u, v));
           ctx.fill();
         }
+        // A sandy beach along the whole coast: the inner half of a wide line drawn on it.
+        ctx.strokeStyle = BEACH;
+        ctx.lineJoin = "round";
+        ctx.lineWidth = Math.max(2, hw * 1.6);
+        ctx.stroke(coast);
+        ctx.restore();
+        ctx.strokeStyle = shade(BEACH, -0.25);
+        ctx.lineWidth = 0.75;
+        ctx.stroke(coast);
       }
       // Markers sit on the cell of their block.
       const list: Marker[] = PINNED.filter(([n]) => n <= tip).map(([n, name]) => ({ n, ...xy(at, n), name: t(name), kind: "landmark" }));
@@ -157,14 +190,10 @@ export function WorldMap({ tip, highlight, onEnter }: { tip: number; highlight: 
       const at = (u: number, v: number): [number, number] => [ox + (u - v) * hw, oy + ((u + v) / 2) * hw];
       const font = getComputedStyle(cv).fontFamily;
 
-      if (highlight != null && highlight < epochs) {
+      const lit = highlight != null && highlight < epochs ? geo.current.shapes[highlight] : null;
+      if (lit) {
         ctx.fillStyle = "rgba(255,250,235,0.16)";
-        const last = Math.min(tip, (highlight + 1) * HALVING - 1);
-        cellsOf(highlight).forEach(([u, v], k) => {
-          if (highlight * HALVING + k * CELL_BLOCKS > last) return;
-          const [x, y] = at(u, v);
-          ctx.fillRect(x - hw / 2, y - hw / 4, hw, hw / 2);
-        });
+        ctx.fill(lit, "evenodd");
       }
       // The spot under the cursor.
       const c = cursor.current;

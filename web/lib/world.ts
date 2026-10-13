@@ -71,3 +71,65 @@ export function blocksAt(u: number, v: number, tip: number): [number, number] | 
   }
   return null;
 }
+
+/** The coast of a set of cells as smooth closed loops, in cell coordinates (a cell's centre is
+ * (u, v), its corners half a cell away). The cells' outer edges are chained into loops, each
+ * loop is replaced by the midpoints of its edges (which turns a staircase into a straight line),
+ * evened out a few times (each point moved halfway to the mean of its neighbours, which irons
+ * out the one-cell bumps) and then rounded off by Chaikin's corner cutting. Holes come out as loops too; fill with
+ * "evenodd". Lone cells and tiny pockets (fewer than minEdges edges) are dropped. */
+export function coastline(cells: Iterable<readonly [number, number]>, rounds = 2, even = 3, minEdges = 6): [number, number][][] {
+  const on = new Set<string>();
+  for (const [u, v] of cells) on.add(`${u},${v}`);
+  const has = (u: number, v: number) => on.has(`${u},${v}`);
+  // Edges between corner points, the land on their left; corner (i, j) is at (i - 0.5, j - 0.5).
+  const next = new Map<string, [number, number][]>();
+  const add = (a: [number, number], b: [number, number]) => {
+    const k = `${a[0]},${a[1]}`;
+    const list = next.get(k);
+    if (list) list.push(b);
+    else next.set(k, [b]);
+  };
+  for (const key of on) {
+    const [u, v] = key.split(",").map(Number);
+    if (!has(u, v - 1)) add([u, v], [u + 1, v]);
+    if (!has(u + 1, v)) add([u + 1, v], [u + 1, v + 1]);
+    if (!has(u, v + 1)) add([u + 1, v + 1], [u, v + 1]);
+    if (!has(u - 1, v)) add([u, v + 1], [u, v]);
+  }
+  const loops: [number, number][][] = [];
+  for (const [start, ends] of next) {
+    while (ends.length) {
+      const corners: [number, number][] = [start.split(",").map(Number) as [number, number]];
+      let at = ends.pop()!;
+      for (let guard = 0; guard < 1e6; guard++) {
+        const k = `${at[0]},${at[1]}`;
+        if (k === start) break;
+        corners.push(at);
+        const out = next.get(k);
+        if (!out?.length) break;
+        at = out.pop()!;
+      }
+      if (corners.length < minEdges) continue;
+      let pts = corners.map((c, i): [number, number] => {
+        const d = corners[(i + 1) % corners.length];
+        return [(c[0] + d[0]) / 2 - 0.5, (c[1] + d[1]) / 2 - 0.5];
+      });
+      for (let r = 0; r < even; r++)
+        pts = pts.map((p, i): [number, number] => {
+          const a = pts[(i + pts.length - 1) % pts.length], b = pts[(i + 1) % pts.length];
+          return [p[0] / 2 + (a[0] + b[0]) / 4, p[1] / 2 + (a[1] + b[1]) / 4];
+        });
+      for (let r = 0; r < rounds; r++)
+        pts = pts.flatMap((p, i): [number, number][] => {
+          const q = pts[(i + 1) % pts.length];
+          return [
+            [0.75 * p[0] + 0.25 * q[0], 0.75 * p[1] + 0.25 * q[1]],
+            [0.25 * p[0] + 0.75 * q[0], 0.25 * p[1] + 0.75 * q[1]],
+          ];
+        });
+      loops.push(pts);
+    }
+  }
+  return loops;
+}
