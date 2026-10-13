@@ -3,7 +3,8 @@ link, a code, a piece of writing). The buyer pays over Lightning straight to the
 wallet, the same way as a tip (api/tips.py): unimap asks the seller's Lightning address for an
 invoice and its LUD-21 verify URL for whether it was paid, and never holds the money. What was
 bought (the item's content) is shown to the buyer only once the payment is confirmed, so a
-seller's wallet must support LUD-21 to sell here.
+seller's wallet must support LUD-21 to sell here. The content is copied into the order when it
+settles, so editing the item later doesn't change what earlier buyers got.
 
 An item belongs to the place it was listed in. It stays up only while the seller still holds
 that place; when the district or parcel changes hands, it can't be bought any more. Physical
@@ -63,7 +64,7 @@ def items(cur, n, viewer=None, everything=False):
         out.append(i)
     if viewer is not None and out:
         cur.execute(
-            "select o.id, o.item_id, i.content, o.settled_at from social.shop_orders o join social.shop_items i on i.id = o.item_id "
+            "select o.id, o.item_id, o.content, o.settled_at from social.shop_orders o "
             "where o.buyer = %s and o.status = 'settled' and o.item_id = any(%s) order by o.id;",
             (viewer, [i["id"] for i in out]),
         )
@@ -188,6 +189,12 @@ def buy(item_id: int, address: str = Depends(current_address)):
             raise HTTPException(409, "sold out" if i["left"] == 0 else "this item isn't on sale any more")
         if wallets.main_of(cur, i["seller"]) == wallets.main_of(cur, address):
             raise HTTPException(400, "you can't buy your own item")
+        if i["left"] is not None:
+            # Other buyers' unpaid orders from the last hour hold stock, so a limited item isn't oversold.
+            cur.execute("select count(distinct buyer) from social.shop_orders where item_id = %s and status = 'pending' and buyer <> %s "
+                        "and created_at > now() - make_interval(mins => %s);", (item_id, address, tips.EXPIRE_MINUTES))
+            if cur.fetchone()[0] >= i["left"]:
+                raise HTTPException(409, "the rest is waiting on other buyers' payments; try again later")
         to = tips.lightning_of(cur, i["seller"])
         if to is None:
             raise HTTPException(409, "the seller hasn't set up a Lightning address")
@@ -224,27 +231,28 @@ def order_status(order_id: int, address: str = Depends(current_address)):
         if row is None or row[0] != address:
             raise HTTPException(404, "no such order")
         buyer, seller, item_id, n, verify, status, old, due = row
-        if status == "pending" and due and old:
-            cur.execute("update social.shop_orders set status = 'expired' where id = %s;", (order_id,))
-            status = "expired"
-        elif status == "pending" and due:
+        if status == "pending" and due:
             cur.execute("update social.shop_orders set checked_at = now() where id = %s;", (order_id,))
     if status == "pending" and due:
         try:
             paid = tips.lnurl.settled(verify)
         except tips.LnurlError:
             paid = False
-        if paid:
-            with cursor() as cur:
-                cur.execute("update social.shop_orders set status = 'settled', settled_at = now() where id = %s and status = 'pending' "
-                            "returning id;", (order_id,))
+        with cursor() as cur:
+            if paid:
+                cur.execute("update social.shop_orders o set status = 'settled', settled_at = now(), content = i.content "
+                            "from social.shop_items i where i.id = o.item_id and o.id = %s and o.status = 'pending' returning o.id;",
+                            (order_id,))
                 if cur.fetchone():
                     notify.notify(cur, seller, "shop_sold", buyer, n, order_id=order_id)
-            status = "settled"
+                status = "settled"
+            elif old:  # asked once more after the hour, in case it was paid at the last minute
+                cur.execute("update social.shop_orders set status = 'expired' where id = %s and status = 'pending';", (order_id,))
+                status = "expired"
     out = {"id": order_id, "item_id": item_id, "status": status, "verifiable": True}
     if status == "settled":
         with cursor() as cur:
-            cur.execute("select content from social.shop_items where id = %s;", (item_id,))
+            cur.execute("select content from social.shop_orders where id = %s;", (order_id,))
             out["content"] = cur.fetchone()[0]
     return out
 
@@ -254,7 +262,7 @@ def my_shop(address: str = Depends(current_address)):
     """What this address bought, newest first, and what it sold."""
     with cursor() as cur:
         cur.execute(
-            "select o.id, o.item_id, i.bitmap_number, i.title, o.amount_sats, i.content, o.settled_at from social.shop_orders o "
+            "select o.id, o.item_id, i.bitmap_number, i.title, o.amount_sats, o.content, o.settled_at from social.shop_orders o "
             "join social.shop_items i on i.id = o.item_id where o.buyer = %s and o.status = 'settled' order by o.id desc limit 100;",
             (address,),
         )

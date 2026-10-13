@@ -553,6 +553,10 @@ CREATE TABLE IF NOT EXISTS social.shop_orders (
 CREATE INDEX IF NOT EXISTS shop_orders_item_idx ON social.shop_orders USING btree (item_id) WHERE status = 'settled';
 CREATE INDEX IF NOT EXISTS shop_orders_buyer_idx ON social.shop_orders USING btree (buyer, created_at);
 CREATE INDEX IF NOT EXISTS shop_orders_seller_idx ON social.shop_orders USING btree (seller, id) WHERE status = 'settled';
+-- What the buyer got, copied from the item when the order settles, so a later edit can't change it.
+ALTER TABLE social.shop_orders ADD COLUMN IF NOT EXISTS content text NULL;
+UPDATE social.shop_orders o SET content = i.content FROM social.shop_items i
+	WHERE i.id = o.item_id AND o.status = 'settled' AND o.content IS NULL;
 -- Sale notifications carry the order, so each sale is told even from the same buyer.
 DO $$
 BEGIN

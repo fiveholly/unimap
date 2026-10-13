@@ -373,7 +373,7 @@ export type Contest = {
   standings?: { address: string; score: number }[];
   winners?: { place: number; address: string; score: number; prize_sats: number; paid: "settled" | "pending" | null }[];
 };
-export type SeasonRow = { bitmap_number: number; owner: string | null; score: number; parts?: Record<"posts" | "replies" | "checkins" | "tippers", number> };
+export type SeasonRow = { bitmap_number: number; owner: string | null; score: number; parts?: Record<"posts" | "replies" | "checkins", number> };
 export type Season = {
   number: number | null;
   since: number;
@@ -382,7 +382,7 @@ export type Season = {
   started_at: string;
   standings: SeasonRow[];
   last: { number: number; winners: SeasonRow[] } | null;
-  weights: Record<"posts" | "replies" | "checkins" | "tippers", number>;
+  weights: Record<"posts" | "replies" | "checkins", number>;
   pool_sats: number;
   pool_split: number[];
 };
