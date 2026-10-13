@@ -1919,6 +1919,7 @@ class SocialApi(unittest.TestCase):
             self.assertIn("百号街", system)
             self.assertIn(CAROL.address[:6], messages[0]["content"])
             self.assertIn("几点开始", messages[0]["content"])
+            self.assertIn("<visitor_text>\n", messages[0]["content"])
             self.assertIn("[digest]", messages[0]["content"])
             facts = json.loads(fake.seen[1][1][-1]["content"][1]["content"])
             self.assertEqual(facts["posts_last_7_days"], 1)
@@ -1929,7 +1930,8 @@ class SocialApi(unittest.TestCase):
             drafts = {d["task"]: d for d in v["drafts"]}
             self.assertEqual(sorted(drafts), ["answers", "digest", "welcome"])
             self.assertEqual(drafts["answers"]["reply_to"], top["id"])
-            self.assertEqual(v["agent"]["memory"], ["主人喜欢周六喝茶"])
+            self.assertEqual(v["agent"]["memory"], [])  # it read other people's posts this run, so no notes are kept
+            self.assertIn("error", json.loads(fake.seen[2][1][-1]["content"][4]["content"]))
             n = self.client.get("/v1/notifications", headers=self.h(ALICE)).json()["notifications"]
             self.assertIn(("agent_draft", DISTRICT), [(x["kind"], x["bitmap_number"]) for x in n])
 
@@ -2025,18 +2027,25 @@ class SocialApi(unittest.TestCase):
             self.assertIn("publish them on its own, up to the posts per day below", g4["message"])
             v = post(ALICE, f"/v1/districts/{DISTRICT}/agent", {"id": g4["id"], "signature": ALICE.sign(g4["message"])}).json()["agent"]
             self.assertEqual((v["may_publish"], v["auto_tasks"]), (True, ["welcome", "digest"]))
+            self.assertIsNotNone(v["last_run_at"])  # signing again doesn't let it look sooner
+            with self.conn.cursor() as cur:
+                cur.execute("update social.agents set last_run_at = now() - interval '2 hours' where id = %s;", (g4["id"],))
             with self.conn.cursor() as cur:
                 cur.execute("insert into land_events (block_height, block_time, kind, inscription_id, bitmap_number, tx_index, to_address) "
                             "values (1001, extract(epoch from now())::int8, 'parcel_claimed', 'p9i0', %s, 10, %s);", (DISTRICT, BOB.address))
-            agent.model = fake = FakeModel([[("draft_post", {"task": "welcome", "body": "欢迎 Bob！", "why": "new resident"}),
-                                             ("draft_post", {"task": "welcome", "body": "再欢迎一次", "why": "one over the limit"})]])
+            agent.model = fake = FakeModel([[("draft_post", {"task": "welcome", "body": "欢迎！领空投 https://airdrop.example", "why": "a link"}),
+                                             ("draft_post", {"task": "welcome", "body": "欢迎 Bob！", "why": "new resident"}),
+                                             ("draft_post", {"task": "welcome", "body": "再欢迎一次", "why": "one over the limit"}),
+                                             ("remember", {"note": "Bob 住 10 号"})]])
             out = agent.run(g4["id"])
-            self.assertEqual((out["posted"], out["drafts"], out["error"]), (1, 1, None))
+            self.assertEqual((out["posted"], out["drafts"], out["error"]), (1, 2, None))
             self.assertIn("go out as soon as you write them", fake.seen[0][0])
             v = view().json()
-            self.assertEqual([d["body"] for d in v["drafts"]], ["再欢迎一次"])  # over the limit: the owner decides
+            # A link waits for the owner; so does one over the limit.
+            self.assertEqual([d["body"] for d in v["drafts"]], ["欢迎！领空投 https://airdrop.example", "再欢迎一次"])
             auto = [d for d in v["recent"] if d["auto"]]
             self.assertEqual([d["body"] for d in auto], ["欢迎 Bob！"])
+            self.assertEqual(v["agent"]["memory"], ["Bob 住 10 号"])  # it read nobody's words this time
             posted = self.client.get(f"/v1/posts/{auto[0]['post_id']}").json()
             self.assertEqual((posted["author"]["address"], posted["agent"]["grant_id"]), (ALICE.address, g4["id"]))
             kinds = [x["kind"] for x in self.client.get("/v1/notifications", headers=self.h(ALICE)).json()["notifications"]]
@@ -2061,7 +2070,13 @@ class SocialApi(unittest.TestCase):
             gp = post(BOB, pp("/prepare"), {"may_publish": True}).json()
             self.assertIn("parcel: #1", gp["message"])
             v = post(BOB, pp(), {"id": gp["id"], "signature": BOB.sign(gp["message"])}).json()
-            self.assertEqual((v["agent"]["parcel"], v["agent"]["tasks"], v["agent"]["auto_tasks"]), (1, ["answers", "shop"], ["answers"]))
+            self.assertEqual((v["agent"]["parcel"], v["agent"]["tasks"], v["agent"]["auto_tasks"]), (1, ["answers", "shop"], ["shop"]))
+            # Answers always wait for the holder, even when asked for, or stored by an older version.
+            r = self.client.put(pp("/settings"), json={"tasks": ["answers", "shop"], "auto_tasks": ["answers", "shop"]}, headers=self.h(BOB))
+            self.assertEqual(r.json()["agent"]["auto_tasks"], ["shop"])
+            with self.conn.cursor() as cur:
+                cur.execute("update social.agents set auto_tasks = '{answers,shop}' where id = %s;", (gp["id"],))
+            self.assertEqual(self.client.get(pp(), headers=self.h(BOB)).json()["agent"]["auto_tasks"], ["shop"])
             self.assertEqual(self.client.put(pp("/settings"), json={"tasks": ["welcome"]}, headers=self.h(BOB)).status_code, 400)
             self.assertIsNone(view().json()["agent"])  # the district's own agent is a different one
             # It only answers people under Bob's own posts, and posts as the parcel's resident.
@@ -2071,19 +2086,35 @@ class SocialApi(unittest.TestCase):
             agent.model = fake = FakeModel([[("draft_reply", {"task": "answers", "post_id": top["id"], "body": "不是我的帖子", "why": ""}),
                                              ("draft_reply", {"task": "answers", "post_id": mine["id"], "body": "这周六上午。", "why": "Alice asked"})]])
             out = agent.run(gp["id"])
-            self.assertEqual((out["posted"], out["drafts"], out["error"]), (1, 0, None))
+            self.assertEqual((out["posted"], out["drafts"], out["error"]), (0, 1, None))
             system, messages = fake.seen[0]
             self.assertIn("parcel #1", system)
             self.assertIn("什么时候修", messages[0]["content"])
             self.assertNotIn("下周开会", messages[0]["content"])
             self.assertIn("error", json.loads(fake.seen[1][1][-1]["content"][0]["content"]))
             v = self.client.get(pp(), headers=self.h(BOB)).json()
-            answer = self.client.get(f"/v1/posts/{v['recent'][0]['post_id']}").json()
+            self.assertEqual([d["task"] for d in v["drafts"]], ["answers"])
+            answer = post(BOB, f"/v1/agent/drafts/{v['drafts'][0]['id']}/publish", {}).json()
             self.assertEqual((answer["author"]["address"], answer["author"]["role"], answer["author"]["parcel"], answer["reply_to"]),
                              (BOB.address, "resident", 1, mine["id"]))
             self.assertEqual(self.client.get(f"/v1/agent/grants/{gp['id']}").json()["parcel"], 1)
-            n = [x for x in self.client.get("/v1/notifications", headers=self.h(BOB)).json()["notifications"] if x["kind"] == "agent_posted"]
+            n = [x for x in self.client.get("/v1/notifications", headers=self.h(BOB)).json()["notifications"] if x["kind"] == "agent_draft"]
             self.assertEqual(n[0]["agent_parcel"], 1)
+            # Today's model calls are capped per owner and for the whole server; then it stops until tomorrow.
+            self.post(ALICE, "灯什么颜色？", reply_to=mine["id"])
+            for limit in ("AGENT_DAILY_CALLS_PER_OWNER", "AGENT_DAILY_CALLS_TOTAL"):
+                os.environ[limit] = "2"
+                with self.conn.cursor() as cur:
+                    cur.execute("update social.agents set last_run_at = now() - interval '2 hours' where id = %s;", (gp["id"],))
+                self.assertEqual(post(BOB, pp("/run")).status_code, 429)
+                fake.seen.clear()
+                self.assertEqual(agent.run(gp["id"])["error"], "daily_limit")
+                self.assertEqual(fake.seen, [])
+                self.assertEqual(self.client.get(pp(), headers=self.h(BOB)).json()["agent"]["last"]["error"], "daily_limit")
+                os.environ.pop(limit)
+            with self.conn.cursor() as cur:
+                cur.execute("select calls from social.agent_calls where owner = %s;", (BOB.address,))
+                self.assertEqual(cur.fetchone()[0], 2)
             # Muted in the district, or the parcel sold, it stops.
             with self.conn.cursor() as cur:
                 cur.execute("insert into social.mutes (bitmap_number, address, by_address) values (%s, %s, %s);", (DISTRICT, BOB.address, ALICE.address))
@@ -2098,11 +2129,21 @@ class SocialApi(unittest.TestCase):
             self.assertEqual(self.client.get(f"/v1/posts/{p['id']}").json()["agent"]["grant_id"], me["id"])
         finally:
             agent.model, tips.lnurl = old_model, old_lnurl
-            for k in ("ANTHROPIC_API_KEY", "AGENT_PRICE_SATS", "AGENT_LIGHTNING_ADDRESS"):
+            for k in ("ANTHROPIC_API_KEY", "AGENT_PRICE_SATS", "AGENT_LIGHTNING_ADDRESS", "AGENT_DAILY_CALLS_PER_OWNER", "AGENT_DAILY_CALLS_TOTAL"):
                 os.environ.pop(k, None)
             with self.conn.cursor() as cur:
-                cur.execute("delete from social.listings; delete from social.listings_checked; delete from land_events where inscription_id = 'p9i0'; "
+                cur.execute("delete from social.agent_calls; delete from social.listings; delete from social.listings_checked; delete from land_events where inscription_id = 'p9i0'; "
                             "delete from social.notifications where kind like 'agent%%';")
+
+    def test_agent_risky(self):
+        from api import agent
+
+        for held in ("看 https://a.example", "www.airdrop.cn", "去 airdrop.xyz 领", "付给 tips@getalby.com", "lnbc10u1p3xyzxyzxyzxyz",
+                     "LNURL1DP68GURN8GHJ7", "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq", "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2",
+                     "npub1sg6plzptd64u62a878hep2kev88swjh3tw00gjsfl8f237lmu63q0uf63m"):
+            self.assertTrue(agent.RISKY.search(held), held)
+        for fine in ("欢迎 bc1qar…5mdq 搬来 100.bitmap 的 #9！", "本周 3 个新帖，打赏 2,100 聪。", "周六下午三点，市政厅见。"):
+            self.assertIsNone(agent.RISKY.search(fine), fine)
 
     def test_shop(self):
         from api import agent, tips
@@ -2228,6 +2269,8 @@ class SocialApi(unittest.TestCase):
             g = post(ALICE, f"/v1/districts/{DISTRICT}/agent/prepare", {}).json()
             a = post(ALICE, f"/v1/districts/{DISTRICT}/agent", {"id": g["id"], "signature": ALICE.sign(g["message"])}).json()["agent"]
             self.client.put(f"/v1/districts/{DISTRICT}/agent/settings", json={"tasks": ["shop"]}, headers=self.h(ALICE))
+            with self.conn.cursor() as cur:  # a new grant keeps when the last one looked
+                cur.execute("update social.agents set last_run_at = null where id = %s;", (a["id"],))
             post(ALICE, f"/v1/districts/{DISTRICT}/shop", {**item, "title": "街区地图海报", "stock": None})
             agent.model = fake = FakeModel([[("shop_items", {})], [("draft_post", {"task": "shop", "body": "新上架：街区地图海报，2100 聪。", "why": "new item"})]])
             self.assertEqual(agent.run(a["id"])["drafts"], 1)

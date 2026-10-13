@@ -1579,7 +1579,7 @@ function route(path: string, opts: Opts): unknown {
       const expires = new Date(Date.now() + days * DAY * 1000).toISOString();
       const mayPublish = !!body.may_publish;
       s.agents!.push({ id, n, parcel, key, message: agentGrant(n, key, perDay, expires, mayPublish, parcel), posts_per_day: perDay, expires_at: expires, granted_at: "", paid_until: null, persona: "",
-        tasks: parcel != null ? ["answers"] : ["welcome", "digest", "answers"], may_publish: mayPublish, auto_tasks: parcel != null ? ["answers"] : ["welcome", "digest"],
+        tasks: parcel != null ? ["answers"] : ["welcome", "digest", "answers"], may_publish: mayPublish, auto_tasks: parcel != null ? ["shop"] : ["welcome", "digest"],
         watch: {}, memory: [], last_run_at: null, last: null, drafts: [], revoked: true });
       save();
       return { id, message: s.agents!.find((x) => x.id === id)!.message };
@@ -1612,7 +1612,7 @@ function route(path: string, opts: Opts): unknown {
     if (sub === "/settings") {
       Object.assign(ag, { persona: String(body.persona ?? "").trim(), tasks: body.tasks as AgentTask[], watch: body.watch as Agent["watch"],
         memory: body.memory ? ag.memory.filter((x) => (body.memory as string[]).includes(x)) : ag.memory,
-        auto_tasks: body.auto_tasks ? (["welcome", "digest", "answers"] as AgentTask[]).filter((k) => (body.auto_tasks as string[]).includes(k)) : ag.auto_tasks });
+        auto_tasks: body.auto_tasks ? (["welcome", "digest", "shop"] as AgentTask[]).filter((k) => (body.auto_tasks as string[]).includes(k)) : ag.auto_tasks });
       save();
       return agentView(ag, s);
     }
