@@ -13,7 +13,7 @@ const blocks = (n: number) => n.toLocaleString("en-US");
 const SHOWN = 3; // treasures listed on a district's page
 const CROWN_RARITY: Rarity[] = ["legendary", "epic", "rare"]; // as api/seasons.py
 
-/** Above the home map: today's lucky district and how long it has left. */
+/** Under the home map: today's lucky district and how long it has left. */
 export function LuckyStrip({ tip }: { tip: number }) {
   const [game, setGame] = useState<Game | null>(null);
   useEffect(() => {
@@ -24,11 +24,9 @@ export function LuckyStrip({ tip }: { tip: number }) {
   const r = game?.round;
   if (!r || r.bitmap_number == null) return null;
   return (
-    <div className="lucky-strip">
-      <span className="lucky-star" aria-hidden>
-        ★
-      </span>
-      <span>
+    <section className="lucky-strip" aria-label={t("今日幸运街区")}>
+      <span className="eyebrow">{t("区块节拍")}</span>
+      <p className="lucky-say">
         {tn("今日幸运街区 {n}，还剩 {left} 个区块", {
           n: (
             <Link className="mono" href={`/district/${r.bitmap_number}`}>
@@ -37,12 +35,11 @@ export function LuckyStrip({ tip }: { tip: number }) {
           ),
           left: <b className="mono">{blocks(Math.max(0, r.until - tip + 1))}</b>,
         })}
-      </span>
-      <span className="grow" />
+      </p>
       <Link className="small" href="/game">
         {t("区块节拍是什么 →")}
       </Link>
-    </div>
+    </section>
   );
 }
 

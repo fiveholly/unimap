@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 
@@ -10,8 +11,8 @@ import { Today } from "@/components/Today";
 import { TourCard } from "@/components/Tour";
 import { OpenedList } from "@/components/Opening";
 import { Welcome } from "@/components/Welcome";
-import { LAND, WorldMap } from "@/components/WorldMap";
-import { epochName } from "@/lib/format";
+import { WorldMap } from "@/components/WorldMap";
+import { epochName, timeAgo } from "@/lib/format";
 import { t } from "@/lib/i18n";
 import { continent, HALVING } from "@/lib/terrain";
 import { ISLANDS } from "@/lib/world";
@@ -25,6 +26,14 @@ export default function Home() {
 }
 
 const num = (n: number) => n.toLocaleString("en-US");
+const SHEET = 360; // the floating sheet's width, as in globals.css
+/** Where the world map may put land: clear of the header, the sentence and the sheet on a wide
+ * screen; nearly the whole canvas on a phone, where the sheet sits under the map. */
+const room = (w: number) => {
+  if (w <= 900) return { top: 34, right: 12, bottom: 40, left: 12 };
+  const side = (w - Math.min(w, 1200)) / 2 + 24;
+  return { top: 190, right: side + SHEET + 12, bottom: 84, left: side - 8 };
+};
 
 /** The home page is the map: the whole world first, and the city map of a spot once you pick one
  * (?b= names the block, so the browser's back button returns to the world). */
@@ -41,85 +50,134 @@ function HomeView() {
   const b = Number(search.get("b"));
   const city = tip != null && search.get("b") != null && Number.isInteger(b) && b >= 0 && b <= tip;
   const enter = (n: number) => router.push(`/?b=${n}`, { scroll: false });
-  const epochs = tip == null ? 0 : Math.floor(tip / HALVING) + 1;
+
+  const hero = (
+    <>
+      <h1>{t("比特币的每一个区块，都是城市里的一个街区")}</h1>
+      <p>{t("持有 Bitmap 街区就能经营它的社区，持有地块就是这里的居民，其他人可以来逛、关注和回复。")}</p>
+    </>
+  );
 
   return (
-    <div className="page">
-      <section className="home-head">
-        <div>
-          <h1>{t("比特币的每一个区块，都是城市里的一个街区")}</h1>
-          <p className="muted">
-            {t("持有 Bitmap 街区就能经营它的社区，持有地块就是这里的居民，其他人可以来逛、关注和回复。")}
-          </p>
+    <div className="home">
+      {error && (
+        <div className="page">
+          <p className="error">{t("连不上 unimap 服务：{error}", { error })}</p>
         </div>
-        {tip != null && (
-          <div className="mono muted small nowrap">
-            {epochName(tip)} · {t("最新区块 {n}", { n: num(tip) })}
-          </div>
-        )}
-      </section>
-      {error && <p className="error">{t("连不上 unimap 服务：{error}", { error })}</p>}
-      {tip == null && !error && <div className="city-skeleton" aria-label={t("地图加载中")} />}
+      )}
+      {tip == null && !error && (
+        <div className="page">
+          <div className="city-skeleton" aria-label={t("地图加载中")} />
+        </div>
+      )}
       {tip != null && city && (
-        <>
+        <div className="page">
+          <div className="city-head">{hero}</div>
           <nav className="map-crumbs" aria-label={t("地图位置")}>
             <button type="button" className="ghost sm" onClick={() => router.push("/", { scroll: false })}>
               ← {t("世界地图")}
             </button>
             <span className="muted small">
-              {t(continent(Math.floor(b / HALVING)).name)} · {ISLANDS[Math.floor(b / HALVING)]?.years}
+              {t(continent(Math.floor(b / HALVING)).name)} · <span className="mono">{ISLANDS[Math.floor(b / HALVING)]?.years}</span>
             </span>
           </nav>
           <CityMap tip={tip} focus={b} />
-        </>
-      )}
-      {tip != null && !city && (
-        <div className="world">
-          <WorldMap tip={tip} highlight={highlight} onEnter={enter} />
-          <aside className="world-panel">
-            <h2 className="section-title">{t("世界地图")}</h2>
-            <p className="muted small">{t("每一次减半是一块大陆，大陆上每一小格是 64 个区块，越靠中间越早。点地图上任意一处，进入那里的城区。")}</p>
-            <ul className="continents">
-              {ISLANDS.slice(0, Math.min(epochs + 1, ISLANDS.length)).map((isle, e) => {
-                const first = e * HALVING, last = Math.min(tip, (e + 1) * HALVING - 1);
-                const future = e >= epochs;
-                return (
-                  <li key={e}>
-                    <button
-                      type="button"
-                      className={`continent-row${highlight === e ? " on" : ""}`}
-                      disabled={future}
-                      onMouseEnter={() => setHighlight(e)}
-                      onMouseLeave={() => setHighlight(null)}
-                      onFocus={() => setHighlight(e)}
-                      onBlur={() => setHighlight(null)}
-                      onClick={() => enter(first)}
-                    >
-                      <i className="swatch" style={future ? { border: "1px dashed var(--fg-2)" } : { background: LAND[e] }} />
-                      <span className="grow">
-                        <b>{t(continent(e).name)}</b>
-                        <span className="muted small">
-                          {" "}
-                          {isle.years}
-                        </span>
-                        <span className="mono muted small block">
-                          {future ? t("区块 {a} 起", { a: num(first) }) : t("区块 {a} – {b}", { a: num(first), b: num(last) })}
-                        </span>
-                      </span>
-                      <span className="small muted nowrap">{future ? t("还没出现") : last - first + 1 < HALVING ? t("还在长") : ""}</span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </aside>
         </div>
       )}
-      {tip != null && <Today />}
-      {tip != null && <LuckyStrip tip={tip} />}
-      {tip != null && <TourCard />}
-      {tip != null && <OpenedList />}
-      {tip != null && <Welcome tip={tip} />}
+      {tip != null && !city && (
+        <section className="atlas" aria-label={t("世界地图")}>
+          <div className="atlas-map">
+            <WorldMap tip={tip} highlight={highlight} onEnter={enter} room={room} />
+          </div>
+          <div className="atlas-over">
+            <div className="atlas-hero">{hero}</div>
+            <Sheet tip={tip} highlight={highlight} setHighlight={setHighlight} enter={enter} />
+          </div>
+        </section>
+      )}
+      {tip != null && (
+        <div className="page home-more">
+          <div>
+            <LuckyStrip tip={tip} />
+            <Welcome tip={tip} />
+          </div>
+          <div>
+            <Today />
+            <TourCard />
+            {city && <OpenedList />}
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+/** The sheet over the map: the newest block, how far the epoch has come, the epochs as a table
+ * of contents (hover one to light it on the map, click to go in) and the districts just opened. */
+function Sheet({ tip, highlight, setHighlight, enter }: { tip: number; highlight: number | null; setHighlight: (e: number | null) => void; enter: (n: number) => void }) {
+  const { since } = useTip();
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => tick((n) => n + 1), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+  const epochs = Math.floor(tip / HALVING) + 1;
+  const cur = epochs - 1;
+  const share = (tip - cur * HALVING + 1) / HALVING;
+  const nextYear = ISLANDS[cur + 1]?.years.slice(0, 4);
+  return (
+    <aside className="atlas-sheet">
+      <div>
+        <div className="live">
+          <span className="live-dot" aria-hidden />
+          {t("最新区块")}
+          {since != null && <> · {timeAgo(since / 1000)}</>}
+        </div>
+        <Link className="tip-height" href={`/district/${tip}`}>
+          {num(tip)}
+        </Link>
+        <p className="tip-sub">
+          {nextYear
+            ? t("{epoch}已出块 {p}%，约 {y} 年迎来{next}", { epoch: epochName(tip), p: (share * 100).toFixed(1), y: nextYear, next: t(continent(cur + 1).name) })
+            : t("{epoch}已出块 {p}%", { epoch: epochName(tip), p: (share * 100).toFixed(1) })}
+        </p>
+        <div className="epoch-line" aria-hidden>
+          <i style={{ width: `${share * 100}%` }} />
+        </div>
+      </div>
+      <section className="sheet-block" aria-label={t("纪元")}>
+        <h2 className="eyebrow">{t("纪元")}</h2>
+        <ol className="era-toc">
+          {ISLANDS.slice(0, Math.min(epochs + 1, ISLANDS.length)).map((isle, e) => {
+            const first = e * HALVING, last = Math.min(tip, (e + 1) * HALVING - 1);
+            const future = e >= epochs;
+            const range = future ? t("区块 {a} 起", { a: num(first) }) : t("区块 {a} – {b}", { a: num(first), b: num(last) });
+            return (
+              <li key={e}>
+                <button
+                  type="button"
+                  className={`era${highlight === e ? " on" : ""}${e === cur ? " now" : ""}`}
+                  disabled={future}
+                  title={range}
+                  onMouseEnter={() => setHighlight(e)}
+                  onMouseLeave={() => setHighlight(null)}
+                  onFocus={() => setHighlight(e)}
+                  onBlur={() => setHighlight(null)}
+                  onClick={() => enter(first)}
+                >
+                  <span className="era-n">{String(e).padStart(2, "0")}</span>
+                  <span className="era-name">{t(continent(e).name)}</span>
+                  <span className="era-y">
+                    {future ? t("约 {y}", { y: isle.years.slice(0, 4) }) : e === cur ? `${isle.years.slice(0, 5)}` : isle.years}
+                  </span>
+                  <span className="sr-only">{range}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      </section>
+      <OpenedList />
+    </aside>
   );
 }
