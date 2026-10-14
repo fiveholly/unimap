@@ -10,6 +10,7 @@ import { LuckyStrip } from "@/components/GameBits";
 import { Today } from "@/components/Today";
 import { TourCard } from "@/components/Tour";
 import { OpenedList } from "@/components/Opening";
+import { Promoted } from "@/components/Promoted";
 import { Welcome } from "@/components/Welcome";
 import { WorldMap } from "@/components/WorldMap";
 import { epochName, timeAgo } from "@/lib/format";
@@ -104,6 +105,7 @@ function HomeView() {
           <div>
             <Today />
             <TourCard />
+            <Promoted />
             {city && <OpenedList />}
           </div>
         </div>

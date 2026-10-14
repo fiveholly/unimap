@@ -193,6 +193,19 @@ function SeasonCard({ tip }: { tip: number | null }) {
           })}
         </p>
       )}
+      {season.sponsor && (
+        <p className="pool small">
+          {tn("本季奖池由 {name} 赞助", {
+            name: season.sponsor.url ? (
+              <a href={season.sponsor.url} target="_blank" rel="sponsored noopener">
+                {season.sponsor.name}
+              </a>
+            ) : (
+              <b>{season.sponsor.name}</b>
+            ),
+          })}
+        </p>
+      )}
       {season.standings.length ? (
         <ol className="season-list">
           {season.standings.map((r, i) => (

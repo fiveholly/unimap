@@ -196,4 +196,12 @@ export const game: Record<string, string> = {
   "还没有土地？先找个街区当居民": "No land yet? Become a resident somewhere first",
   "看谁在招人": "Who's recruiting",
   "今天可以做的事": "Things to do today",
+
+  // Sponsors (docs/monetization.md)
+  "本季奖池由 {name} 赞助": "This season's pool is sponsored by {name}",
+  "赞助：{name}": "Sponsor: {name}",
+  "赞助商（可选）": "Sponsor (optional)",
+  "赞助商": "Sponsor",
+  "赞助商链接": "Sponsor's link",
+  "赞助商链接要以 https:// 开头，并写上赞助商名字": "A sponsor's link starts with https://, and needs the sponsor's name",
 };

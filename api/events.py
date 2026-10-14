@@ -6,7 +6,8 @@ winners when the season ends; the owner pays each prize as a Lightning tip (api/
 winner's wallet. The money never passes through unimap, and taking part costs nothing.
 
 One event per district per season. It can be put up for the season under way or the next one,
-and called off only before it starts: once it runs it is a public promise.
+and called off only before it starts: once it runs it is a public promise. The host may name a
+sponsor of the prizes (a name and an https link), shown on the event.
 """
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -28,7 +29,7 @@ MAX_NOTE = 140
 STANDINGS = 5
 LIST_SIZE = 20
 
-COLUMNS = "id, bitmap_number, season, host, metric, prizes, note, created_at, cancelled_at, winners"
+COLUMNS = "id, bitmap_number, season, host, metric, prizes, note, created_at, cancelled_at, winners, sponsor_name, sponsor_url"
 
 
 def _window(cur, season, tip):
@@ -107,7 +108,7 @@ def _views(cur, rows, tip):
     current = tip // seasons.SEASON if tip is not None else None
     paid = _paid(cur, [r[0] for r in rows if r[9]])
     out = []
-    for eid, n, season, host, metric, prizes, note, created_at, cancelled_at, winners in rows:
+    for eid, n, season, host, metric, prizes, note, created_at, cancelled_at, winners, sponsor_name, sponsor_url in rows:
         since_h, until_h = seasons.bounds(season)
         if cancelled_at is not None:
             status = "cancelled"
@@ -131,6 +132,8 @@ def _views(cur, rows, tip):
             "status": status,
             "created_at": created_at.isoformat(),
         }
+        if sponsor_name:
+            view["sponsor"] = seasons.sponsor(sponsor_name, sponsor_url)
         if status == "running":
             since, _ = _window(cur, season, tip)
             view["standings"] = [{"address": a, "score": s} for a, s in scores(cur, n, metric, host, since, None)[:STANDINGS]] if since else []
@@ -150,7 +153,7 @@ def event_row(cur, event_id):
 
 def prize_target(cur, event_id, place, tipper, amount_sats):
     """(winner, bitmap_number) for the tip that pays prize place of an event; only its host pays it, in full."""
-    eid, n, _, host, _, prizes, _, _, cancelled_at, winners = event_row(cur, event_id)
+    eid, n, _, host, _, prizes, _, _, cancelled_at, winners = event_row(cur, event_id)[:10]
     if wallets.main_of(cur, tipper) != wallets.main_of(cur, host):
         raise HTTPException(403, "only the host pays this event's prizes")
     if cancelled_at is not None or winners is None:
@@ -198,6 +201,8 @@ class NewEvent(BaseModel):
     prizes: list[int] = Field(min_length=1, max_length=MAX_PRIZES)
     note: str = Field(default="", max_length=MAX_NOTE)
     next_season: bool = False  # false: the season under way
+    sponsor_name: str = Field(default="", max_length=seasons.MAX_SPONSOR)
+    sponsor_url: str = Field(default="", max_length=300)  # https only
 
 
 @router.post("/v1/districts/{bitmap_number}/events", status_code=201)
@@ -208,6 +213,9 @@ def create_event(bitmap_number: int, req: NewEvent, address: str = Depends(write
         raise HTTPException(400, f"each prize is {MIN_PRIZE} to {MAX_PRIZE:,} sats")
     if any(a < b for a, b in zip(req.prizes, req.prizes[1:])):
         raise HTTPException(400, "a lower place can't get more than a higher one")
+    sponsor_name, sponsor_url = req.sponsor_name.strip(), req.sponsor_url.strip()
+    if sponsor_url and not (sponsor_name and seasons.https_url(sponsor_url)):
+        raise HTTPException(400, "a sponsor's link is an https:// address, with the sponsor's name")
     with cursor() as cur:
         roles.require_owner(cur, bitmap_number, address)
         tip = game.top(cur)
@@ -215,9 +223,9 @@ def create_event(bitmap_number: int, req: NewEvent, address: str = Depends(write
             raise HTTPException(503, "the index hasn't caught up yet")
         season = tip // seasons.SEASON + (1 if req.next_season else 0)
         cur.execute(
-            "insert into social.events (bitmap_number, season, host, metric, prizes, note) values (%s, %s, %s, %s, %s, %s) "
-            "on conflict do nothing returning id;",
-            (bitmap_number, season, address, req.metric, req.prizes, req.note.strip()),
+            "insert into social.events (bitmap_number, season, host, metric, prizes, note, sponsor_name, sponsor_url) "
+            "values (%s, %s, %s, %s, %s, %s, %s, %s) on conflict do nothing returning id;",
+            (bitmap_number, season, address, req.metric, req.prizes, req.note.strip(), sponsor_name or None, sponsor_url or None),
         )
         row = cur.fetchone()
         if row is None:

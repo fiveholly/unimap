@@ -4,11 +4,13 @@ block: posts, replies and check-ins. Tips don't count: whether one was paid is o
 wallet's word, and the prize is real money. When it ends, the top PODIUM
 are frozen as its winners: their owners get a crown badge, and the districts wear a crown on the
 map through the next season. A prize pool (GAME_SEASON_POOL_SATS) is shown when the project puts
-one up; it is paid by the project over Lightning, not by unimap's code.
+one up; it is paid by the project over Lightning, not by unimap's code. A sponsor of the pool
+(GAME_SEASON_SPONSOR_NAME, optionally GAME_SEASON_SPONSOR_URL) is named with it when set.
 """
 
 import datetime as dt
 import os
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter
 from psycopg2.extras import Json
@@ -26,6 +28,7 @@ WEIGHTS = {"posts": 4, "replies": 1.5, "checkins": 1}
 CROWN_RARITY = ("legendary", "epic", "rare")  # 1st, 2nd, 3rd
 POOL_SPLIT = (50, 30, 20)  # percent of the pool for 1st, 2nd, 3rd
 BLOCK_SECONDS = 600
+MAX_SPONSOR = 60
 
 
 def bounds(n):
@@ -37,6 +40,24 @@ def pool_sats():
         return max(0, int(os.getenv("GAME_SEASON_POOL_SATS") or 0))
     except ValueError:
         return 0
+
+
+def https_url(url):
+    """True for a plain https URL with a host (no credentials in it): all a sponsor may link to."""
+    try:
+        parts = urlsplit(url or "")
+        return parts.scheme == "https" and bool(parts.hostname) and parts.username is None and len(url) <= 300
+    except ValueError:
+        return False
+
+
+def sponsor(name, url):
+    """{"name", "url"} of a sponsor, or None without a name; a URL that isn't https is left out."""
+    name = (name or "").strip()[:MAX_SPONSOR]
+    if not name:
+        return None
+    url = (url or "").strip()
+    return {"name": name, "url": url if https_url(url) else None}
 
 
 def _block_time(height):
@@ -178,4 +199,5 @@ def season():
         "weights": WEIGHTS,
         "pool_sats": pool,
         "pool_split": [pool * x // 100 for x in POOL_SPLIT] if pool else [],
+        "sponsor": sponsor(os.getenv("GAME_SEASON_SPONSOR_NAME"), os.getenv("GAME_SEASON_SPONSOR_URL")),
     }
