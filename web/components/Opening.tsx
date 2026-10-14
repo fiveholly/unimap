@@ -93,7 +93,7 @@ export function OpeningCard({
   );
 }
 
-/** 新开张的街区: on the home page, districts whose owners just got them going. */
+/** 新开张的街区: in the home page's sheet, districts whose owners just got them going, one row each. */
 export function OpenedList() {
   const [list, setList] = useState<Opened[] | null>(null);
   useEffect(() => {
@@ -103,15 +103,17 @@ export function OpenedList() {
   }, []);
   if (!list?.length) return null;
   return (
-    <section className="opened" aria-label={t("新开张的街区")}>
-      <h2 className="section-title">{t("新开张的街区")}</h2>
-      <ul>
+    <section className="sheet-block" aria-label={t("新开张的街区")}>
+      <h2 className="eyebrow">{t("新开张")}</h2>
+      <ul className="sheet-rows">
         {list.map((d) => (
           <li key={d.bitmap_number}>
-            <Link href={`/district/${d.bitmap_number}`}>
-              <b className="mono">{d.bitmap_number}.bitmap</b>
-              <span className="muted small grow">{d.bio || t("还没写简介")}</span>
-              <span className="dim small">
+            <Link href={`/district/${d.bitmap_number}`} title={d.bio || undefined}>
+              <span>
+                <span className="mono">{d.bitmap_number}</span>
+                <span className="muted"> · {d.bio || t("还没写简介")}</span>
+              </span>
+              <span className="when">
                 {t("{n} 帖", { n: d.posts })} · {timeAgo(new Date(d.opened_at).getTime() / 1000)}
               </span>
             </Link>

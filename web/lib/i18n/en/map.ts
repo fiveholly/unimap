@@ -16,6 +16,13 @@ export const map: Record<string, string> = {
   "还没出现": "Not yet",
   "还在长": "Growing",
   "关注的动态": "From districts you follow",
+  "{epoch}已出块 {p}%，约 {y} 年迎来{next}": "{epoch} is {p}% mined; {next} arrives around {y}",
+  "{epoch}已出块 {p}%": "{epoch} is {p}% mined",
+  "纪元": "Epochs",
+  "约 {y}": "c. {y}",
+  "新开张": "Just opened",
+  "有人经营的街区": "Districts someone runs",
+  "{n}.bitmap 在售": "{n}.bitmap for sale",
 
   // World map (components/WorldMap.tsx)
   "约 {y} 年出现": "Arrives around {y}",

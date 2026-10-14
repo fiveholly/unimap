@@ -15,18 +15,20 @@ import { t } from "@/lib/i18n";
 
 export function Header() {
   const path = usePathname();
+  // Clear over the page at the top; the page's colour once something scrolls under it.
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => {
+    const on = () => setScrolled(window.scrollY > 4);
+    on();
+    window.addEventListener("scroll", on, { passive: true });
+    return () => window.removeEventListener("scroll", on);
+  }, []);
 
   return (
-    <header className="header">
+    <header className={`header${scrolled ? " scrolled" : ""}`}>
       <div className="header-inner">
         <Link href="/" className="logo">
-          <span className="logo-mark" aria-hidden>
-            <i />
-            <i />
-            <i />
-            <i />
-          </span>
-          unimap
+          unimap<em aria-hidden>.</em>
         </Link>
         <nav className="nav">
           <Link href="/" className={path === "/" ? "active" : ""}>
@@ -74,7 +76,7 @@ function WalletButton() {
   }
   return (
     <div className="wallet">
-      <button type="button" className="ghost" onClick={() => setOpen(true)}>
+      <button type="button" className="cta-pill" onClick={() => setOpen(true)}>
         {t("连接钱包")}
       </button>
       {open && <LoginDialog close={() => setOpen(false)} />}
@@ -155,7 +157,7 @@ function LoginDialog({ close }: { close: () => void }) {
 export function Footer() {
   return (
     <footer className="footer">
-      <span className="mono">unimap</span>
+      <span className="serif">unimap</span>
       <span>{t("比特币上的 Bitmap 城市")}</span>
     </footer>
   );
