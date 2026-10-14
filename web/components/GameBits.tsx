@@ -14,6 +14,15 @@ const SHOWN = 3; // treasures listed on a district's page
 const CROWN_RARITY: Rarity[] = ["legendary", "epic", "rare"]; // as api/seasons.py
 
 /** Under the home map: today's lucky district and how long it has left. */
+/** 街区生日: a line-drawn cake, the same on the district page and the city map's info panel. */
+export function CakeIcon({ size = 30, className }: { size?: number; className?: string }) {
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 30 30" fill="none" stroke="currentColor" strokeWidth={size < 20 ? 2 : 1.5} strokeLinecap="square" aria-hidden>
+      <path d="M6 25h18M7.5 25v-8h15v8M7.5 20.5c2.5 1.5 5 1.5 7.5 0s5-1.5 7.5 0M15 17v-4M15 9.5c-1 -1.2-.6-2.3 0-3.5.6 1.2 1 2.3 0 3.5Z" />
+    </svg>
+  );
+}
+
 export function LuckyStrip({ tip }: { tip: number }) {
   const [game, setGame] = useState<Game | null>(null);
   useEffect(() => {
@@ -78,9 +87,7 @@ export function DistrictBeat({ n, game, token, onOpened }: { n: number; game: Di
       )}
       {age != null && (
         <div className="beat-row">
-          <svg className="beat-emoji" width="30" height="30" viewBox="0 0 30 30" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="square" aria-hidden>
-            <path d="M6 25h18M7.5 25v-8h15v8M7.5 20.5c2.5 1.5 5 1.5 7.5 0s5-1.5 7.5 0M15 17v-4M15 9.5c-1 -1.2-.6-2.3 0-3.5.6 1.2 1 2.3 0 3.5Z" />
-          </svg>
+          <CakeIcon className="beat-emoji" size={30} />
           <div className="grow">
             <b>{t("今天大约是 {n}.bitmap 的 {age} 岁生日", { n, age })}</b>
             <p className="muted small">{t("这个区块是 {age} 年前的今天前后挖出来的。来签个到，祝它生日快乐。", { age })}</p>

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { CakeIcon } from "./GameBits";
 import { short } from "./Session";
 import { api, type Land, type Tile } from "@/lib/api";
 import { btc, btcShort } from "@/lib/format";
@@ -1030,7 +1031,10 @@ export function CityMap({ tip, focus }: { tip: number; focus: number }) {
           {tile?.claimed && birthdayAge != null && (
             <>
               <dt>{t("生日")}</dt>
-              <dd>🎂 {t("今天大约是它 {n} 岁生日", { n: birthdayAge })}</dd>
+              <dd className="fact-icon">
+                <CakeIcon size={15} />
+                {t("今天大约是它 {n} 岁生日", { n: birthdayAge })}
+              </dd>
             </>
           )}
           {tile?.crown && (

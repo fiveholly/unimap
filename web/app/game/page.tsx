@@ -310,7 +310,7 @@ function Check({ hash, salt, candidates, index, what, compact }: { hash: string;
   const mine = pick(hash, salt, candidates);
   const ok = mine === index;
   return (
-    <div className={`check small${compact ? " compact" : ""}`}>
+    <div className={`verify small${compact ? " compact" : ""}`}>
       {what && <div className="muted">{what}</div>}
       <code className="mono break">
         sha256("{hash}:{salt}") mod {candidates} = {mine ?? "—"}

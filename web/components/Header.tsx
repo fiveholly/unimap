@@ -30,22 +30,24 @@ export function Header() {
         <Link href="/" className="logo">
           unimap<em aria-hidden>.</em>
         </Link>
+        {/* On a phone the links become a tab bar along the bottom, each with a line icon. */}
         <nav className="nav">
-          <Link href="/" className={path === "/" ? "active" : ""}>
-            {t("地图")}
-          </Link>
-          <Link href="/rank" className={path === "/rank" ? "active" : ""}>
-            {t("繁荣榜")}
-          </Link>
-          <Link href="/game" className={path === "/game" ? "active" : ""}>
-            {t("区块节拍")}
-          </Link>
-          <Link href="/recruit" className={path === "/recruit" ? "active" : ""}>
-            {t("招募")}
-          </Link>
-          <Link href="/me" className={path === "/me" ? "active" : ""}>
-            {t("我的")}
-          </Link>
+          {(
+            [
+              ["/", t("地图"), "M9 4 3 6.5V20l6-2.5 6 2.5 6-2.5V4l-6 2.5L9 4Zm0 0v13.5m6-11V20"],
+              ["/rank", t("繁荣榜"), "M5 20v-8m7 8V5m7 15v-5M3 20h18"],
+              ["/game", t("区块节拍"), "M3 12h4l2.5-6 5 12 2.5-6h4"],
+              ["/recruit", t("招募"), "M14.5 20v-1a4.5 4.5 0 0 0-9 0v1M10 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm9-3v6m3-3h-6"],
+              ["/me", t("我的"), "M5 20v-.5a7 7 0 0 1 14 0v.5M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"],
+            ] as const
+          ).map(([href, label, d]) => (
+            <Link key={href} href={href} className={path === href ? "active" : ""} aria-current={path === href ? "page" : undefined}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d={d} />
+              </svg>
+              <span>{label}</span>
+            </Link>
+          ))}
         </nav>
         <span className="grow" />
         <Search />

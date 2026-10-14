@@ -163,19 +163,21 @@ function DistrictView() {
       <section className="d-hero">
         <header className="d-info d-head">
           <div className="crumbs">
-            <span>{epochName(n)}</span>
-            <span aria-hidden>·</span>
-            <span>{t("区块 {n}", { n: n.toLocaleString("en-US") })}</span>
-            {zone && (
-              <>
-                <span aria-hidden>·</span>
-                <span className="zone-tag">
-                  <i className="swatch" style={{ background: ZONES[zone].color }} />
-                  {t(ZONES[zone].name)}
-                  {LANDMARKS[n] && ` · ${t(LANDMARKS[n])}`}
-                </span>
-              </>
-            )}
+            <span className="crumbs-path">
+              <span>{epochName(n)}</span>
+              <span aria-hidden>·</span>
+              <span>{t("区块 {n}", { n: n.toLocaleString("en-US") })}</span>
+              {zone && (
+                <>
+                  <span aria-hidden>·</span>
+                  <span className="zone-tag">
+                    <i className="swatch" style={{ background: ZONES[zone].color }} />
+                    {t(ZONES[zone].name)}
+                    {LANDMARKS[n] && ` · ${t(LANDMARKS[n])}`}
+                  </span>
+                </>
+              )}
+            </span>
             <div className="row tight d-step">
               {n > 0 ? (
                 <Link className="icon-btn" href={`/district/${n - 1}`} aria-label={t("上一个街区")}>

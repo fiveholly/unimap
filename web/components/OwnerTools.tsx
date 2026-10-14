@@ -67,7 +67,7 @@ export function OwnerTools({
   };
   return (
     <section className="owner-panel">
-      <div className="row between">
+      <div className="owner-head">
         <h2 className="section-title">{t("管理街区")}</h2>
         <nav className="seg" aria-label={t("管理")}>
           {SECTIONS().map(([k, label]) => (
