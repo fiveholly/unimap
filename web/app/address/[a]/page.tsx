@@ -62,7 +62,7 @@ export default function AddressPage() {
       <section className="me-head">
         <Avatar seed={person.address} size={56} />
         <div className="grow">
-          <h1>
+          <h1 className={person.x ? undefined : "addr-title"}>
             {person.x ? person.x.name : short(person.address)}
             {worn && <WornBadgeMark badge={worn} size={26} />}
           </h1>

@@ -12,7 +12,7 @@ import { TourCard } from "@/components/Tour";
 import { OpenedList } from "@/components/Opening";
 import { Promoted } from "@/components/Promoted";
 import { Welcome } from "@/components/Welcome";
-import { WorldMap } from "@/components/WorldMap";
+import { phone, WorldMap } from "@/components/WorldMap";
 import { epochName, timeAgo } from "@/lib/format";
 import { t } from "@/lib/i18n";
 import { continent, HALVING } from "@/lib/terrain";
@@ -31,6 +31,8 @@ const SHEET = 360; // the floating sheet's width, as in globals.css
 /** Where the world map may put land: clear of the header, the sentence and the sheet on a wide
  * screen; nearly the whole canvas on a phone, where the sheet sits under the map. */
 const room = (w: number) => {
+  // A phone's legend sits under the map, so the land can come down to the bottom edge.
+  if (phone()) return { top: 40, right: 14, bottom: 14, left: 14 };
   if (w <= 900) return { top: 34, right: 12, bottom: 40, left: 12 };
   const side = (w - Math.min(w, 1200)) / 2 + 24;
   return { top: 190, right: side + SHEET + 12, bottom: 84, left: side - 8 };

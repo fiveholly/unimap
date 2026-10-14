@@ -30,6 +30,8 @@ const rgb = (hex: string) => {
   return `${v >> 16},${(v >> 8) & 255},${v & 255}`;
 };
 const num = (n: number) => n.toLocaleString("en-US");
+/** A phone, where the map is drawn wider than the screen (see .world-pan in globals.css). */
+export const phone = () => typeof window !== "undefined" && window.matchMedia("(max-width: 640px)").matches;
 
 /** The whole city at once, drawn as a night chart: every halving epoch a continent, every cell 64
  * blocks. Hover to see which blocks a spot holds; clicking one opens the city map there. room says
@@ -46,6 +48,8 @@ export function WorldMap({
   room?: (w: number, h: number) => Room;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
+  const pan = useRef<HTMLDivElement>(null);
+  const placed = useRef(false);
   const land = useRef<{ img: HTMLCanvasElement; key: string } | null>(null);
   const geo = useRef({ ox: 0, oy: 0, hw: 1, tops: [] as [number, number][], shapes: [] as (Path2D | null)[] });
   const markers = useRef<Marker[]>([]);
@@ -57,7 +61,7 @@ export function WorldMap({
   const epochs = Math.floor(tip / HALVING) + 1; // continents with blocks; one more is still to come
   // The continent still to come, outlined in the sea; left out on a small screen, where the room
   // is better spent on the land there is.
-  const shownFor = (w: number) => Math.min(epochs + (w < 520 ? 0 : 1), ISLANDS.length);
+  const shownFor = (w: number) => Math.min(epochs + (w < 520 || phone() ? 0 : 1), ISLANDS.length);
 
   useEffect(() => {
     api<{ rankings: Ranking[] }>("/v1/rankings")
@@ -202,6 +206,15 @@ export function WorldMap({
         cv.height = Math.round(h * dpr);
       }
       if (land.current?.key !== keyOf(w, h, dpr)) paintLand(w, h, dpr);
+      // On a phone the map is drawn wider than the screen so the continents read. It opens on the
+      // current epoch, where the newest block is, and pans sideways with a swipe.
+      const el = pan.current;
+      if (el && !placed.current) {
+        placed.current = true;
+        const room = el.scrollWidth - el.clientWidth;
+        const now = geo.current.tops[epochs - 1];
+        if (room > 0 && now) el.scrollLeft = Math.max(0, Math.min(room, now[0] - el.clientWidth * 0.3));
+      }
       const ctx = cv.getContext("2d")!;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.drawImage(land.current!.img, 0, 0);
@@ -337,29 +350,31 @@ export function WorldMap({
 
   return (
     <div className="world-stage">
-      <canvas
-        ref={canvas}
-        className="world-canvas"
-        role="img"
-        aria-label={t("世界地图：每一次减半是一块大陆，一共 {n} 个区块。用右边的列表进入各个大陆。", { n: num(tip + 1) })}
-        onPointerMove={onMove}
-        onPointerLeave={() => {
-          cursor.current = null;
-          setHover(null);
-        }}
-        onPointerUp={onClick}
-        style={{ cursor: hover ? "pointer" : "default" }}
-      />
-      {hover && (
-        <div className={`world-tip${hover.x > (canvas.current?.clientWidth ?? 0) / 2 ? " left" : ""}`} style={{ left: hover.x, top: hover.y }}>
-          <b>{hover.title}</b>
-          {hover.lines.map((l, i) => (
-            <span key={l} className={i === 0 ? "mono" : undefined}>
-              {l}
-            </span>
-          ))}
-        </div>
-      )}
+      <div className="world-pan" ref={pan}>
+        <canvas
+          ref={canvas}
+          className="world-canvas"
+          role="img"
+          aria-label={t("世界地图：每一次减半是一块大陆，一共 {n} 个区块。用右边的列表进入各个大陆。", { n: num(tip + 1) })}
+          onPointerMove={onMove}
+          onPointerLeave={() => {
+            cursor.current = null;
+            setHover(null);
+          }}
+          onPointerUp={onClick}
+          style={{ cursor: hover ? "pointer" : "default" }}
+        />
+        {hover && (
+          <div className={`world-tip${hover.x > (canvas.current?.clientWidth ?? 0) / 2 ? " left" : ""}`} style={{ left: hover.x, top: hover.y }}>
+            <b>{hover.title}</b>
+            {hover.lines.map((l, i) => (
+              <span key={l} className={i === 0 ? "mono" : undefined}>
+                {l}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
       <div className="world-key">
         <p>{t("每一次减半是一块大陆，大陆上每一小格是 64 个区块，越靠中间越早。点地图上任意一处，进入那里的城区。")}</p>
         <div>

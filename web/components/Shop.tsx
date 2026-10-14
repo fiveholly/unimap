@@ -44,14 +44,14 @@ export function Shop({ n, token, seller }: { n: number; token: string | null; se
 
   return (
     <div className="agent shop">
-      <p className="muted small">{t("这里卖的是数字商品：下载链接、兑换码、一段文字。付款通过闪电网络直接进卖家的钱包，unimap 不经手；确认到账后，你买到的内容就显示在这里。")}</p>
-      {seller && !adding && !editing && (
-        <div className="row end">
+      <div className="tab-lead">
+        <p className="muted small">{t("这里卖的是数字商品：下载链接、兑换码、一段文字。付款通过闪电网络直接进卖家的钱包，unimap 不经手；确认到账后，你买到的内容就显示在这里。")}</p>
+        {seller && !adding && !editing && (
           <button type="button" className="primary sm" onClick={() => setAdding(true)}>
             {t("上架商品")}
           </button>
-        </div>
-      )}
+        )}
+      </div>
       {seller && token && (adding || editing) && (
         <ItemForm
           n={n}
