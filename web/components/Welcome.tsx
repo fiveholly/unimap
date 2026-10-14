@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { heightOnDay } from "@/lib/blocktime";
-import { t, tn } from "@/lib/i18n";
+import { locale, t, tn } from "@/lib/i18n";
 
 const KEY = "unimap.welcome.closed";
 
@@ -75,27 +75,64 @@ export function Welcome({ tip }: { tip: number }) {
   );
 }
 
-/** 找到你生日那天的区块. */
+/** 找到你生日那天的区块. Year, month and day are separate selects rather than a date input,
+ * because the browser draws a date input in its own language, not the site's. */
 function Birthday({ tip }: { tip: number }) {
   const router = useRouter();
-  const [day, setDay] = useState("");
+  const [y, setY] = useState("");
+  const [m, setM] = useState("");
+  const [d, setD] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const thisYear = new Date().getFullYear();
+  const years = Array.from({ length: thisYear - 2009 + 1 }, (_, i) => thisYear - i);
+  const monthName = (i: number) => new Date(2000, i, 1).toLocaleString(locale(), { month: "short" });
+  const daysIn = y && m ? new Date(Number(y), Number(m), 0).getDate() : 31;
+  useEffect(() => {
+    if (Number(d) > daysIn) setD("");
+  }, [d, daysIn]);
+  const pad = (n: string) => n.padStart(2, "0");
   const go = (e: React.FormEvent) => {
     e.preventDefault();
+    const day = `${y}-${pad(m)}-${pad(d)}`;
     const h = heightOnDay(day, tip);
-    if (h == null) return setError(day && day < "2009-01-03" ? t("比特币诞生于 2009 年 1 月 3 日，换一个那之后的日子试试。") : t("这一天还没有区块。"));
+    if (h == null) return setError(day < "2009-01-03" ? t("比特币诞生于 2009 年 1 月 3 日，换一个那之后的日子试试。") : t("这一天还没有区块。"));
     setError(null);
     router.push(`/?b=${h}`);
   };
   return (
     <form className="birthday" onSubmit={go}>
-      <label className="small">
-        {t("找到你生日（或任何一天）的区块")}
-        <input type="date" value={day} onChange={(e) => setDay(e.target.value)} name="birthday" required />
-      </label>
-      <button type="submit" className="ghost sm">
-        {t("去看看")}
-      </button>
+      <fieldset>
+        <legend className="small">{t("找到你生日（或任何一天）的区块")}</legend>
+        <div className="birthday-fields">
+          <select value={y} onChange={(e) => setY(e.target.value)} name="year" aria-label={t("年")} required>
+            <option value="">{t("年")}</option>
+            {years.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+          <select value={m} onChange={(e) => setM(e.target.value)} name="month" aria-label={t("月")} required>
+            <option value="">{t("月")}</option>
+            {Array.from({ length: 12 }, (_, i) => (
+              <option key={i} value={i + 1}>
+                {monthName(i)}
+              </option>
+            ))}
+          </select>
+          <select value={d} onChange={(e) => setD(e.target.value)} name="day" aria-label={t("日")} required>
+            <option value="">{t("日")}</option>
+            {Array.from({ length: daysIn }, (_, i) => (
+              <option key={i} value={i + 1}>
+                {i + 1}
+              </option>
+            ))}
+          </select>
+          <button type="submit" className="ghost sm">
+            {t("去看看")}
+          </button>
+        </div>
+      </fieldset>
       {error && <p className="error small">{error}</p>}
     </form>
   );

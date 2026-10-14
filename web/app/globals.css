@@ -1241,16 +1241,30 @@ button.lang-switch {
   flex-wrap: wrap;
   margin-top: 14px;
 }
-.birthday label {
+.birthday fieldset {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.birthday legend {
+  padding: 0;
+  margin-bottom: 6px;
   color: var(--fg-2);
 }
-.birthday input {
-  color-scheme: dark;
+.birthday-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.birthday-fields button.sm {
+  margin-left: 2px;
+}
+.birthday select {
   height: 34px;
-  padding: 0 10px;
   font-family: var(--font-mono);
   font-size: 13px;
 }
