@@ -11,8 +11,9 @@ const POLL_MS = DEMO ? 15_000 : 30_000;
 const TOAST_MS = 15_000;
 const ALERTS_KEY = "unimap.blockAlerts";
 
-type Watch = { tip: number | null; error: string | null; alerts: boolean; setAlerts: (on: boolean) => Promise<boolean> };
-const Ctx = createContext<Watch>({ tip: null, error: null, alerts: false, setAlerts: async () => false });
+/** since: when this page saw the newest block arrive (ms), or null if it was already there on load. */
+type Watch = { tip: number | null; since: number | null; error: string | null; alerts: boolean; setAlerts: (on: boolean) => Promise<boolean> };
+const Ctx = createContext<Watch>({ tip: null, since: null, error: null, alerts: false, setAlerts: async () => false });
 
 /** The newest block the city has, kept fresh, and whether to tell the browser about new ones. */
 export const useTip = () => useContext(Ctx);
@@ -31,6 +32,7 @@ export function BlockWatch({ children }: { children: React.ReactNode }) {
   const [tip, setTip] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fresh, setFresh] = useState<number | null>(null);
+  const [since, setSince] = useState<number | null>(null);
   const [alerts, setAlertsState] = useState(false);
   const last = useRef<number | null>(null);
 
@@ -46,6 +48,7 @@ export function BlockWatch({ children }: { children: React.ReactNode }) {
           setError(null);
           if (last.current != null && h > last.current) {
             setFresh(h);
+            setSince(Date.now());
             if (readAlerts() && document.hidden) {
               try {
                 new Notification(t("新区块 {n}", { n: h.toLocaleString("en-US") }), {
@@ -85,7 +88,7 @@ export function BlockWatch({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <Ctx.Provider value={{ tip, error, alerts, setAlerts }}>
+    <Ctx.Provider value={{ tip, since, error, alerts, setAlerts }}>
       {children}
       {fresh != null && (
         <div className="block-toast" role="status">
