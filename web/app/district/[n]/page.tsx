@@ -20,6 +20,7 @@ import { BuyButton, OfferButton, OffersCard, ParcelsOnSale, ParkSaleCard, SellCa
 import { PostCard, RoleBadge, type PostActions } from "@/components/PostCard";
 import { ProsperityCard } from "@/components/ProsperityCard";
 import { RecruitCard } from "@/components/Recruit";
+import { Seal } from "@/components/Seal";
 import { ShareMenu } from "@/components/ShareMenu";
 import { short, useSession } from "@/components/Session";
 import { TileThumb } from "@/components/TileThumb";
@@ -160,7 +161,7 @@ function DistrictView() {
         <img className="banner" src={district.profile.cover} alt="" referrerPolicy="no-referrer" />
       )}
       <section className="d-hero">
-        <div className="d-info">
+        <header className="d-info d-head">
           <div className="crumbs">
             <span>{epochName(n)}</span>
             <span aria-hidden>·</span>
@@ -175,13 +176,7 @@ function DistrictView() {
                 </span>
               </>
             )}
-          </div>
-          <div className="d-title-row">
-            <h1 className="d-title mono">
-              {n}
-              <span className="dim">.bitmap</span>
-            </h1>
-            <div className="row tight">
+            <div className="row tight d-step">
               {n > 0 ? (
                 <Link className="icon-btn" href={`/district/${n - 1}`} aria-label={t("上一个街区")}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -196,7 +191,44 @@ function DistrictView() {
               </Link>
             </div>
           </div>
+          <div className="d-title-row">
+            <h1 className="d-title">
+              {n}
+              <span className="dim">.bitmap</span>
+            </h1>
+            <Seal n={n} inked={land.claimed} />
+          </div>
           <p className="lede">{district.profile.bio || (zone ? t(ZONES[zone].story) : "")}</p>
+          <div className="row d-actions">
+            {token ? (
+              <button
+                type="button"
+                className={viewer?.following ? "ghost lg" : "primary lg"}
+                onClick={() => act(`/v1/districts/${n}/follow`, viewer?.following ? "DELETE" : "PUT")}
+                aria-pressed={!!viewer?.following}
+              >
+                {viewer?.following ? t("已关注") : t("关注街区")}
+              </button>
+            ) : (
+              <span className="muted small">{t("连接钱包后可以关注和回复。")}</span>
+            )}
+            {token && district.checked_in_today !== undefined && (
+              <button
+                type="button"
+                className="ghost lg"
+                disabled={district.checked_in_today}
+                onClick={checkIn}
+              >
+                {district.checked_in_today ? t("今天已签到") : t("签到")}
+              </button>
+            )}
+            <ShareMenu path={`/district/${n}`} text={districtText(district, isOwner)} />
+            {isOwner && (
+              <button type="button" className="ghost lg" onClick={() => setEditing(!editing)} aria-expanded={editing}>
+                {t("管理街区")}
+              </button>
+            )}
+          </div>
           <div className="stats">
             <div>
               <b className="mono">{txCount?.toLocaleString("en-US") ?? "—"}</b>
@@ -260,6 +292,9 @@ function DistrictView() {
             )}
             {viewer?.muted && <span className="badge muted-badge">{t("你在这里被禁言了")}</span>}
           </div>
+        </header>
+
+        <div className="d-info d-dossier">
           {tipNote && <p className="muted small">{tipNote}</p>}
           {!land.claimed && <ClaimGuide n={n} fresh={tip != null && tip - n < 6} />}
           {district.game && <DistrictBeat n={n} game={district.game} token={token} onOpened={loadDistrict} />}
@@ -293,36 +328,6 @@ function DistrictView() {
           )}
           {district.park && <ParkSaleCard parkId={district.park.id} owner={district.park.owner} />}
           {district.prosperity && <ProsperityCard p={district.prosperity} zone={zone} n={n} park={district.park ?? null} look={district.profile.style ?? null} />}
-          <div className="row">
-            {token ? (
-              <button
-                type="button"
-                className={viewer?.following ? "ghost lg" : "primary lg"}
-                onClick={() => act(`/v1/districts/${n}/follow`, viewer?.following ? "DELETE" : "PUT")}
-                aria-pressed={!!viewer?.following}
-              >
-                {viewer?.following ? t("已关注") : t("关注街区")}
-              </button>
-            ) : (
-              <span className="muted small">{t("连接钱包后可以关注和回复。")}</span>
-            )}
-            {token && district.checked_in_today !== undefined && (
-              <button
-                type="button"
-                className="ghost lg"
-                disabled={district.checked_in_today}
-                onClick={checkIn}
-              >
-                {district.checked_in_today ? t("今天已签到") : t("签到")}
-              </button>
-            )}
-            <ShareMenu path={`/district/${n}`} text={districtText(district, isOwner)} />
-            {isOwner && (
-              <button type="button" className="ghost lg" onClick={() => setEditing(!editing)} aria-expanded={editing}>
-                {t("管理街区")}
-              </button>
-            )}
-          </div>
         </div>
 
         <div className="d-art">
@@ -631,8 +636,8 @@ function DistrictSkeleton({ n }: { n: number }) {
   return (
     <div className="page district" aria-busy="true">
       <section className="d-hero">
-        <div className="d-info">
-          <h1 className="d-title mono">
+        <div className="d-info d-head">
+          <h1 className="d-title">
             {n}
             <span className="dim">.bitmap</span>
           </h1>

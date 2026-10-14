@@ -252,7 +252,7 @@ function Calendar({ tip }: { tip: number }) {
       <div className="chips">
         {cakes.map(([age, a, b]) => (
           <Link key={age} className="chip small" href={`/?b=${a}`} title={`${blocks(a)} – ${blocks(b)}`}>
-            🎂 {t("{n} 岁", { n: age })} <span className="mono muted">{blocks(a)}</span>
+            {t("{n} 岁", { n: age })} <span className="mono muted">{blocks(a)}</span>
           </Link>
         ))}
       </div>

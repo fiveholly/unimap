@@ -78,9 +78,9 @@ export function DistrictBeat({ n, game, token, onOpened }: { n: number; game: Di
       )}
       {age != null && (
         <div className="beat-row">
-          <span className="beat-emoji" aria-hidden>
-            🎂
-          </span>
+          <svg className="beat-emoji" width="30" height="30" viewBox="0 0 30 30" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="square" aria-hidden>
+            <path d="M6 25h18M7.5 25v-8h15v8M7.5 20.5c2.5 1.5 5 1.5 7.5 0s5-1.5 7.5 0M15 17v-4M15 9.5c-1 -1.2-.6-2.3 0-3.5.6 1.2 1 2.3 0 3.5Z" />
+          </svg>
           <div className="grow">
             <b>{t("今天大约是 {n}.bitmap 的 {age} 岁生日", { n, age })}</b>
             <p className="muted small">{t("这个区块是 {age} 年前的今天前后挖出来的。来签个到，祝它生日快乐。", { age })}</p>
