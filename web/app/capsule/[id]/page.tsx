@@ -4,10 +4,10 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
-import { Envelope, LetterPaper, utcDay, utcMinute, WaitBars } from "@/components/Capsule";
+import { CapsulePay, Envelope, LetterPaper, utcDay, utcMinute, WaitBars } from "@/components/Capsule";
 import { short, useSession } from "@/components/Session";
 import { api, ApiError, type Capsule } from "@/lib/api";
-import { decryptLetter, fingerprintOk, keyFromHash, shortHash, spanText, TAG_NAMES } from "@/lib/capsule";
+import { decryptLetter, decryptPhoto, fingerprintOk, keyFromHash, shortHash, spanText, TAG_NAMES } from "@/lib/capsule";
 import { DEMO } from "@/lib/demo";
 import { t } from "@/lib/i18n";
 import { SITE_URL } from "@/lib/share";
@@ -21,7 +21,7 @@ export default function CapsulePage() {
   const [c, setC] = useState<Capsule | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [spare, setSpare] = useState<string | null>(null);
-  const [letter, setLetter] = useState<{ text: string; early: boolean } | null>(null);
+  const [letter, setLetter] = useState<{ text: string; early: boolean; photo: string | null } | null>(null);
   const [verified, setVerified] = useState<boolean | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
 
@@ -50,13 +50,15 @@ export default function CapsulePage() {
       if (!c?.ciphertext) return;
       setOpenError(null);
       try {
-        setLetter({ text: await decryptLetter(c.ciphertext, key), early });
-        setVerified(await fingerprintOk(c.ciphertext, c.fingerprint));
+        const text = await decryptLetter(c.ciphertext, key);
+        const image = c.photo ? URL.createObjectURL(new Blob([(await decryptPhoto(c.photo, key)) as BlobPart], { type: "image/jpeg" })) : null;
+        setLetter({ text, early, photo: image });
+        setVerified(await fingerprintOk(c.ciphertext, c.fingerprint, c.photo));
       } catch {
         setOpenError(t("这把钥匙打不开这封信。"));
       }
     },
-    [c?.ciphertext, c?.fingerprint],
+    [c?.ciphertext, c?.fingerprint, c?.photo],
   );
   useEffect(() => {
     if (c?.status === "open" && c.key && !letter) open(c.key, false);
@@ -82,6 +84,8 @@ export default function CapsulePage() {
         </div>
         <LetterPaper
           text={letter.text}
+          photo={letter.photo}
+          style={c.style}
           meta={[
             t("封存于区块 {h}", { h: c.sealed_height.toLocaleString("en-US") }),
             c.open_height != null ? t("打开于区块 {h}", { h: c.open_height.toLocaleString("en-US") }) : t("打开于 {date} 之后的第一块", { date: opens }),
@@ -106,12 +110,28 @@ export default function CapsulePage() {
     );
   }
 
+  // 封存 not paid yet: only its author gets here, with a fresh invoice.
+  if (c.status === "pending")
+    return (
+      <div className="page capsule-page">
+        <div className="cap-sealed">
+          <div className="cap-sealed-main">
+            <Envelope height={c.sealed_height} recipient={c.recipient} opens={opens} style={c.style} />
+            <p className="muted cap-count">{t("这封信还在等付款，付好才算封存。")}</p>
+          </div>
+          <aside className="cap-side">
+            <CapsulePay capsuleId={c.id} first={null} token={token} done={load} />
+          </aside>
+        </div>
+      </div>
+    );
+
   const left = c.blocks_left ?? 1;
   return (
     <div className="page capsule-page">
       <div className="cap-sealed">
         <div className="cap-sealed-main">
-          <Envelope height={c.sealed_height} recipient={c.recipient} opens={opens} />
+          <Envelope height={c.sealed_height} recipient={c.recipient} opens={opens} style={c.style} />
           {c.status === "sealed" ? (
             <>
               <div className="cap-count">
@@ -143,6 +163,12 @@ export default function CapsulePage() {
               <span>{t("钥匙")}</span>
               <span>{t("两份都留")}</span>
             </div>
+            {c.has_photo && (
+              <div>
+                <span>{t("照片")}</span>
+                <span>{t("一张，和信一起打开")}</span>
+              </div>
+            )}
             <div>
               <span>{t("寄信人")}</span>
               <Link className="mono" href={`/address/${c.author}`}>

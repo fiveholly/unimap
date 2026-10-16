@@ -11,7 +11,8 @@
 | `GAME_SEASON_POOL_SATS` | 赛季奖池金额，由项目方用闪电发给前三名（`api/seasons.py`） | 空：不显示 |
 | `GAME_SEASON_SPONSOR_NAME`、`GAME_SEASON_SPONSOR_URL` | 奖池赞助商，`/game` 显示「本季奖池由 X 赞助」；链接只接受 https，不是 https 就只显示名字 | 空：不显示 |
 | `PLATFORM_LIGHTNING_ADDRESS` | unimap 自己产品的收款闪电地址，钱包要支持 LUD-21 verify；没设时用 `AGENT_LIGHTNING_ADDRESS` | 空 |
-| `BILLING_PRICE_<产品>_SATS` | 某个产品的价格（聪）。现在有 `STYLE` 和 `PROMOTION` 两个产品 | 空或 0：不卖 |
+| `BILLING_PRICE_<产品>_SATS` | 某个产品的价格（聪）。现在有 `STYLE`、`PROMOTION` 和 `CAPSULE`（时间胶囊「封存」，建议 5000）三个产品 | 空或 0：不卖 |
+| `CAPSULE_INSCRIBE_SATS` | 时间胶囊「刻上链」在写信页上显示的价格（还没开放，不卖） | 空：20000 |
 | `BILLING_COSMETICS` | 设成 `1` 时，外观里标为高级的选项要有权益 `style:<选项>` 才能用；现在没有任何选项标为高级 | 空：全部免费 |
 | `RATE_LIMIT_KEY_WRITES`、`RATE_LIMIT_KEY_WRITES_<档位>` | 带有效 `X-API-Key` 的写操作每分钟上限，按 key 计数而不是按 IP | 空：600 |
 
@@ -30,6 +31,9 @@
 |---|---|---|
 | `style` | 一个标为高级的外观选项 | 给付款人权益 `style:<选项>`，永久。只在 `BILLING_COSMETICS=1` 时出售 |
 | `promotion` | 付款人持有的街区号 | 建一条等管理员审核的推广（没有开始时间，不显示）。管理员用 `POST /v1/admin/promotions/{id}/approve {"days"}` 让它从现在开始显示；不通过的话手动退款 |
+| `capsule` | 一封等付款的时间胶囊的 id | 把它封存，封存区块是到账那一刻的最新高度。发票由 `POST /v1/capsules` 直接开（`billing.invoice`），过期后可以用 `/v1/billing/pay` 再要一张。详见 `docs/social.md` 时间胶囊 |
+
+产品自己开发票时调用 `billing.invoice(address, product, ref)`；`billing.refresh(payment_id, force=True)` 在后台再问一次钱包（时间胶囊清理没付款的信时用）。
 
 付款记在 `social.payments`。agent 的付款还在原来的 `social.agent_payments`，以后可以搬成这里的一个产品。
 

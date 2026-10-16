@@ -167,11 +167,16 @@ type State = {
   shop?: DemoItem[]; // 店铺
   orders?: DemoOrder[];
   capsules?: DemoCapsule[]; // 时间胶囊 the visitor sealed
+  capsulePays?: { id: number; ref: string; at: number; settled: boolean }[]; // 封存 invoices (api/billing.py), paid by 演示：模拟付款
   dms?: DemoDm[]; // 私信
   dmStrangers?: boolean;
   blocked?: string[]; // addresses the visitor muted (and so won't hear from)
 };
-type DemoCapsule = Omit<Capsule, "status" | "tip" | "blocks_left" | "open_height" | "key" | "mine"> & { ref: string; escrow: string; open_height: number | null };
+type DemoCapsule = Omit<Capsule, "status" | "tip" | "blocks_left" | "open_height" | "key" | "mine" | "payment" | "has_photo"> & {
+  ref: string; escrow: string; open_height: number | null;
+  pending?: boolean; // 封存 waiting for its (simulated) payment
+  told?: boolean; // 「信打开了」 written
+};
 type DemoDm = { id: number; from: string; to: string; body: string; at: number; read?: boolean; removed?: boolean };
 type DemoAgent = Omit<Agent, "posted_today" | "running" | "problem"> & { n: number; message: string; revoked?: boolean; drafts: AgentDraft[] };
 type DemoItem = Omit<ShopItem, "sold" | "left" | "on_sale" | "mine" | "bought"> & { content: string; sold: number; introduced?: boolean };
@@ -1097,6 +1102,7 @@ function agentView(a: DemoAgent, s: State): AgentView {
 // minutes on and the whole seal and open can be tried. Other people's public lines are made up
 // per block; the visitor's own capsules are kept in localStorage, key and all.
 const CAPSULE_LEAD = 120; // seconds
+const CAPSULE_SATS = 5000; // 封存, as deploy/unimap.env.example suggests
 const demoBlockTime = (h: number) => (load().boot ?? Date.now()) + (h - DEMO_TIP) * DEMO_BLOCK_MS;
 const PEER_LINES: [string, CapsulePeer["tag"]][] = [
   ["儿子，凌晨四点。和你家孩子是同一块，以后他们算同块的兄妹了。", "birth"],
@@ -1122,7 +1128,7 @@ function fakePeersAt(h: number): CapsulePeer[] {
 }
 function capsuleView(c: DemoCapsule, me: string | null, full = true): Capsule {
   const tip = demoTip(), now = Date.now(), openMs = Date.parse(c.open_at);
-  if (c.open_height == null && now >= openMs) {
+  if (!c.pending && c.open_height == null && now >= openMs) {
     const first = Math.max(c.sealed_height + 1, DEMO_TIP + Math.ceil((openMs - (load().boot ?? now)) / DEMO_BLOCK_MS));
     if (first <= tip) {
       c.open_height = first;
@@ -1130,11 +1136,20 @@ function capsuleView(c: DemoCapsule, me: string | null, full = true): Capsule {
     }
   }
   const open = c.open_height != null;
-  const { escrow, ref: _ref, ciphertext, signed_message, signature, ...rest } = c;
+  // 「信打开了」 for 封存 (and capsules sealed with billing off), as api/capsule.py tell() does.
+  if (open && c.tier !== "free" && !c.told && c.author === DEMO_ADDRESS) {
+    const s = load();
+    c.told = true;
+    s.notifications = [{ id: Math.max(0, ...(s.notifications ?? []).map((x) => x.id)) + 1, kind: "capsule_open", actor: "", bitmap_number: 0, post_id: null,
+      created_at: new Date().toISOString(), read: false, snippet: null, capsule_id: c.id, recipient: c.recipient, block_height: c.open_height! }, ...(s.notifications ?? [])];
+    save();
+  }
+  const { escrow, ref: _ref, ciphertext, photo, signed_message, signature, pending, told: _told, ...rest } = c;
   return {
     ...rest,
-    ...(full ? { ciphertext, signed_message, signature } : {}),
-    status: open ? "open" : "sealed",
+    ...(full ? { ciphertext, photo: photo ?? null, signed_message, signature } : {}),
+    has_photo: !!photo,
+    status: pending ? "pending" : open ? "open" : "sealed",
     tip,
     blocks_left: open ? null : Math.max(1, Math.ceil((openMs - now) / DEMO_BLOCK_MS)),
     key: open ? escrow : null,
@@ -1151,7 +1166,7 @@ function capsulePeers(h: number, scope: CapsuleScope, me: string | null) {
     hour: [h - 6, h + 6],
     day: [DEMO_TIP + Math.ceil((dayStart - boot) / DEMO_BLOCK_MS), DEMO_TIP + Math.floor((dayStart + DAY * 1000 - 1 - boot) / DEMO_BLOCK_MS)],
   };
-  const mine = (load().capsules ?? []).filter((c) => c.line);
+  const mine = (load().capsules ?? []).filter((c) => c.line && !c.pending);
   const inRange = ([a, b]: [number, number]) => {
     const lo = Math.max(0, a), hi = Math.min(tip, b);
     const own: CapsulePeer[] = mine
@@ -1165,7 +1180,7 @@ function capsulePeers(h: number, scope: CapsuleScope, me: string | null) {
   const here = inRange(ranges.block);
   return {
     height: h, tip, day, scope, counts,
-    sealed_here: here.length + Math.floor(hash(h * 3 + 1) * 6) + (load().capsules ?? []).filter((c) => !c.line && c.sealed_height === h).length,
+    sealed_here: here.length + Math.floor(hash(h * 3 + 1) * 6) + (load().capsules ?? []).filter((c) => !c.line && !c.pending && c.sealed_height === h).length,
     births_here: here.filter((p) => p.tag === "birth").length,
     peers: inRange(ranges[scope]).slice(0, 100),
   };
@@ -1181,24 +1196,59 @@ function capsuleRoute(p: string, q: URLSearchParams, method: string, body: Recor
   const needMe = () => me ?? fail(401, "请先连接钱包");
   const ok = (value: unknown) => ({ hit: true as const, value });
   let m: RegExpMatchArray | null;
-  if (p === "/v1/capsules/rules") return ok({ min_lead_seconds: CAPSULE_LEAD, block_seconds: DEMO_BLOCK_MS / 1000, tags: ["birth", "wedding", "farewell", "start", "other"], tip: demoTip() });
+  // 封存 sells in the demo, so the whole paid flow can be tried; payment is simulated.
+  const freeUsed = (a: string | null) => !!a && (s.capsules ?? []).some((c) => c.author === a && c.tier === "free");
+  const invoice = (ref: string) => {
+    const pay = { id: Math.max(0, ...(s.capsulePays ?? []).map((x) => x.id)) + 1, ref, at: Date.now(), settled: false };
+    (s.capsulePays ??= []).push(pay);
+    return { id: pay.id, product: "capsule", ref, amount_sats: CAPSULE_SATS, status: "pending" as const, verifiable: true, invoice: `lnbc${CAPSULE_SATS * 10}n1pdemocapsule0unimap0city${pay.id}` };
+  };
+  if (p === "/v1/billing/products") return ok({ products: [{ product: "capsule", amount_sats: CAPSULE_SATS }], cosmetics: false });
+  if (p === "/v1/capsules/rules")
+    return ok({ min_lead_seconds: CAPSULE_LEAD, block_seconds: DEMO_BLOCK_MS / 1000, tags: ["birth", "wedding", "farewell", "start", "other"], tip: demoTip(),
+      billing: true, free_left: me ? !freeUsed(me) : null, free_days: 366, max_years: 100, styles: ["classic", "midnight", "celadon", "dusk"], max_photo_chars: 420_000, inscribe_sats: 20_000 });
   if (p === "/v1/capsules" && method === "POST") {
     const a = needMe(), openAt = Number(body.open_at), line = String(body.line ?? "").trim() || null;
+    const tier = (body.tier as "free" | "paid" | undefined) ?? "free", style = (body.style as Capsule["style"]) ?? "classic", photo = (body.photo as string | null) ?? null;
     if (!(openAt >= Date.now() / 1000 + CAPSULE_LEAD)) fail(400, `open_at must be at least ${CAPSULE_LEAD} seconds from now`);
+    if (tier === "free" && (photo || style !== "classic")) fail(403, "a photo and the envelope styles come with 封存, the paid tier");
+    if (tier === "free" && openAt > Date.now() / 1000 + 366 * 86400) fail(400, "a free capsule opens within a year; 封存 (paid) can wait up to 100 years");
+    if (tier === "free" && freeUsed(a)) fail(409, "this wallet has used its free capsule; 封存 is the paid tier");
     const ciphertext = String(body.ciphertext);
     const c: DemoCapsule = {
       id: Math.random().toString(36).slice(2, 13), ref: `v${Date.now()}`, author: a, recipient: String(body.recipient).trim(), ciphertext,
       fingerprint: String(body.fingerprint ?? ""), escrow: String(body.key), open_at: new Date(openAt * 1000).toISOString(),
       sealed_height: demoTip(), sealed_at: new Date().toISOString(), line, tag: line ? ((body.tag as Capsule["tag"]) ?? null) : null,
-      signed_message: "", signature: String(body.signature), open_height: null,
+      signed_message: "", signature: String(body.signature), open_height: null, tier, style, photo, pending: tier === "paid",
     };
     (s.capsules ??= []).unshift(c);
+    const payment = tier === "paid" ? invoice(c.id) : undefined;
     save();
-    return ok(capsuleView(c, a));
+    return ok({ ...capsuleView(c, a), ...(payment ? { payment } : {}) });
+  }
+  if (p === "/v1/billing/pay" && method === "POST") {
+    const a = needMe();
+    const c = (s.capsules ?? []).find((x) => x.id === body.ref && x.author === a) ?? fail(404, "no such capsule of yours");
+    if (!c.pending) fail(409, "this capsule is sealed already");
+    const pay = invoice(c.id);
+    save();
+    return ok(pay);
+  }
+  if ((m = p.match(/^\/v1\/billing\/payments\/(\d+)(\/demo-settle)?$/))) {
+    needMe();
+    const pay = (s.capsulePays ?? []).find((x) => x.id === +m![1]) ?? fail(404, "no such payment");
+    if (m[2] && !pay.settled) {
+      // 演示：模拟付款 — billing's on_settled: sealed on the block of this moment.
+      pay.settled = true;
+      const c = (s.capsules ?? []).find((x) => x.id === pay.ref);
+      if (c) Object.assign(c, { pending: false, sealed_height: demoTip(), sealed_at: new Date().toISOString() });
+      save();
+    }
+    return ok({ id: pay.id, product: "capsule", ref: pay.ref, amount_sats: CAPSULE_SATS, status: pay.settled ? "settled" : "pending", verifiable: true });
   }
   if (p === "/v1/capsules/mine") {
     const a = needMe();
-    return ok({ capsules: (s.capsules ?? []).filter((c) => c.author === a).map((c) => capsuleView(c, a, false)) });
+    return ok({ capsules: (s.capsules ?? []).filter((c) => c.author === a && !c.pending).map((c) => capsuleView(c, a, false)) });
   }
   if ((m = p.match(/^\/v1\/capsules\/peers\/(\d+)$/))) return ok(capsulePeers(+m[1], (q.get("scope") as CapsuleScope) || "block", me));
   if ((m = p.match(/^\/v1\/capsules\/lines\/([^/]+)\/report$/))) return (needMe(), ok({ ok: true }));
@@ -1210,7 +1260,7 @@ function capsuleRoute(p: string, q: URLSearchParams, method: string, body: Recor
     return ok({ ok: true });
   }
   if ((m = p.match(/^\/v1\/capsules\/([^/]+)$/))) {
-    const c = (s.capsules ?? []).find((x) => x.id === m![1]) ?? fail(404, "no such capsule");
+    const c = (s.capsules ?? []).find((x) => x.id === m![1] && (!x.pending || x.author === me)) ?? fail(404, "no such capsule");
     return ok(capsuleView(c, me));
   }
   if (p === "/v1/admin/item-reports") return ok({ reports: [] });
@@ -1280,7 +1330,7 @@ function route(path: string, opts: Opts): unknown {
     const tip = demoTip();
     return { indexed_height: { bitmap: tip, parcel: tip, owner: tip } };
   }
-  const capsuleHit = p.startsWith("/v1/capsules") || p.startsWith("/v1/dms") || p.startsWith("/v1/me/mutes") || p === "/v1/me/dm-settings" || p === "/v1/admin/item-reports" ? capsuleRoute(p, url.searchParams, method, body, me, s) : null;
+  const capsuleHit = p.startsWith("/v1/capsules") || p.startsWith("/v1/billing") || p.startsWith("/v1/dms") || p.startsWith("/v1/me/mutes") || p === "/v1/me/dm-settings" || p === "/v1/admin/item-reports" ? capsuleRoute(p, url.searchParams, method, body, me, s) : null;
   if (capsuleHit) return capsuleHit.value;
   if (p === "/v1/game") return gameView(me);
   if (p === "/v1/tour") return tourView(me);

@@ -8,7 +8,7 @@ import time
 import unittest
 
 from tests import test_social as base
-from tests.test_social import ALICE, BOB, CAROL, PGURL
+from tests.test_social import ALICE, BOB, CAROL, PGURL, Wallet
 
 
 def b64url(raw):
@@ -45,11 +45,13 @@ class CapsuleApi(unittest.TestCase):
                 self.sql("insert into social.block_times (block_height, block_time) values (%s, %s);", (start + i, times[i]))
         return list(range(start, start + n))
 
-    def seal(self, wallet=ALICE, open_in=3600, line=None, tag=None, recipient="18 岁的小满", tamper=False, **override):
+    def seal(self, wallet=ALICE, open_in=3600, line=None, tag=None, recipient="18 岁的小满", tamper=False, photo=None, unsigned_photo=None, **override):
         signed_at = int(time.time())
         ciphertext = base64.b64encode(os.urandom(12 + 16 + 40)).decode()
         key = b64url(os.urandom(32))
-        fingerprint = hashlib.sha256(base64.b64decode(ciphertext)).hexdigest()
+        fingerprint = hashlib.sha256(base64.b64decode(ciphertext) + (base64.b64decode(photo) if photo else b"")).hexdigest()
+        if photo or unsigned_photo:
+            override["photo"] = photo or unsigned_photo
         open_at = signed_at + open_in
         message = self.capsule.capsule_message(recipient, open_at, fingerprint, line, tag, signed_at)
         body = {
@@ -190,6 +192,171 @@ class CapsuleApi(unittest.TestCase):
         r = self.client.get(f"/v1/capsules/peers/{height}").json()
         self.assertEqual([p["line"] for p in r["peers"]], ["女儿出生。"])
         self.assertEqual(self.client.get(f"/v1/capsules/{c['id']}").json()["line"], "三块之后")
+
+    # --- 收费档 ---
+
+    def billing(self, on=True):
+        """Sell 封存 at 5000 sats through a fake Lightning wallet (as in test_social.py); returns it."""
+        from api import tips
+
+        class Fake:
+            paid = set()
+            made = []
+
+            @staticmethod
+            def ask_invoice(address, sats, comment):
+                Fake.made.append((address, sats, comment))
+                n = len(Fake.made)
+                return f"lnbc{sats * 10}n1capsule{n}", f"https://wallet.test/v/{n}"
+
+            @staticmethod
+            def settled(url):
+                return url in Fake.paid
+
+        old = tips.lnurl
+        tips.lnurl = Fake
+        if on:
+            os.environ.update(BILLING_PRICE_CAPSULE_SATS="5000", PLATFORM_LIGHTNING_ADDRESS="pay@unimap.test")
+
+        def undo():
+            tips.lnurl = old
+            for k in ("BILLING_PRICE_CAPSULE_SATS", "PLATFORM_LIGHTNING_ADDRESS"):
+                os.environ.pop(k, None)
+
+        self.addCleanup(undo)
+        return Fake
+
+    def wallet(self, seed):
+        w = Wallet(seed)
+        self.tokens[w.address] = self.login(w)
+        return w
+
+    def photo(self):
+        return base64.b64encode(os.urandom(12 + 16 + 500)).decode()
+
+    def test_billing_off_has_no_limits(self):
+        w = self.wallet(30)
+        rules = self.client.get("/v1/capsules/rules", headers=self.h(w)).json()
+        self.assertEqual((rules["billing"], rules["free_left"]), (False, True))
+        self.assertNotIn("capsule", [p["product"] for p in self.client.get("/v1/billing/products").json()["products"]])
+        for _ in range(3):  # as many as you like, any time ahead, a photo and a style
+            r = self.seal(w, open_in=50 * 365 * 86400, photo=self.photo(), style="dusk", tier="free")[0]
+            self.assertEqual(r.status_code, 201, r.text)
+            c = r.json()
+            self.assertEqual((c["tier"], c["status"], c["style"], c["has_photo"]), ("open", "sealed", "dusk", True))
+        self.assertTrue(self.client.get(f"/v1/capsules/{c['id']}").json()["photo"])
+        self.assertTrue(self.client.get("/v1/capsules/rules", headers=self.h(w)).json()["free_left"])
+
+    def test_free_capsule_once_per_wallet_group(self):
+        self.billing()
+        w, linked = self.wallet(31), self.wallet(32)
+        self.assertEqual(self.client.get("/v1/capsules/rules", headers=self.h(w)).json()["free_left"], True)
+        self.assertIsNone(self.client.get("/v1/capsules/rules").json()["free_left"])
+        r = self.seal(w, open_in=300 * 86400)[0]  # no tier given: the free one
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertEqual((r.json()["tier"], r.json()["status"], r.json()["style"]), ("free", "sealed", "classic"))
+        self.assertEqual(self.seal(w, tier="free")[0].status_code, 409)
+        self.assertFalse(self.client.get("/v1/capsules/rules", headers=self.h(w)).json()["free_left"])
+        # A linked wallet shares the one free capsule.
+        self.sql("insert into social.wallet_links (address, main_address) values (%s, %s);", (linked.address, w.address))
+        try:
+            self.assertEqual(self.seal(linked, tier="free")[0].status_code, 409)
+        finally:
+            self.sql("delete from social.wallet_links where address = %s;", (linked.address,))
+        self.assertEqual(self.seal(linked, tier="free")[0].status_code, 201)
+
+    def test_free_capsule_limits(self):
+        self.billing()
+        w = self.wallet(33)
+        self.assertEqual(self.seal(w, tier="free", open_in=2 * 365 * 86400)[0].status_code, 400)  # within a year
+        self.assertEqual(self.seal(w, tier="free", photo=self.photo())[0].status_code, 403)  # photos are paid
+        self.assertEqual(self.seal(w, tier="free", style="midnight")[0].status_code, 403)  # so are styles
+        self.assertEqual(self.seal(w, tier="gold")[0].status_code, 400)
+        self.assertEqual(self.seal(w, tier="paid", style="nope")[0].status_code, 400)
+        # None of those used the free one.
+        self.assertEqual(self.seal(w, tier="free", open_in=360 * 86400)[0].status_code, 201)
+
+    def test_paid_capsule_waits_for_payment(self):
+        fake = self.billing()
+        w = self.wallet(34)
+        self.assertIn({"product": "capsule", "amount_sats": 5000}, self.client.get("/v1/billing/products").json()["products"])
+        height = self.tip()
+        r = self.seal(w, tier="paid", open_in=60 * 365 * 86400, photo=self.photo(), style="celadon", line="六十年后见", tag="other")[0]
+        self.assertEqual(r.status_code, 201, r.text)
+        c = r.json()
+        pay = c["payment"]
+        self.assertEqual((c["status"], c["tier"], c["key"], pay["amount_sats"], pay["status"]), ("pending", "paid", None, 5000, "pending"))
+        self.assertTrue(pay["invoice"].startswith("lnbc"))
+        self.assertEqual(fake.made[-1], ("pay@unimap.test", 5000, f"unimap capsule {c['id']}"))
+        # Not listed, not among 同块人, and nobody else can see it.
+        self.assertNotIn(c["id"], [x["id"] for x in self.client.get("/v1/capsules/mine", headers=self.h(w)).json()["capsules"]])
+        self.assertNotIn("六十年后见", str(self.client.get(f"/v1/capsules/peers/{height}?scope=hour").json()))
+        self.assertEqual(self.client.get(f"/v1/capsules/{c['id']}").status_code, 404)
+        self.assertEqual(self.client.get(f"/v1/capsules/{c['id']}", headers=self.h(BOB)).status_code, 404)
+        self.assertEqual(self.client.get(f"/v1/capsules/{c['id']}", headers=self.h(w)).json()["status"], "pending")
+        # Another invoice for the same capsule, only for its author.
+        again = lambda who: self.client.post("/v1/billing/pay", json={"product": "capsule", "ref": c["id"]}, headers=self.h(who))
+        self.assertEqual(again(BOB).status_code, 404)
+        self.assertEqual(again(w).status_code, 200)
+        # Paid a few blocks later: sealed on the block of that moment.
+        [later] = self.mine(2)[-1:]
+        fake.paid.add(f"https://wallet.test/v/{len(fake.made) - 1}")  # the first invoice
+        st = self.client.get(f"/v1/billing/payments/{pay['id']}", headers=self.h(w)).json()
+        self.assertEqual(st["status"], "settled")
+        seen = self.client.get(f"/v1/capsules/{c['id']}").json()
+        self.assertEqual((seen["status"], seen["sealed_height"], seen["style"], seen["has_photo"]), ("sealed", later, "celadon", True))
+        self.assertIn(c["id"], [x["id"] for x in self.client.get("/v1/capsules/mine", headers=self.h(w)).json()["capsules"]])
+        self.assertIn("六十年后见", [p["line"] for p in self.client.get(f"/v1/capsules/peers/{later}").json()["peers"]])
+        self.assertEqual(again(w).status_code, 409)  # sealed already
+        # Paying doesn't use up the free one.
+        self.assertTrue(self.client.get("/v1/capsules/rules", headers=self.h(w)).json()["free_left"])
+        self.client.delete(f"/v1/capsules/{c['id']}/line", headers=self.h(w))  # out of test_peers' way
+
+    def test_unpaid_capsule_expires(self):
+        fake = self.billing()
+        w = self.wallet(35)
+        c = self.seal(w, tier="paid")[0].json()
+        late = self.seal(w, tier="paid")[0].json()
+        self.capsule.sweep()  # too soon: both wait
+        self.assertEqual(self.sql("select count(*) from social.capsules where id in (%s, %s);", (c["id"], late["id"]))[0][0], 2)
+        self.sql("update social.capsules set sealed_at = now() - interval '2 hours' where id in (%s, %s);", (c["id"], late["id"]))
+        self.sql("update social.payments set created_at = now() - interval '2 hours' where ref in (%s, %s);", (c["id"], late["id"]))
+        self.assertEqual(self.client.post("/v1/billing/pay", json={"product": "capsule", "ref": c["id"]}, headers=self.h(w)).status_code, 410)
+        fake.paid.add(f"https://wallet.test/v/{len(fake.made)}")  # the second was paid at the last minute
+        self.capsule.sweep()
+        self.assertEqual(self.sql("select count(*) from social.capsules where id = %s;", (c["id"],))[0][0], 0)
+        self.assertEqual(self.sql("select status from social.payments where ref = %s;", (c["id"],))[0][0], "expired")
+        self.assertEqual(self.sql("select status from social.capsules where id = %s;", (late["id"],))[0][0], "sealed")
+
+    def test_photo_is_covered_by_the_fingerprint(self):
+        photo = self.photo()
+        r, _, fingerprint = self.seal(self.wallet(36), photo=photo)
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertEqual(r.json()["fingerprint"], fingerprint)
+        # Signed for the letter alone, sent with a photo: the fingerprint doesn't match.
+        self.assertEqual(self.seal(self.wallet(36), unsigned_photo=photo)[0].status_code, 401)
+
+    def test_opened_paid_capsule_is_told(self):
+        fake = self.billing()
+        w = self.wallet(37)
+        r = self.seal(w, tier="paid", recipient=BOB.address, open_in=60)[0]
+        self.assertEqual(r.status_code, 201, r.text)
+        c = r.json()
+        fake.paid.add(f"https://wallet.test/v/{len(fake.made)}")
+        self.assertEqual(self.client.get(f"/v1/billing/payments/{c['payment']['id']}", headers=self.h(w)).json()["status"], "settled")
+        free = self.seal(self.wallet(38), tier="free", recipient=BOB.address, open_in=60)[0].json()
+        now = int(time.time())
+        self.open_at(c["id"], now - 100)
+        self.open_at(free["id"], now - 100)
+        [h] = self.mine(1, times=[now])
+        self.capsule.sweep()
+        self.capsule.sweep()  # told once
+        told = lambda who: [n for n in self.client.get("/v1/notifications", headers=self.h(who)).json()["notifications"] if n["kind"] == "capsule_open"]
+        mine = told(w)
+        self.assertEqual([(n["capsule_id"], n["block_height"], n["actor"]) for n in mine], [(c["id"], h, "")])
+        theirs = [n for n in told(BOB) if n["capsule_id"] in (c["id"], free["id"])]
+        self.assertEqual([(n["capsule_id"], n["actor"]) for n in theirs], [(c["id"], w.address)])  # the free tier isn't told
+        self.assertEqual(self.client.get(f"/v1/capsules/{free['id']}").json()["status"], "open")  # it still opens when read
 
     # --- 私信 ---
 

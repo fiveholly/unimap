@@ -4860,6 +4860,7 @@ h1 .worn-badge {
   background: var(--surface);
   border-left: 1px solid var(--rule);
   min-width: 0;
+  scroll-margin-top: 80px; /* under the sticky header, when the invoice is brought into view */
 }
 .cap-title {
   font-size: 30px;
@@ -5014,10 +5015,10 @@ button.cap-seal-btn {
   width: 100%;
   max-width: 420px;
   aspect-ratio: 3 / 2;
-  background: var(--paper);
+  background: var(--env-paper, var(--paper));
   border-radius: 4px;
   box-shadow: 0 30px 60px -20px rgba(0, 0, 0, 0.65);
-  color: var(--ink);
+  color: var(--env-ink, var(--ink));
   overflow: hidden;
 }
 .cap-envelope::before {
@@ -5025,8 +5026,8 @@ button.cap-seal-btn {
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(to bottom right, transparent 49.6%, var(--paper-line) 49.8%, var(--paper-line) 50.2%, transparent 50.4%),
-    linear-gradient(to bottom left, transparent 49.6%, var(--paper-line) 49.8%, var(--paper-line) 50.2%, transparent 50.4%);
+    linear-gradient(to bottom right, transparent 49.6%, var(--env-line, var(--paper-line)) 49.8%, var(--env-line, var(--paper-line)) 50.2%, transparent 50.4%),
+    linear-gradient(to bottom left, transparent 49.6%, var(--env-line, var(--paper-line)) 49.8%, var(--env-line, var(--paper-line)) 50.2%, transparent 50.4%);
   opacity: 0.9;
 }
 .cap-envelope .cap-wax {
@@ -5036,20 +5037,20 @@ button.cap-seal-btn {
   transform: translate(-50%, -56%) rotate(-6deg);
 }
 .cap-wax-body {
-  fill: var(--seal);
+  fill: var(--env-wax, var(--seal));
 }
 .cap-wax-ring {
-  stroke: var(--paper);
+  stroke: var(--env-mark, var(--paper));
   opacity: 0.85;
 }
 .cap-wax-char {
-  fill: var(--paper);
+  fill: var(--env-mark, var(--paper));
   font-family: var(--font-serif);
   font-weight: 700;
   font-size: 15px;
 }
 .cap-wax-num {
-  fill: var(--paper);
+  fill: var(--env-mark, var(--paper));
   font-family: var(--font-mono);
   font-size: 9px;
 }
@@ -5070,7 +5071,7 @@ button.cap-seal-btn {
   font-family: var(--font-mono);
   font-size: 10px;
   line-height: 1.5;
-  color: var(--ink-2);
+  color: var(--env-ink-2, var(--ink-2));
 }
 .cap-count {
   display: flex;
@@ -5137,8 +5138,8 @@ button.cap-seal-btn {
 .cap-paper {
   width: 100%;
   max-width: 560px;
-  background: var(--paper);
-  color: var(--ink);
+  background: var(--env-paper, var(--paper));
+  color: var(--env-ink, var(--ink));
   border-radius: 4px;
   padding: 40px 44px;
   box-shadow: 0 30px 60px -20px rgba(0, 0, 0, 0.65);
@@ -5158,15 +5159,200 @@ button.cap-seal-btn {
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 4px 12px;
-  border-top: 1px solid var(--paper-line);
+  border-top: 1px solid var(--env-line, var(--paper-line));
   padding-top: 12px;
   font-family: var(--font-mono);
   font-size: 10px;
-  color: var(--ink-2);
+  color: var(--env-ink-2, var(--ink-2));
 }
 .cap-openday-actions {
   justify-content: center;
   margin-top: 22px;
+}
+
+/* Envelope styles (封存): paper, its folds, ink and wax. classic is the free one and uses the
+   tokens above; the others stay quiet, a paper and a wax each. */
+[data-style="midnight"] {
+  --env-paper: #1f2735;
+  --env-line: #34425a;
+  --env-ink: #ece6d6;
+  --env-ink-2: #9ea7b6;
+  --env-wax: #c8963a;
+  --env-mark: #1f2735;
+}
+[data-style="celadon"] {
+  --env-paper: #dfe7dd;
+  --env-line: #bfcdc0;
+  --env-ink: #1b2a22;
+  --env-ink-2: #56685c;
+  --env-wax: #2f5e4f;
+  --env-mark: #e9efe7;
+}
+[data-style="dusk"] {
+  --env-paper: #ede3e2;
+  --env-line: #d5c5c5;
+  --env-ink: #2a1d22;
+  --env-ink-2: #76616a;
+  --env-wax: #6e3552;
+  --env-mark: #f3eaea;
+}
+.cap-styles {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+button.cap-style {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  height: auto;
+  padding: 10px 6px 8px;
+  border-radius: var(--radius);
+  color: var(--fg-2);
+}
+button.cap-style.on {
+  border-color: var(--fg);
+  color: var(--fg);
+}
+button.cap-style:disabled {
+  opacity: 0.4;
+}
+.cap-mini {
+  position: relative;
+  width: 100%;
+  max-width: 84px;
+  aspect-ratio: 3 / 2;
+  border-radius: 2px;
+  background:
+    linear-gradient(to bottom right, transparent 49%, var(--env-line, var(--paper-line)) 49.5%, var(--env-line, var(--paper-line)) 50.5%, transparent 51%),
+    linear-gradient(to bottom left, transparent 49%, var(--env-line, var(--paper-line)) 49.5%, var(--env-line, var(--paper-line)) 50.5%, transparent 51%),
+    var(--env-paper, var(--paper));
+}
+.cap-mini i {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--env-wax, var(--seal));
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--env-mark, var(--paper)) 45%, transparent);
+}
+.cap-tiers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+button.cap-tier {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  height: auto;
+  padding: 11px 14px;
+  text-align: left;
+  white-space: normal;
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+button.cap-tier.on {
+  border-color: var(--fg);
+}
+button.cap-tier:disabled {
+  opacity: 1;
+  color: var(--fg-3);
+  border-style: dashed;
+  cursor: default;
+}
+.cap-tier-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 14px;
+}
+.cap-tier-head b {
+  font-weight: 500;
+}
+button.cap-tier:disabled .cap-tier-head b {
+  color: var(--fg-2);
+}
+.cap-soon {
+  align-self: flex-start;
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 18px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--fg-2);
+}
+.cap-photo-drop {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 16px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.cap-photo-drop input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.cap-photo-pick {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.cap-photo-pick img {
+  width: 96px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+.cap-photo-pick > div {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.cap-photo {
+  display: block;
+  width: 100%;
+  max-height: 420px;
+  object-fit: contain;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--env-ink, var(--ink)) 6%, transparent);
+}
+.cap-pay {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cap-pay .tip-qr {
+  margin: 4px auto;
+}
+.cap-pay-sum {
+  margin: 0;
+  font-size: 13px;
+  color: var(--fg-2);
+}
+.cap-pay-sum .mono {
+  font-size: 28px;
+  color: var(--lucky);
+}
+button.cap-demo-pay {
+  border-style: dashed;
+}
+.cap-side > button.ghost {
+  width: 100%;
 }
 
 /* 同块人 */

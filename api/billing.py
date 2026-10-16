@@ -153,10 +153,23 @@ def _queue_promotion(cur, p):
                 (int(p["ref"]), p["payer"], p["id"]))
 
 
+def _check_capsule(cur, address, ref):
+    from api import capsule  # capsule imports this module
+
+    capsule.check_pending(cur, address, ref)
+
+
+def _seal_capsule(cur, p):
+    from api import capsule
+
+    capsule.seal_paid(cur, p)
+
+
 # product key: (check(cur, address, ref) before an invoice is made, on_settled(cur, payment) once paid)
 PRODUCTS = {
     "style": (_check_style, _grant_style),  # a premium style option for good; ref is the option
     "promotion": (_check_promotion, _queue_promotion),  # a slot on the home page; ref is the district
+    "capsule": (_check_capsule, _seal_capsule),  # 时间胶囊 · 封存; ref is the capsule waiting to be paid
 }
 
 
@@ -176,23 +189,23 @@ def _payment(row):
     return {"id": pid, "product": product, "ref": ref, "amount_sats": amount, "status": status, "verifiable": True}
 
 
-@router.post("/v1/billing/pay")
-def pay(req: PayBody, address: str = Depends(current_address)):
-    """An invoice from unimap's Lightning wallet for a product."""
-    if req.product not in PRODUCTS:
+def invoice(address, product, ref=""):
+    """An invoice from unimap's Lightning wallet for a product, after its check hook; the payment
+    as /v1/billing/pay returns it. Products that make their own invoice (api/capsule.py) call this."""
+    if product not in PRODUCTS:
         raise HTTPException(404, "no such product")
-    amount = price(req.product)
+    amount = price(product)
     if not amount:
         raise HTTPException(409, "not offered on this server")
-    ref = req.ref.strip()
+    ref = ref.strip()
     with cursor() as cur:
-        PRODUCTS[req.product][0](cur, address, ref)
+        PRODUCTS[product][0](cur, address, ref)
         payer = wallets.main_of(cur, address)
         cur.execute("select count(*) from social.payments where payer = %s and created_at > now() - interval '10 minutes';", (payer,))
         if cur.fetchone()[0] >= PAY_PER_10_MINUTES:
             raise HTTPException(429, "too many invoices at once, try again in a few minutes")
     try:
-        invoice, verify = tips.lnurl.ask_invoice(pay_to(), amount, f"unimap {req.product} {ref}".strip())
+        bolt11, verify = tips.lnurl.ask_invoice(pay_to(), amount, f"unimap {product} {ref}".strip())
     except tips.LnurlError as e:
         raise HTTPException(502, str(e)) from e
     if verify is None:
@@ -200,14 +213,21 @@ def pay(req: PayBody, address: str = Depends(current_address)):
     with cursor() as cur:
         cur.execute(
             "insert into social.payments (payer, product, ref, amount_sats, invoice, verify_url) values (%s, %s, %s, %s, %s, %s) returning id;",
-            (payer, req.product, ref, amount, invoice, verify),
+            (payer, product, ref, amount, bolt11, verify),
         )
-        return {**_payment((cur.fetchone()[0], req.product, ref, amount, "pending")), "invoice": invoice}
+        return {**_payment((cur.fetchone()[0], product, ref, amount, "pending")), "invoice": bolt11}
 
 
-@router.get("/v1/billing/payments/{payment_id}")
-def payment_status(payment_id: int, address: str = Depends(current_address)):
-    """Where a payment stands; while pending, asks the wallet whether it was paid, once more just before it expires."""
+@router.post("/v1/billing/pay")
+def pay(req: PayBody, address: str = Depends(current_address)):
+    """An invoice from unimap's Lightning wallet for a product."""
+    return invoice(address, req.product, req.ref)
+
+
+def refresh(payment_id, address=None, force=False):
+    """Where a payment stands; while pending, asks the wallet whether it was paid (at most every
+    CHECK_SECONDS unless force), once more just before it expires, and runs on_settled once paid.
+    With address, only a payment of its wallet group; None if there is no such payment."""
     with cursor() as cur:
         cur.execute(
             "select payer, product, ref, amount_sats, status, verify_url, created_at < now() - make_interval(mins => %s), "
@@ -215,10 +235,10 @@ def payment_status(payment_id: int, address: str = Depends(current_address)):
             (tips.EXPIRE_MINUTES, tips.CHECK_SECONDS, payment_id),
         )
         row = cur.fetchone()
-        if row is None or row[0] not in wallets.group(cur, address):
-            raise HTTPException(404, "no such payment")
+        if row is None or (address is not None and row[0] not in wallets.group(cur, address)):
+            return None
         payer, product, ref, amount, status, verify, old, due = row
-        if status != "pending" or not due:
+        if status != "pending" or not (due or force):
             return _payment((payment_id, product, ref, amount, status))
         cur.execute("update social.payments set checked_at = now() where id = %s;", (payment_id,))
     try:
@@ -231,12 +251,30 @@ def payment_status(payment_id: int, address: str = Depends(current_address)):
                 cur.execute("update social.payments set status = 'expired' where id = %s and status = 'pending';", (payment_id,))
             return _payment((payment_id, product, ref, amount, "expired"))
         return _payment((payment_id, product, ref, amount, "pending"))
-    with cursor() as cur:
-        cur.execute("update social.payments set status = 'settled', settled_at = now() where id = %s and status = 'pending' returning id;",
-                    (payment_id,))
-        if cur.fetchone() and product in PRODUCTS:
-            PRODUCTS[product][1](cur, {"id": payment_id, "payer": payer, "product": product, "ref": ref, "amount_sats": amount})
+    settle(payment_id)
     return _payment((payment_id, product, ref, amount, "settled"))
+
+
+def settle(payment_id):
+    """Mark a pending payment paid and deliver its product (on_settled), once."""
+    with cursor() as cur:
+        cur.execute(
+            "update social.payments set status = 'settled', settled_at = now() where id = %s and status = 'pending' "
+            "returning id, payer, product, ref, amount_sats;",
+            (payment_id,),
+        )
+        row = cur.fetchone()
+        if row and row[2] in PRODUCTS:
+            PRODUCTS[row[2]][1](cur, dict(zip(("id", "payer", "product", "ref", "amount_sats"), row)))
+
+
+@router.get("/v1/billing/payments/{payment_id}")
+def payment_status(payment_id: int, address: str = Depends(current_address)):
+    """Where a payment stands; while pending, asks the wallet whether it was paid, once more just before it expires."""
+    out = refresh(payment_id, address)
+    if out is None:
+        raise HTTPException(404, "no such payment")
+    return out
 
 
 # --- promotions ---------------------------------------------------------------------------------

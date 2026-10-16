@@ -24,7 +24,7 @@ export function Bolt({ size = 15 }: { size?: number }) {
 }
 
 /** The invoice as a QR code any Lightning wallet can scan. */
-function InvoiceQr({ invoice }: { invoice: string }) {
+export function InvoiceQr({ invoice }: { invoice: string }) {
   const svg = useMemo(() => {
     const qr = qrcode(0, "M");
     qr.addData(invoice.toUpperCase(), "Alphanumeric"); // upper case packs a BOLT11 invoice tighter
