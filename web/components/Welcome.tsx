@@ -96,6 +96,11 @@ function Birthday({ tip }: { tip: number }) {
       <button type="submit" className="ghost sm">
         {t("去看看")}
       </button>
+      {day && (
+        <Link className="small birthday-letter" href={`/capsule?for=${day}`}>
+          {t("给这一天写一封信")}
+        </Link>
+      )}
       {error && <p className="error small">{error}</p>}
     </form>
   );

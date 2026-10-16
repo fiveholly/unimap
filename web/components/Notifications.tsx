@@ -154,6 +154,8 @@ function sentence(item: Item): [React.ReactNode, string] {
       return [tn("{who} 同意你暂住在 {place}，现在可以在那里发帖和投票了", { who, place }), `/district/${n.bitmap_number}`];
     case "pat":
       return [tn("{who} 来摸了摸你的宠物", { who }), "/me"];
+    case "dm":
+      return [tn("{who} 给你发了一条私信", { who }), `/messages/${n.actor}`];
     case "lucky":
       return [
         tn("区块 {h} 抽中你的街区 {place} 做今日幸运街区，你得到一枚徽章", { h: <span className="mono">{(n.block_height ?? 0).toLocaleString("en-US")}</span>, place }),

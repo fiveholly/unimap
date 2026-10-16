@@ -7,7 +7,7 @@ import { MetricsPanel } from "@/components/Metrics";
 import { PostCard } from "@/components/PostCard";
 import { reasonLabel, REPORT_REASONS, type ReportReason } from "@/components/Report";
 import { useSession } from "@/components/Session";
-import { api, type Ban, type Me, type ReportGroup } from "@/lib/api";
+import { api, type Ban, type ItemReport, type Me, type ReportGroup } from "@/lib/api";
 import { short, timeAgo } from "@/lib/format";
 import { locale, t } from "@/lib/i18n";
 
@@ -23,17 +23,20 @@ export default function AdminPage() {
   const [tab, setTab] = useState<"reports" | "bans" | "metrics">("reports");
   const [reports, setReports] = useState<ReportGroup[] | null>(null);
   const [bans, setBans] = useState<Ban[] | null>(null);
+  const [items, setItems] = useState<ItemReport[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     if (!token) return;
     try {
-      const [r, b] = await Promise.all([
+      const [r, b, i] = await Promise.all([
         api<{ reports: ReportGroup[] }>("/v1/admin/reports", { token }),
         api<{ bans: Ban[] }>("/v1/admin/bans", { token }),
+        api<{ reports: ItemReport[] }>("/v1/admin/item-reports", { token }),
       ]);
       setReports(r.reports);
       setBans(b.bans);
+      setItems(i.reports);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -62,6 +65,8 @@ export default function AdminPage() {
     act(() => api(`/v1/admin/reports/${postId}`, { method: "POST", token, body: { action } }));
   const ban = (address: string, days: number | null, reason: string) =>
     act(() => api("/v1/admin/bans", { method: "POST", token, body: { address, days, reason } }));
+  const resolveItem = (r: ItemReport, action: "remove" | "dismiss") =>
+    act(() => api(`/v1/admin/item-reports/${r.kind}/${r.item_id}`, { method: "POST", token, body: { action } }));
   const unban = (address: string) => act(() => api(`/v1/admin/bans/${address}`, { method: "DELETE", token }));
 
   if (!ready) return null;
@@ -76,7 +81,7 @@ export default function AdminPage() {
       <p className="muted small">{t("这里是全站的举报、封禁和每周指标。被封禁的地址不能发帖和回复，街区主人自己的禁言不受影响。")}</p>
       <nav className="tabs" aria-label={t("站点管理")}>
         <button type="button" className={tab === "reports" ? "active" : ""} onClick={() => setTab("reports")}>
-          {t("举报#tab")} <span className="mono">{reports?.length ?? ""}</span>
+          {t("举报#tab")} <span className="mono">{reports ? reports.length + items.length : ""}</span>
         </button>
         <button type="button" className={tab === "bans" ? "active" : ""} onClick={() => setTab("bans")}>
           {t("封禁")} <span className="mono">{bans?.length ?? ""}</span>
@@ -95,6 +100,37 @@ export default function AdminPage() {
         ) : (
           reports.map((g) => <ReportItem key={g.post.id} group={g} resolve={resolve} ban={ban} />)
         ))}
+      {tab === "reports" && items.length > 0 && (
+        <section className="admin-items">
+          <h2 className="section-title">{t("私信和时间胶囊的举报")}</h2>
+          <ul className="ban-list">
+            {items.map((r) => (
+              <li key={`${r.kind}:${r.item_id}`}>
+                <div className="grow">
+                  <p>{r.text}</p>
+                  <p className="muted small">
+                    {r.kind === "dm" ? t("私信") : t("同块人的一句话")}
+                    {" · "}
+                    <Link className="mono" href={`/address/${r.author}`}>
+                      {short(r.author)}
+                    </Link>
+                    {" · "}
+                    {t("{n} 人举报", { n: r.count })}
+                    {" · "}
+                    {r.reasons.map(reasonLabel).join("、")}
+                  </p>
+                </div>
+                <button type="button" className="ghost" onClick={() => resolveItem(r, "dismiss")}>
+                  {t("忽略")}
+                </button>
+                <button type="button" className="ghost" onClick={() => resolveItem(r, "remove")}>
+                  {t("删除")}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {tab === "bans" &&
         (bans == null ? (
           <p className="muted">{t("加载中…")}</p>

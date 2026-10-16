@@ -40,6 +40,14 @@ export default function MePage() {
           <Link className="small" href={`/address/${me.address}`}>
             {t("看看别人眼中的我的主页")}
           </Link>
+          {" · "}
+          <Link className="small" href="/messages">
+            {t("私信")}
+          </Link>
+          {" · "}
+          <Link className="small" href="/capsule">
+            {t("时间胶囊")}
+          </Link>
           {me.admin && (
             <>
               {" · "}
