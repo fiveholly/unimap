@@ -449,11 +449,12 @@ class CapsuleApi(unittest.TestCase):
         self.assertEqual(r.status_code, 201, r.text)
         c = r.json()
         pay = c["payment"]
-        self.assertEqual((pay["method"], pay["address"], pay["amount_sats"], pay["status"], pay["txid"]), ("onchain", PLATFORM, 2000, "pending", None))
+        self.assertEqual((pay["method"], pay["address"], pay["status"], pay["txid"]), ("onchain", PLATFORM, "pending", None))
+        self.assertTrue(2001 <= pay["amount_sats"] <= 2099)  # the price plus a few sats only this payment asks for
         self.assertNotIn("invoice", pay)
         self.assertEqual(self.poll(w, pay)["status"], "pending")  # nothing claimed yet
         # The wallet sent it (2,000 to unimap and the change back) and the page posts the txid; in the mempool is enough.
-        txid = self.tx(fake, [(b"\x00\x14" + b"\x41" * 20, 51_000), (fake.spk, 2000)])
+        txid = self.tx(fake, [(b"\x00\x14" + b"\x41" * 20, 51_000), (fake.spk, pay["amount_sats"])])
         self.assertEqual(self.claim(BOB, pay, txid).status_code, 404)  # only the payer's group
         [later] = self.mine(1)
         st = self.claim(w, pay, txid)
@@ -470,7 +471,8 @@ class CapsuleApi(unittest.TestCase):
         os.environ["ADMIN_ADDRESSES"] = CAROL.address
         self.addCleanup(os.environ.pop, "ADMIN_ADDRESSES", None)
         months = self.client.get("/v1/admin/revenue", headers=self.h(CAROL)).json()["months"]
-        self.assertTrue(any(m["product"] == "capsule" and m["sats"] >= 2000 for m in months))
+        self.assertTrue(any(m["product"] == "capsule" and m["sats"] >= pay["amount_sats"] for m in months))  # what was paid
+        self.assertEqual(self.sql("select amount_sats from social.payments where id = %s;", (pay["id"],))[0][0], pay["amount_sats"])
         self.client.delete(f"/v1/capsules/{c['id']}/line", headers=self.h(w))
 
     def test_wallet_payment_checks_the_transaction(self):
@@ -479,7 +481,8 @@ class CapsuleApi(unittest.TestCase):
         c = self.seal(w, tier="paid")[0].json()
         pay = c["payment"]
         elsewhere = b"\x00\x14" + b"\x42" * 20
-        wrong = self.tx(fake, [(elsewhere, 2000)])
+        amount = pay["amount_sats"]
+        wrong = self.tx(fake, [(elsewhere, amount)])
         r = self.claim(w, pay, wrong)
         self.assertEqual(r.status_code, 400)
         self.assertIn("doesn't pay", r.json()["detail"])
@@ -487,10 +490,12 @@ class CapsuleApi(unittest.TestCase):
         r = self.claim(w, pay, short)
         self.assertEqual(r.status_code, 400)
         self.assertIn("1500 sats", r.json()["detail"])
+        self.assertEqual(self.claim(w, pay, self.tx(fake, [(fake.spk, 2000)])).status_code, 400)  # the bare price isn't it
+        self.assertEqual(self.claim(w, pay, self.tx(fake, [(fake.spk, amount + 1)])).status_code, 400)  # nor is more
         self.assertEqual(self.claim(w, pay, "nothex").status_code, 422)
         self.assertEqual(self.sql("select txid, status from social.payments where id = %s;", (pay["id"],))[0], (None, "pending"))  # neither was kept
         # Two outputs to unimap add up; one confirmed in a block counts as well.
-        good = self.tx(fake, [(fake.spk, 1200), (fake.spk, 800)], confirmations=3)
+        good = self.tx(fake, [(fake.spk, 1200), (fake.spk, amount - 1200)], confirmations=3)
         self.assertEqual(self.claim(w, pay, good).json()["status"], "settled")
         # A txid pays for one payment only, even for another capsule of the same wallet.
         other = self.seal(w, tier="paid")[0].json()
@@ -498,7 +503,44 @@ class CapsuleApi(unittest.TestCase):
         self.assertEqual(self.claim(w, other["payment"], good.upper()).status_code, 409)
         self.assertEqual(self.sql("select status from social.capsules where id = %s;", (other["id"],))[0][0], "pending")
         # A settled payment takes no other transaction.
-        self.assertEqual(self.claim(w, pay, self.tx(fake, [(fake.spk, 2000)])).status_code, 409)
+        self.assertEqual(self.claim(w, pay, self.tx(fake, [(fake.spk, amount)])).status_code, 409)
+
+    def test_wallet_payment_cant_be_claimed_by_another(self):
+        fake = self.onchain()
+        victim, thief = self.wallet(45), self.wallet(46)
+        mine = self.seal(victim, tier="paid")[0].json()["payment"]
+        theirs = self.seal(thief, tier="paid")[0].json()["payment"]
+        many = [self.client.post("/v1/billing/pay", json={"product": "capsule", "ref": self.seal(self.wallet(47 + i), tier="paid")[0].json()["id"]},
+                                 headers=self.h(Wallet(47 + i))).json()["amount_sats"] for i in range(3)]
+        amounts = [mine["amount_sats"], theirs["amount_sats"], *many]
+        self.assertEqual(len(set(amounts)), len(amounts))  # unique among the pending ones
+        # The victim's wallet sends; someone watching the mempool claims that txid for their own payment first.
+        sent = self.tx(fake, [(fake.spk, mine["amount_sats"])])
+        r = self.claim(thief, theirs, sent)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn(f"exactly {theirs['amount_sats']}", r.json()["detail"])
+        self.assertEqual(self.claim(victim, mine, sent).json()["status"], "settled")
+        self.assertEqual(self.sql("select status, txid from social.payments where id = %s;", (theirs["id"],))[0], ("pending", None))
+
+    def test_onchain_amounts_run_out(self):
+        from api import billing
+
+        self.onchain()
+        w = self.wallet(52)
+        c = self.seal(w, tier="paid")[0].json()
+        with self.conn.cursor() as cur:  # every other tag is taken by payments still waiting
+            for n in range(1, billing.TAG_SATS + 1):
+                if 2000 + n != c["payment"]["amount_sats"]:
+                    cur.execute("insert into social.payments (payer, product, ref, amount_sats, method, pay_address) values ('x', 'capsule', 'x', %s, 'onchain', %s);",
+                                (2000 + n, PLATFORM))
+        try:
+            r = self.client.post("/v1/billing/pay", json={"product": "capsule", "ref": c["id"]}, headers=self.h(w))
+            self.assertEqual(r.status_code, 429)
+            self.sql("update social.payments set status = 'expired' where id = %s;", (c["payment"]["id"],))
+            self.assertEqual(self.client.post("/v1/billing/pay", json={"product": "capsule", "ref": c["id"]}, headers=self.h(w)).json()["amount_sats"],
+                             c["payment"]["amount_sats"])  # free again once that one stopped waiting
+        finally:
+            self.sql("delete from social.payments where payer = 'x';")
 
     def test_wallet_payment_waits_for_the_node(self):
         fake = self.onchain(lightning=True)
@@ -513,7 +555,7 @@ class CapsuleApi(unittest.TestCase):
         fake.down = True
         self.assertEqual(self.poll(w, pay)["status"], "pending")  # bitcoind down: still waiting
         fake.down = False
-        fake.txs[txid] = {"txid": txid, "vout": [{"value": 0.00002, "scriptPubKey": {"hex": fake.spk.hex()}}]}
+        fake.txs[txid] = {"txid": txid, "vout": [{"value": pay["amount_sats"] / 1e8, "scriptPubKey": {"hex": fake.spk.hex()}}]}
         self.assertEqual(self.poll(w, pay)["status"], "settled")  # seen on a later poll
         self.assertEqual(self.client.get(f"/v1/capsules/{c['id']}").json()["status"], "sealed")
         # Lightning is still there as a second way, and its payment takes no txid.
@@ -525,7 +567,7 @@ class CapsuleApi(unittest.TestCase):
         third = self.seal(w, tier="paid")[0].json()
         swapped = os.urandom(32).hex()
         self.claim(w, third["payment"], swapped)
-        fake.txs[swapped] = {"txid": swapped, "vout": [{"value": 0.00002, "scriptPubKey": {"hex": "0014" + "42" * 20}}]}
+        fake.txs[swapped] = {"txid": swapped, "vout": [{"value": third["payment"]["amount_sats"] / 1e8, "scriptPubKey": {"hex": "0014" + "42" * 20}}]}
         self.assertEqual(self.poll(w, third["payment"])["txid"], None)
 
     def test_unpaid_wallet_payment_expires(self):
@@ -538,7 +580,7 @@ class CapsuleApi(unittest.TestCase):
         ids = (unpaid["id"], late["id"])
         self.sql("update social.capsules set sealed_at = now() - interval '2 hours' where id in (%s, %s);", ids)
         self.sql("update social.payments set created_at = now() - interval '2 hours' where ref in (%s, %s);", ids)
-        fake.txs[late_tx] = {"txid": late_tx, "vout": [{"value": 0.00002, "scriptPubKey": {"hex": fake.spk.hex()}}]}  # seen at the last minute
+        fake.txs[late_tx] = {"txid": late_tx, "vout": [{"value": late["payment"]["amount_sats"] / 1e8, "scriptPubKey": {"hex": fake.spk.hex()}}]}  # seen at the last minute
         self.capsule.sweep()
         self.assertEqual(self.sql("select count(*) from social.capsules where id = %s;", (unpaid["id"],))[0][0], 0)
         self.assertEqual(self.sql("select status from social.payments where ref = %s;", (unpaid["id"],))[0][0], "expired")

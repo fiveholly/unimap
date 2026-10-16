@@ -167,7 +167,7 @@ type State = {
   shop?: DemoItem[]; // 店铺
   orders?: DemoOrder[];
   capsules?: DemoCapsule[]; // 时间胶囊 the visitor sealed
-  capsulePays?: { id: number; ref: string; at: number; settled: boolean; method?: "onchain" | "lightning"; txid?: string | null }[]; // 封存 payments (api/billing.py), paid by the demo wallet or 演示：模拟付款
+  capsulePays?: { id: number; ref: string; at: number; settled: boolean; method?: "onchain" | "lightning"; txid?: string | null; amount?: number }[]; // 封存 payments (api/billing.py), paid by the demo wallet or 演示：模拟付款
   dms?: DemoDm[]; // 私信
   dmStrangers?: boolean;
   blocked?: string[]; // addresses the visitor muted (and so won't hear from)
@@ -1203,12 +1203,16 @@ function capsuleRoute(p: string, q: URLSearchParams, method: string, body: Recor
   // Both ways are on, as on a server with PLATFORM_BTC_ADDRESS and a Lightning address; on-chain is the default.
   type Pay = NonNullable<State["capsulePays"]>[number];
   const payView = (pay: Pay) => ({
-    id: pay.id, product: "capsule", ref: pay.ref, amount_sats: CAPSULE_SATS, status: pay.settled ? ("settled" as const) : ("pending" as const), verifiable: true,
+    id: pay.id, product: "capsule", ref: pay.ref, amount_sats: pay.amount ?? CAPSULE_SATS, status: pay.settled ? ("settled" as const) : ("pending" as const), verifiable: true,
     method: pay.method ?? "lightning",
     ...(pay.method === "onchain" ? { address: DEMO_PAY_ADDRESS, txid: pay.txid ?? null } : {}),
   });
   const invoice = (ref: string, method: "onchain" | "lightning" = "onchain") => {
-    const pay: Pay = { id: Math.max(0, ...(s.capsulePays ?? []).map((x) => x.id)) + 1, ref, at: Date.now(), settled: false, method, txid: null };
+    // On-chain, the price plus 1..99 sats no other waiting payment asks for (api/billing.py TAG_SATS).
+    const taken = new Set((s.capsulePays ?? []).filter((x) => x.method === "onchain" && !x.settled).map((x) => x.amount));
+    const free = Array.from({ length: 99 }, (_, i) => CAPSULE_SATS + i + 1).filter((a) => !taken.has(a));
+    const amount = method === "onchain" ? free[Math.floor(Math.random() * free.length)] ?? CAPSULE_SATS + 1 : CAPSULE_SATS;
+    const pay: Pay = { id: Math.max(0, ...(s.capsulePays ?? []).map((x) => x.id)) + 1, ref, at: Date.now(), settled: false, method, txid: null, amount };
     (s.capsulePays ??= []).push(pay);
     return { ...payView(pay), ...(method === "lightning" ? { invoice: `lnbc${CAPSULE_SATS * 10}n1pdemocapsule0unimap0city${pay.id}` } : {}) };
   };

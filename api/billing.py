@@ -5,9 +5,10 @@
   - onchain (the default): bitcoin sent from the buyer's wallet straight to PLATFORM_BTC_ADDRESS.
     The browser asks the connected wallet to send it and posts the txid; a pasted txid works too.
     bitcoind (BITCOIN_RPC_URL, with txindex) is asked for the transaction, which must pay that
-    address at least the price. One seen in the mempool counts (0-conf): for a few thousand sats
-    that is worth the risk of a double spend, and the buyer doesn't wait for a block. A txid pays
-    for one payment only.
+    address exactly the payment's amount: the price plus a few sats (1..TAG_SATS) that no other
+    pending payment to the address asks for, so a transaction can only pay the payment it was
+    sent for. One seen in the mempool counts (0-conf): for a few thousand sats that is worth the
+    risk of a double spend, and the buyer doesn't wait for a block. A txid pays for one payment only.
   - lightning: an invoice from unimap's Lightning address (PLATFORM_LIGHTNING_ADDRESS, else
     AGENT_LIGHTNING_ADDRESS), confirmed by its LUD-21 verify URL, as with tips (api/tips.py).
   Once paid either way, the product's on_settled hook delivers it. The agent's own payments
@@ -49,6 +50,7 @@ KEY_CACHE_SECONDS = 60  # a revoked key may keep its limit this long in the othe
 ITEM = re.compile(r"^[a-z0-9_-]{1,40}(:[a-z0-9_.-]{1,60})?$")
 METHODS = ("onchain", "lightning")  # in the order they are offered; the first one on is the default
 CHAIN_NETWORKS = ("mainnet", "testnet", "regtest")  # what PLATFORM_BTC_ADDRESS may be on (signet: as testnet)
+TAG_SATS = 99  # an on-chain payment asks for the price plus 1..TAG_SATS sats, unique among those pending
 
 
 def pay_to():
@@ -258,11 +260,20 @@ def invoice(address, product, ref="", method=None):
         if cur.fetchone()[0] >= PAY_PER_10_MINUTES:
             raise HTTPException(429, "too many payments at once, try again in a few minutes")
     if method == "onchain":
+        to = chain_to()
         with cursor() as cur:
+            # Every pending payment to the address asks for its own exact amount, so a transaction
+            # tells which payment it is for, and nobody can claim another buyer's txid as theirs.
+            cur.execute("select pg_advisory_xact_lock(hashtext('billing-onchain:' || %s));", (to,))
+            cur.execute("select amount_sats from social.payments where method = 'onchain' and status = 'pending' and pay_address = %s;", (to,))
+            taken = {r[0] for r in cur.fetchall()}
+            free = [amount + n for n in range(1, TAG_SATS + 1) if amount + n not in taken]
+            if not free:
+                raise HTTPException(429, "too many payments waiting at once, try again in a few minutes")
             cur.execute(
                 "insert into social.payments (payer, product, ref, amount_sats, method, pay_address) values (%s, %s, %s, %s, 'onchain', %s) "
                 f"returning {PAYMENT_COLUMNS};",
-                (payer, product, ref, amount, chain_to()),
+                (payer, product, ref, secrets.choice(free), to),
             )
             return _payment(cur.fetchone())
     try:
@@ -303,9 +314,9 @@ chain = Chain()
 
 def check_tx(txid, address, amount):
     """(state, why) of a transaction meant to pay amount to address: "paid" once bitcoind has it,
-    in the mempool or a block, with outputs to address of at least amount; "unseen" while bitcoind
-    doesn't know it (or can't be asked), so it is looked for again; "wrong" when it pays too
-    little or not to address."""
+    in the mempool or a block, with outputs to address of exactly amount (summed, if several);
+    "unseen" while bitcoind doesn't know it (or can't be asked), so it is looked for again;
+    "wrong" when it pays another amount or not to address."""
     try:
         tx = chain.transaction(txid)
     except Exception as e:  # bitcoind down or busy: look again on the next check
@@ -317,8 +328,8 @@ def check_tx(txid, address, amount):
     paid = [round(o["value"] * 100_000_000) for o in tx.get("vout", []) if spk and o.get("scriptPubKey", {}).get("hex") == spk.hex()]
     if not paid:
         return "wrong", f"this transaction doesn't pay {address}"
-    if sum(paid) < amount:
-        return "wrong", f"this transaction pays {sum(paid)} sats to {address}; {amount} are needed"
+    if sum(paid) != amount:
+        return "wrong", f"this transaction pays {sum(paid)} sats to {address}; this payment is for exactly {amount}"
     return "paid", None
 
 

@@ -23,12 +23,12 @@
 
 所有 unimap 自己的付费产品走同一个流程。付款方式有两种（`billing.METHODS`），哪种设了收款地址就提供哪种，链上在前、是默认：
 
-- `onchain`（用钱包支付）：用户已经连接的比特币钱包（UniSat、Xverse、OKX）直接把正好这个金额转到 `PLATFORM_BTC_ADDRESS`，网页把钱包返回的 txid 交给服务器；连的是「粘贴签名」钱包或钱包调用失败时，网页显示地址、金额和复制按钮，可以从任何钱包转账后把 txid 贴回来。钱包会在金额之外另收网络手续费（按现在的低费率大约两三百聪），付款页上写明了。
+- `onchain`（用钱包支付）：用户已经连接的比特币钱包（UniSat、Xverse、OKX）直接把这笔付款的准确金额转到 `PLATFORM_BTC_ADDRESS`，网页把钱包返回的 txid 交给服务器；连的是「粘贴签名」钱包或钱包调用失败时，网页显示地址、金额和复制按钮，可以从任何钱包转账后把 txid 贴回来。钱包会在金额之外另收网络手续费（按现在的低费率大约两三百聪），付款页上写明了。
 - `lightning`（用闪电网络付款）：向 `PLATFORM_LIGHTNING_ADDRESS` 的钱包要一张发票，和 agent 付费、打赏一样靠 LUD-21 确认到账。
 
 1. `GET /v1/billing/products`：现在在卖什么，默认是空列表；`cosmetics` 表示高级外观是否在收费；`methods` 是现在能用的付款方式，默认的在前。
-2. `POST /v1/billing/pay {"product", "ref", "method"}`：开一笔付款。不写 `method` 就用默认的。链上付款返回 `address` 和 `amount_sats`；闪电付款返回 `invoice`。产品不存在是 404，没定价是 409，这种方式没开也是 409。每个钱包组 10 分钟最多开 5 笔。
-3. `POST /v1/billing/payments/{id}/tx {"txid"}`（只用于链上付款）：交上付这笔钱的交易，马上用 bitcoind 查一次（`getrawtransaction`，节点要开 `txindex`）。交易要有付到这笔付款记下的收款地址的输出，合计不少于金额；付错地址或金额不够是 400，txid 不保存。一个 txid 只能付一笔（`social.payments.txid` 唯一），已经被别的付款用过是 409。节点还没看到这笔交易（或者暂时问不到 bitcoind）时付款保持 pending，之后查状态时再看。
+2. `POST /v1/billing/pay {"product", "ref", "method"}`：开一笔付款。不写 `method` 就用默认的。链上付款返回 `address` 和 `amount_sats`：价格加上 1 到 99 聪（`TAG_SATS`），这个尾数在同一个收款地址所有 pending 的链上付款里不重复（开单时按地址加锁挑一个没用的；99 个都被占着时是 429）；闪电付款返回 `invoice`。产品不存在是 404，没定价是 409，这种方式没开也是 409。每个钱包组 10 分钟最多开 5 笔。
+3. `POST /v1/billing/payments/{id}/tx {"txid"}`（只用于链上付款）：交上付这笔钱的交易，马上用 bitcoind 查一次（`getrawtransaction`，节点要开 `txindex`）。交易付到这笔付款记下的收款地址的输出，合计必须正好等于 `amount_sats`；付错地址、少付或多付都是 400，txid 不保存。一个 txid 只能付一笔（`social.payments.txid` 唯一），已经被别的付款用过是 409。节点还没看到这笔交易（或者暂时问不到 bitcoind）时付款保持 pending，之后查状态时再看。
 4. `GET /v1/billing/payments/{id}`：只有付款人（含关联钱包）能查；还没到账时问 bitcoind（链上）或钱包的 verify 地址（闪电），最多两秒一次。交上的交易后来被替换、不再付这笔钱时，txid 会被放掉，可以重新交。60 分钟后最后再查一次，还没付就标成过期。
 5. 到账后调用这个产品的 `on_settled`：
 
@@ -40,13 +40,15 @@
 
 产品自己开付款时调用 `billing.invoice(address, product, ref, method=None)`；`billing.refresh(payment_id, force=True)` 在后台再查一次（时间胶囊清理没付款的信时用）。新产品不用为付款方式写任何代码，两种方式都走 `billing.settle()`。
 
-付款记在 `social.payments`：`method` 是 `onchain` 或 `lightning`，链上付款还记 `pay_address`（开单时的 `PLATFORM_BTC_ADDRESS`，之后改环境变量不影响已经开出的单）和 `txid`。
+付款记在 `social.payments`：`method` 是 `onchain` 或 `lightning`，链上付款还记 `pay_address`（开单时的 `PLATFORM_BTC_ADDRESS`，之后改环境变量不影响已经开出的单）和 `txid`。`amount_sats` 是实际付的金额，链上付款包括那几聪尾数，所以收入汇总里就是真正到账的数。agent 的付款还在原来的 `social.agent_payments`，以后可以搬成这里的一个产品。
 
 ### 链上付款为什么接受 0 确认
 
 交易进了 unimap 节点的内存池就算到账，不等出块。金额只有几千聪，用户付完马上就能看到信封好，这比等十分钟到一小时重要；双花需要用户自己再发一笔替换交易，为几千聪不划算，真发生了就是平台少收一次钱。节点不认识的交易（被拒、被替换掉、或者根本没广播）永远不算到账，只会一直 pending 到过期。
 
-已知的不足：收款地址是公开的，同一个金额的付款也很多，理论上有人能在内存池里看到别人刚发的交易，抢先把那个 txid 交到自己的付款上。钱包按钮在钱包一返回 txid 就提交，窗口很小；为几千聪不值得做更复杂的认领（比如按付款人地址核对输入）。被抢的用户会看到 409，联系管理员手动处理。agent 的付款还在原来的 `social.agent_payments`，以后可以搬成这里的一个产品。
+### 为什么金额有尾数
+
+收款地址是公开的，如果每笔付款都是同一个价格，有人可以在内存池里看到别人刚发的交易，抢先把那个 txid 交到自己的付款上。所以每笔等待中的链上付款都有自己独有的准确金额（比如 2,037 聪），交易必须正好付这个数：别人的交易付的是别人的金额，交到自己的付款上只会得到 400。付款页上显示的、钱包按钮发出的、手动转账要填的，都是这个准确金额，用户多付几十聪。闪电付款有自己的发票，不加尾数。
 
 ## 权益
 

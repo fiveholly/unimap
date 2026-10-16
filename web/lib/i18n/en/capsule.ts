@@ -201,6 +201,8 @@ export const capsule: Record<string, string> = {
   "信已经加密交给 unimap，付款到账的那一刻封存，挂在当时最新的区块上。":
     "The letter is encrypted and with unimap; it is sealed the moment the payment lands, on the newest block then.",
   "用钱包支付": "Pay with your wallet",
+  "{price} 聪，加上这笔付款独有的 {n} 聪尾数，用来认出你的转账。请正好付这个数。":
+    "{price} sats plus {n} sats unique to this payment, so your transfer can be told apart. Send exactly this amount.",
   "请在钱包里确认…": "Confirm in your wallet…",
   "钱包会在这笔钱之外另收一点网络手续费，按现在的低费率大约两三百聪。":
     "Your wallet adds a small network fee on top, about a couple hundred sats at today's low fees.",

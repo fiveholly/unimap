@@ -100,6 +100,7 @@ export function CapsulePay({ capsuleId, first, token, done }: { capsuleId: strin
   const sender = walletById(wallet);
   const [pay, setPay] = useState<Payment | null>(first);
   const [methods, setMethods] = useState<PayMethod[]>([]);
+  const [price, setPrice] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [sending, setSending] = useState(false);
   const [manual, setManual] = useState(false);
@@ -123,7 +124,10 @@ export function CapsulePay({ capsuleId, first, token, done }: { capsuleId: strin
   };
   useEffect(() => {
     if (!first) fresh();
-    api<BillingProducts>("/v1/billing/products").then((r) => setMethods(payMethods(r.methods)), () => {});
+    api<BillingProducts>("/v1/billing/products").then((r) => {
+      setMethods(payMethods(r.methods));
+      setPrice(r.products.find((p) => p.product === "capsule")?.amount_sats ?? null);
+    }, () => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const onchain = pay?.method === "onchain";
@@ -234,6 +238,9 @@ export function CapsulePay({ capsuleId, first, token, done }: { capsuleId: strin
         <p className="cap-pay-sum">
           <span className="mono">{sats}</span> {t("聪")}
         </p>
+      )}
+      {onchain && pay?.status === "pending" && price != null && pay.amount_sats > price && (
+        <p className="dim small">{t("{price} 聪，加上这笔付款独有的 {n} 聪尾数，用来认出你的转账。请正好付这个数。", { price: price.toLocaleString("en-US"), n: pay.amount_sats - price })}</p>
       )}
       {pay?.status === "settled" ? (
         <p className="muted small">{t("付好了，正在封存…")}</p>

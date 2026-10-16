@@ -5122,6 +5122,21 @@ button.cap-seal-btn {
   width: auto;
   align-self: flex-start;
 }
+/* Full-width buttons in the side panel wrap a long label (the English ones run long) instead of
+   running past the panel. */
+.cap-side > button:not(.link-btn):not(.lg),
+.cap-side > .btn:not(.lg),
+.cap-spare button:not(.link-btn),
+.cap-pay button:not(.link-btn),
+.cap-pay .btn {
+  height: auto;
+  min-height: 34px;
+  padding-top: 7px;
+  padding-bottom: 7px;
+  line-height: 1.35;
+  white-space: normal;
+  text-wrap: balance;
+}
 
 /* Opening day: the letter on paper under a warm light. */
 .cap-openday {
