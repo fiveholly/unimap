@@ -5,6 +5,7 @@ import type { BadgeKind, Rarity } from "./game";
 import type { Pet, PetKey, PublicPet } from "./pets";
 import type { Prosperity } from "./prosperity";
 import type { DistrictStyle } from "./style";
+import type { Tag } from "./capsule";
 
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 // The server (share images) can reach the API without going out through the public origin.
@@ -305,7 +306,7 @@ export type FeedItem = { type: "post"; time: number; post: Post } | { type: "eve
 /** The owner's view of what their wallet holds and what the district shows. */
 export type Showcase = { chosen: PetKey[]; held: Pet[]; wallets?: number; checked_at: string | null; error: string | null; shown: Pet[] };
 
-export type NotificationKind = "reply" | "like" | "post" | "follow" | "apply" | "tip" | "treasure" | "lucky" | "crown" | "event_win" | "sold" | "offer" | "offer_accepted" | "agent_draft" | "agent_posted" | "agent_alert" | "shop_sold" | "pat" | "tenant";
+export type NotificationKind = "reply" | "like" | "post" | "follow" | "apply" | "tip" | "treasure" | "lucky" | "crown" | "event_win" | "sold" | "offer" | "offer_accepted" | "agent_draft" | "agent_posted" | "agent_alert" | "shop_sold" | "pat" | "tenant" | "dm";
 export type Notification = {
   id: number;
   kind: NotificationKind;
@@ -473,3 +474,46 @@ export type AgentBriefing =
   | { kind: "treasure"; height: number; rarity: Rarity; closes_at_height: number };
 export type AgentView = { agent: Agent | null; drafts: AgentDraft[]; recent: AgentDraft[]; briefing: AgentBriefing[] };
 export type AgentGrant = { id: number; bitmap_number: number; parcel?: number | null; owner: string; agent_key: string; message: string; signature: string; granted_at: string; expires_at: string; revoked_at: string | null };
+
+/** 时间胶囊 (api/capsule.py). key comes once it is open; ciphertext and the signature only on the capsule's own page. */
+export type Capsule = {
+  id: string;
+  author: string;
+  recipient: string;
+  fingerprint: string;
+  open_at: string;
+  sealed_height: number;
+  sealed_at: string;
+  status: "sealed" | "open";
+  tip: number | null;
+  blocks_left: number | null;
+  open_height: number | null;
+  key: string | null;
+  line: string | null;
+  tag: Tag | null;
+  mine: boolean;
+  ciphertext?: string;
+  signed_message?: string;
+  signature?: string;
+};
+export type CapsuleRules = { min_lead_seconds: number; block_seconds: number; tags: Tag[]; tip: number | null };
+export type CapsuleScope = "block" | "hour" | "day";
+/** 同块人: someone's public line on a capsule they sealed near a block. */
+export type CapsulePeer = { ref: string; address: string; line: string; tag: Tag | null; sealed_at: string; sealed_height: number; mine: boolean; capsule_id?: string };
+export type CapsulePeers = {
+  height: number;
+  tip: number;
+  day: string;
+  scope: CapsuleScope;
+  counts: Record<CapsuleScope, number>;
+  sealed_here: number;
+  births_here: number;
+  peers: CapsulePeer[];
+};
+
+/** 私信 (api/dms.py). */
+export type DmMessage = { id: number; from_me: boolean; body: string | null; removed: boolean; created_at: string; read: boolean };
+export type Conversation = { peer: string; last: DmMessage; unread: number };
+export type DmThread = { peer: string; messages: DmMessage[]; more: boolean; can_send: boolean; why_not: "blocked" | "strangers_off" | null; blocked_by_me: boolean };
+/** A reported private message or capsule line, for site admins. */
+export type ItemReport = { kind: "dm" | "capsule"; item_id: string; count: number; last: string; reasons: string[]; notes: string[]; author: string; text: string };

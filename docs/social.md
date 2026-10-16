@@ -425,6 +425,28 @@ Magic Eden 的接口需要 API key 才能稳定使用，在 `/etc/unimap/unimap.
 - 佩戴徽章：在 `/game` 的「我的徽章」里挑一枚佩戴（`PUT /v1/me/badge`，`{"id"}`，`null` 是取下，表 `social.worn_badges`），它会出现在这个地址的帖子、回复和个人主页上名字旁边（帖子的 `author.badge`，个人主页 `badges` 里 `worn` 为真的那枚）。每个地址同时只戴一枚。
 - 徽章现在只存在 unimap 的数据库里。按方案，下一步是把王冠和稀有徽章铭刻成挂在 unimap 父铭文下的真铭文，这需要项目方的钱包。
 
+## 时间胶囊（免费版）
+
+今天写一封信，等到未来某一天之后的第一个比特币区块出来才能打开（`api/capsule.py`，表 `social.capsules`、`social.block_times`；网页 `/capsule`）。免费版只用钱包签名存在 unimap，不上链、不收费。
+
+- 写信：浏览器用 WebCrypto AES-GCM 和一把随机钥匙加密（`web/lib/capsule.ts`），钱包签名 `capsule_message(...)`（写给谁、打开时间、密文的 sha256、公开的一句话和类型、签名时间），把密文和钥匙一起交给 `POST /v1/capsules`。服务器自己算密文的 sha256 核对签名，记下当时的高度（`bitmap_block_hashes` 的最大高度）作为封存区块。
+- 钥匙永远「两份都留」：unimap 托管一份，打开前任何接口都不返回；寄信人封好后拿到同一把钥匙，放在分享链接的 `#k=` 里（浏览器不会把 # 后面发给服务器），只显示这一次。收信人拿着它随时可以在浏览器里提前解开。
+- 什么时候打开：时间（区块头时间）不早于 `open_at` 的第一个块。读信时才算：区块时间向 bitcoind 要，存在 `social.block_times`，二分查找后再往前看 12 块（区块头时间允许稍微乱序）。没有 bitcoind 可问时（测试机），在发现 `open_at` 已过时记下当时的高度（`due_tip`），下一个块出来时打开；有人及时来看就是同一个块，否则可能晚一两块。
+- `open_at` 至少在 `CAPSULE_MIN_LEAD` 秒以后（默认一天，最多 100 年）。演示站（`NEXT_PUBLIC_DEMO`，`web/lib/demo.ts`）每 75 秒出一块，允许两分钟后打开，可以亲手试一次封存和开信；测试服务器把 `CAPSULE_MIN_LEAD` 设小也一样。
+- 接口：`GET /v1/capsules/rules`、`POST /v1/capsules`、`GET /v1/capsules/{id}`（任何拿到链接的人都能看信封；打开后带 `key` 和 `open_height`）、`GET /v1/capsules/mine`、`DELETE /v1/capsules/{id}/line`。id 是随机串，不能按顺序猜。
+- 同块人：封信时可以选一句公开的话和类型（出生、结婚、告别、开始、其他），默认不公开。`GET /v1/capsules/peers/{height}?scope=block|hour|day` 列出这一块、前后 6 块、同一个 UTC 日里的公开句子和三种数量，只有句子、类型、地址和时间，信的内容、收信人和链接都不出现（每句话用单独的 `ref` 表示）。作者可以撤下自己的那句话，别人可以举报（`POST /v1/capsules/lines/{ref}/report`）。
+- 被封禁的地址不能封信。
+
+## 私信
+
+一对一的私信，先给同块人打招呼用（`api/dms.py`，表 `social.dms`、`social.dm_settings`；网页 `/messages`）。
+
+- 和其他写操作一样用钱包登录的令牌；被封禁的地址不能发。每人每分钟最多 20 条，每天最多主动找 30 个没回过话的新人。
+- 屏蔽沿用通知的屏蔽（`PUT /v1/me/mutes/{address}`）：屏蔽了谁，谁就不能再给你发私信。`PUT /v1/me/dm-settings {"strangers": false}` 关掉陌生人私信：只有你写过信的人能给你发。
+- 收信人可以举报一条私信（`POST /v1/dms/messages/{id}/report`），站点管理员这时才看得到它的内容（`GET /v1/admin/item-reports`，删除或忽略：`POST /v1/admin/item-reports/{kind}/{id}`，同块人那句话的举报也在这里）。
+- 新私信记一条 `dm` 通知；同一个人连发几条，读之前只记一条。
+- 接口：`GET /v1/dms`（对话列表和未读数）、`GET /v1/dms/unread`、`GET /v1/dms/{address}`（读了就标为已读）、`POST /v1/dms/{address}`。
+
 ## 每日巡城
 
 给不持有土地的人每天一个小目标，也把人带到热闹的街区去（`api/tour.py`，表 `social.tour_days`）。

@@ -3,7 +3,7 @@
 // here from deterministic fake data; what the visitor does (posts, likes, follows, profile
 // edits) is kept in localStorage, and "重置演示数据" clears it.
 
-import type { MarketOffer, OfferQuote, Agent, AgentDraft, AgentGrant, AgentInfo, AgentTask, AgentView, Application, Tenant, Badge, CaredPet, Contest, MarketListing, ContestMetric, District, DistrictGame, Draw, Game, Season, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Metrics, ShopBought, ShopItem, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
+import type { Capsule, CapsulePeer, CapsuleScope, Conversation, DmMessage, MarketOffer, OfferQuote, Agent, AgentDraft, AgentGrant, AgentInfo, AgentTask, AgentView, Application, Tenant, Badge, CaredPet, Contest, MarketListing, ContestMetric, District, DistrictGame, Draw, Game, Season, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Metrics, ShopBought, ShopItem, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
 import { CLAIM_BLOCKS, pick, rarityOf, ROUND, roundOf, SEASON, seasonOf, sha256, type Rarity } from "./game";
 import { connected } from "./parks";
 import { MAX_SHOWN, PET_KEYS, PETS, type Pet, type PetKey } from "./pets";
@@ -166,7 +166,13 @@ type State = {
   agentPay?: { id: number; at: number; settled: boolean; agent?: number } | null;
   shop?: DemoItem[]; // 店铺
   orders?: DemoOrder[];
+  capsules?: DemoCapsule[]; // 时间胶囊 the visitor sealed
+  dms?: DemoDm[]; // 私信
+  dmStrangers?: boolean;
+  blocked?: string[]; // addresses the visitor muted (and so won't hear from)
 };
+type DemoCapsule = Omit<Capsule, "status" | "tip" | "blocks_left" | "open_height" | "key" | "mine"> & { ref: string; escrow: string; open_height: number | null };
+type DemoDm = { id: number; from: string; to: string; body: string; at: number; read?: boolean; removed?: boolean };
 type DemoAgent = Omit<Agent, "posted_today" | "running" | "problem"> & { n: number; message: string; revoked?: boolean; drafts: AgentDraft[] };
 type DemoItem = Omit<ShopItem, "sold" | "left" | "on_sale" | "mine" | "bought"> & { content: string; sold: number; introduced?: boolean };
 type DemoOrder = { id: number; item: number; buyer: string; at: number; settled: boolean };
@@ -1086,6 +1092,181 @@ function agentView(a: DemoAgent, s: State): AgentView {
     recent: drafts.filter((d) => d.status !== "pending").sort((x, y) => y.id - x.id), briefing };
 }
 
+// ---- 时间胶囊 and 私信 --------------------------------------------------------------
+// The demo's blocks come every DEMO_BLOCK_MS from when it began, so a capsule may open a couple of
+// minutes on and the whole seal and open can be tried. Other people's public lines are made up
+// per block; the visitor's own capsules are kept in localStorage, key and all.
+const CAPSULE_LEAD = 120; // seconds
+const demoBlockTime = (h: number) => (load().boot ?? Date.now()) + (h - DEMO_TIP) * DEMO_BLOCK_MS;
+const PEER_LINES: [string, CapsulePeer["tag"]][] = [
+  ["儿子，凌晨四点。和你家孩子是同一块，以后他们算同块的兄妹了。", "birth"],
+  ["外婆走了。想把这一刻也留下来。", "farewell"],
+  ["今天离职，开始做自己的事。", "start"],
+  ["领证了。十年后的今天一起拆开。", "wedding"],
+  ["女儿出生，六斤二两。", "birth"],
+  ["给 30 岁的自己：别忘了今天的决定。", "other"],
+  ["搬到新城市的第一天。", "start"],
+  ["送别老狗豆豆，它陪了我们十四年。", "farewell"],
+  ["和她求婚成功，信封给二十年后的我们。", "wedding"],
+  ["第一次买比特币，就在这一块。", "start"],
+  ["双胞胎，一前一后，差了一个块。", "birth"],
+  ["毕业了，给五年后的自己。", "other"],
+];
+function fakePeersAt(h: number): CapsulePeer[] {
+  if (h < 0 || h > demoTip()) return [];
+  const n = h >= DEMO_TIP - 6 ? 2 + Math.floor(hash(h * 13 + 5) * 3) : Math.floor(hash(h * 13 + 5) * 2.4);
+  return Array.from({ length: n }, (_, i) => {
+    const [line, tag] = PEER_LINES[Math.floor(hash(h * 31 + i) * PEER_LINES.length)];
+    return { ref: `f${h}-${i}`, address: fakeAddress(h * 7 + i), line, tag, sealed_at: new Date(demoBlockTime(h) + (i + 1) * 23_000).toISOString(), sealed_height: h, mine: false };
+  });
+}
+function capsuleView(c: DemoCapsule, me: string | null, full = true): Capsule {
+  const tip = demoTip(), now = Date.now(), openMs = Date.parse(c.open_at);
+  if (c.open_height == null && now >= openMs) {
+    const first = Math.max(c.sealed_height + 1, DEMO_TIP + Math.ceil((openMs - (load().boot ?? now)) / DEMO_BLOCK_MS));
+    if (first <= tip) {
+      c.open_height = first;
+      save();
+    }
+  }
+  const open = c.open_height != null;
+  const { escrow, ref: _ref, ciphertext, signed_message, signature, ...rest } = c;
+  return {
+    ...rest,
+    ...(full ? { ciphertext, signed_message, signature } : {}),
+    status: open ? "open" : "sealed",
+    tip,
+    blocks_left: open ? null : Math.max(1, Math.ceil((openMs - now) / DEMO_BLOCK_MS)),
+    key: open ? escrow : null,
+    mine: me === c.author,
+  };
+}
+function capsulePeers(h: number, scope: CapsuleScope, me: string | null) {
+  const tip = demoTip();
+  if (!Number.isInteger(h) || h < 0 || h > tip) fail(404, "no such block yet");
+  const day = new Date(demoBlockTime(h)).toISOString().slice(0, 10);
+  const dayStart = Date.parse(`${day}T00:00:00Z`), boot = load().boot ?? Date.now();
+  const ranges: Record<CapsuleScope, [number, number]> = {
+    block: [h, h],
+    hour: [h - 6, h + 6],
+    day: [DEMO_TIP + Math.ceil((dayStart - boot) / DEMO_BLOCK_MS), DEMO_TIP + Math.floor((dayStart + DAY * 1000 - 1 - boot) / DEMO_BLOCK_MS)],
+  };
+  const mine = (load().capsules ?? []).filter((c) => c.line);
+  const inRange = ([a, b]: [number, number]) => {
+    const lo = Math.max(0, a), hi = Math.min(tip, b);
+    const own: CapsulePeer[] = mine
+      .filter((c) => c.sealed_height >= lo && c.sealed_height <= hi)
+      .map((c) => ({ ref: c.ref, address: c.author, line: c.line!, tag: c.tag, sealed_at: c.sealed_at, sealed_height: c.sealed_height, mine: c.author === me, capsule_id: c.id }));
+    let fakes: CapsulePeer[] = [];
+    for (let x = lo; x <= hi; x++) fakes = fakes.concat(fakePeersAt(x));
+    return [...own, ...fakes];
+  };
+  const counts = { block: inRange(ranges.block).length, hour: inRange(ranges.hour).length, day: inRange(ranges.day).length };
+  const here = inRange(ranges.block);
+  return {
+    height: h, tip, day, scope, counts,
+    sealed_here: here.length + Math.floor(hash(h * 3 + 1) * 6) + (load().capsules ?? []).filter((c) => !c.line && c.sealed_height === h).length,
+    births_here: here.filter((p) => p.tag === "birth").length,
+    peers: inRange(ranges[scope]).slice(0, 100),
+  };
+}
+function demoDms(s: State): DemoDm[] {
+  // One hello already waiting, from someone who sealed on the visitor's first block.
+  s.dms ??= [{ id: 1, from: fakeAddress(DEMO_TIP * 7), to: DEMO_ADDRESS, body: "你好！我们的信封在同一块上，明年这一天来报个到？", at: Date.now() - 3_600_000 }];
+  return s.dms.filter((m) => m.at <= Date.now());
+}
+const dmView = (m: DemoDm, me: string): DmMessage => ({ id: m.id, from_me: m.from === me, body: m.removed ? null : m.body, removed: !!m.removed, created_at: new Date(m.at).toISOString(), read: !!m.read });
+
+function capsuleRoute(p: string, q: URLSearchParams, method: string, body: Record<string, unknown>, me: string | null, s: State): { hit: true; value: unknown } | null {
+  const needMe = () => me ?? fail(401, "请先连接钱包");
+  const ok = (value: unknown) => ({ hit: true as const, value });
+  let m: RegExpMatchArray | null;
+  if (p === "/v1/capsules/rules") return ok({ min_lead_seconds: CAPSULE_LEAD, block_seconds: DEMO_BLOCK_MS / 1000, tags: ["birth", "wedding", "farewell", "start", "other"], tip: demoTip() });
+  if (p === "/v1/capsules" && method === "POST") {
+    const a = needMe(), openAt = Number(body.open_at), line = String(body.line ?? "").trim() || null;
+    if (!(openAt >= Date.now() / 1000 + CAPSULE_LEAD)) fail(400, `open_at must be at least ${CAPSULE_LEAD} seconds from now`);
+    const ciphertext = String(body.ciphertext);
+    const c: DemoCapsule = {
+      id: Math.random().toString(36).slice(2, 13), ref: `v${Date.now()}`, author: a, recipient: String(body.recipient).trim(), ciphertext,
+      fingerprint: String(body.fingerprint ?? ""), escrow: String(body.key), open_at: new Date(openAt * 1000).toISOString(),
+      sealed_height: demoTip(), sealed_at: new Date().toISOString(), line, tag: line ? ((body.tag as Capsule["tag"]) ?? null) : null,
+      signed_message: "", signature: String(body.signature), open_height: null,
+    };
+    (s.capsules ??= []).unshift(c);
+    save();
+    return ok(capsuleView(c, a));
+  }
+  if (p === "/v1/capsules/mine") {
+    const a = needMe();
+    return ok({ capsules: (s.capsules ?? []).filter((c) => c.author === a).map((c) => capsuleView(c, a, false)) });
+  }
+  if ((m = p.match(/^\/v1\/capsules\/peers\/(\d+)$/))) return ok(capsulePeers(+m[1], (q.get("scope") as CapsuleScope) || "block", me));
+  if ((m = p.match(/^\/v1\/capsules\/lines\/([^/]+)\/report$/))) return (needMe(), ok({ ok: true }));
+  if ((m = p.match(/^\/v1\/capsules\/([^/]+)\/line$/)) && method === "DELETE") {
+    const c = (s.capsules ?? []).find((x) => x.id === m![1] && x.author === needMe()) ?? fail(404, "no such capsule of yours");
+    c.line = null;
+    c.tag = null;
+    save();
+    return ok({ ok: true });
+  }
+  if ((m = p.match(/^\/v1\/capsules\/([^/]+)$/))) {
+    const c = (s.capsules ?? []).find((x) => x.id === m![1]) ?? fail(404, "no such capsule");
+    return ok(capsuleView(c, me));
+  }
+  if (p === "/v1/admin/item-reports") return ok({ reports: [] });
+  if (p === "/v1/me/dm-settings") {
+    needMe();
+    if (method === "PUT") {
+      s.dmStrangers = !!body.strangers;
+      save();
+    }
+    return ok({ strangers: s.dmStrangers ?? true });
+  }
+  if ((m = p.match(/^\/v1\/me\/mutes\/(.+)$/))) {
+    needMe();
+    s.blocked = (s.blocked ?? []).filter((x) => x !== m![1]);
+    if (method === "PUT") s.blocked.push(m[1]);
+    save();
+    return ok({ ok: true });
+  }
+  if (p === "/v1/me/mutes") return ok({ mutes: s.blocked ?? [] });
+  if (p === "/v1/dms" || p === "/v1/dms/unread") {
+    const a = needMe(), list = demoDms(s);
+    const unread = list.filter((x) => x.to === a && !x.read && !x.removed).length;
+    if (p === "/v1/dms/unread") return ok({ unread });
+    const peers = new Map<string, Conversation>();
+    for (const x of [...list].sort((u, v) => v.id - u.id)) {
+      const peer = x.from === a ? x.to : x.from;
+      const c = peers.get(peer) ?? { peer, last: dmView(x, a), unread: 0 };
+      if (x.to === a && !x.read && !x.removed) c.unread++;
+      peers.set(peer, c);
+    }
+    return ok({ conversations: [...peers.values()], unread });
+  }
+  if ((m = p.match(/^\/v1\/dms\/messages\/(\d+)\/report$/))) return (needMe(), ok({ ok: true }));
+  if ((m = p.match(/^\/v1\/dms\/([^/]+)$/))) {
+    const a = needMe(), peer = decodeURIComponent(m[1]);
+    if (peer === a) fail(400, "that's you");
+    const list = demoDms(s);
+    if (method === "POST") {
+      const text = String(body.body ?? "").trim() || fail(400, "say something");
+      const all = (s.dms ??= []);
+      const sent: DemoDm = { id: Math.max(0, ...all.map((x) => x.id)) + 1, from: a, to: peer, body: text, at: Date.now(), read: false };
+      all.push(sent);
+      // Someone answers the first message, a few seconds later.
+      if (!all.some((x) => x.from === peer && x.to === a)) all.push({ id: sent.id + 1, from: peer, to: a, body: "收到！同一块的缘分。到开信那天我们再聊。", at: Date.now() + 6000 });
+      save();
+      return ok(dmView(sent, a));
+    }
+    const thread = list.filter((x) => (x.from === a && x.to === peer) || (x.from === peer && x.to === a));
+    for (const x of thread) if (x.to === a) x.read = true;
+    save();
+    const blocked = (s.blocked ?? []).includes(peer);
+    return ok({ peer, messages: thread.map((x) => dmView(x, a)), more: false, can_send: true, why_not: null, blocked_by_me: blocked });
+  }
+  return null;
+}
+
 function route(path: string, opts: Opts): unknown {
   const url = new URL(path, "http://demo");
   const p = url.pathname, method = opts.method || "GET";
@@ -1099,6 +1280,8 @@ function route(path: string, opts: Opts): unknown {
     const tip = demoTip();
     return { indexed_height: { bitmap: tip, parcel: tip, owner: tip } };
   }
+  const capsuleHit = p.startsWith("/v1/capsules") || p.startsWith("/v1/dms") || p.startsWith("/v1/me/mutes") || p === "/v1/me/dm-settings" || p === "/v1/admin/item-reports" ? capsuleRoute(p, url.searchParams, method, body, me, s) : null;
+  if (capsuleHit) return capsuleHit.value;
   if (p === "/v1/game") return gameView(me);
   if (p === "/v1/tour") return tourView(me);
   if (p === "/v1/me/badge" && method === "PUT") {
