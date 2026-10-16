@@ -522,11 +522,13 @@ label.check:hover {
 }
 .nav {
   display: flex;
+  flex-shrink: 0;
   gap: 22px;
   font-size: 13px;
 }
 .nav a {
   color: var(--fg-2);
+  white-space: nowrap;
   transition: color 150ms;
 }
 .nav svg {
@@ -562,6 +564,8 @@ button.cta-pill:hover:not(:disabled) {
   background: transparent;
   color: var(--fg-3);
   width: 240px;
+  flex: 0 1 240px;
+  min-width: 0;
 }
 .search {
   position: relative;
@@ -5460,4 +5464,86 @@ button.cap-seal-btn {
   text-decoration: underline;
   text-decoration-color: var(--line);
   text-underline-offset: 3px;
+}
+
+/* Between phone and desktop the six links keep to one line: the gaps tighten, the address
+ * beside the avatar goes, and below 1000px the search box folds to its icon until focused. */
+@media (min-width: 641px) and (max-width: 1140px) {
+  .header-inner {
+    gap: 18px;
+  }
+  .nav {
+    gap: 16px;
+  }
+  .me-link .mono {
+    display: none;
+  }
+}
+@media (min-width: 641px) and (max-width: 1000px) {
+  .header-inner {
+    position: relative;
+  }
+  .search {
+    flex: none;
+    width: 34px;
+    padding: 0;
+    justify-content: center;
+    border-color: transparent;
+    color: var(--fg-2);
+  }
+  .search input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+  }
+  .search kbd {
+    display: none;
+  }
+  .search:focus-within {
+    position: absolute;
+    z-index: 3;
+    left: 24px;
+    right: 24px;
+    top: 12px;
+    width: auto;
+    padding: 0 12px;
+    gap: 10px;
+    justify-content: flex-start;
+    background: var(--bg);
+    border-color: var(--fg-3);
+  }
+  .search:focus-within input {
+    position: static;
+    opacity: 1;
+  }
+  .search-results {
+    left: 0;
+    right: 0;
+    width: auto;
+  }
+}
+/* Narrower still, 招募 leaves the header as it does on a phone, so English labels fit too. */
+@media (min-width: 641px) and (max-width: 860px) {
+  .nav a.wide-only {
+    display: none;
+  }
+}
+@media (min-width: 641px) and (max-width: 740px) {
+  .header-inner {
+    padding: 0 16px;
+    gap: 6px;
+  }
+  .logo {
+    margin-right: 8px;
+  }
+  .nav {
+    gap: 12px;
+  }
+  .wallet .cta-pill {
+    padding: 0 12px;
+  }
+  .search:focus-within {
+    left: 16px;
+    right: 16px;
+  }
 }
