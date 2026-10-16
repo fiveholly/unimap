@@ -12,8 +12,9 @@ export type ReportReason = (typeof REPORT_REASONS)[number];
 export const reasonLabel = (r: string) =>
   r === "spam" ? t("垃圾广告") : r === "abuse" ? t("骚扰或辱骂") : r === "scam" ? t("诈骗或钓鱼") : t("其他");
 
-/** 举报: pick a reason, add a note, and the site admins get it. */
-export function ReportDialog({ postId, token, close }: { postId: number; token: string; close: (sent: boolean) => void }) {
+/** 举报: pick a reason, add a note, and the site admins get it. A post by default; a private message
+ * or a capsule line with path (its report route) and title. */
+export function ReportDialog({ postId, path, title, token, close }: { postId?: number; path?: string; title?: string; token: string; close: (sent: boolean) => void }) {
   const [reason, setReason] = useState<ReportReason>("spam");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -27,7 +28,7 @@ export function ReportDialog({ postId, token, close }: { postId: number; token: 
     setBusy(true);
     setError(null);
     try {
-      await api(`/v1/posts/${postId}/report`, { method: "POST", token, body: { reason, note } });
+      await api(path ?? `/v1/posts/${postId}/report`, { method: "POST", token, body: { reason, note } });
       close(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -37,8 +38,8 @@ export function ReportDialog({ postId, token, close }: { postId: number; token: 
   return createPortal(
     <div className="dialog-backdrop" role="dialog" aria-modal="true" aria-labelledby="report-title" onClick={(e) => e.target === e.currentTarget && !busy && close(false)}>
       <div className="dialog">
-        <h2 id="report-title">{t("举报这条帖子")}</h2>
-        <p className="muted small">{t("站点管理员会看到你的举报并决定是否删除。街区主人也可以自己删帖或禁言。")}</p>
+        <h2 id="report-title">{title ?? t("举报这条帖子")}</h2>
+        <p className="muted small">{path ? t("站点管理员会看到你举报的这段文字，并决定是否删除。") : t("站点管理员会看到你的举报并决定是否删除。街区主人也可以自己删帖或禁言。")}</p>
         <div className="report-reasons" role="radiogroup">
           {REPORT_REASONS.map((r) => (
             <label key={r} className="check">

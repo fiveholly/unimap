@@ -732,3 +732,85 @@ CREATE UNIQUE INDEX IF NOT EXISTS api_keys_hash_idx ON social.api_keys USING btr
 -- A sponsor named on a 街区活动 (api/events.py), set by its host; hidden when empty.
 ALTER TABLE social.events ADD COLUMN IF NOT EXISTS sponsor_name text NULL;
 ALTER TABLE social.events ADD COLUMN IF NOT EXISTS sponsor_url text NULL; -- https only
+
+-- 时间胶囊 (api/capsule.py): a letter encrypted in the browser and sealed with a wallet signature.
+-- unimap keeps the ciphertext and escrows the key until the first block whose time is at or past
+-- open_at; the sender also gets a spare key for the recipient. id is random so capsules can't be listed by guessing.
+CREATE TABLE IF NOT EXISTS social.capsules (
+	id text NOT NULL,
+	ref text NOT NULL, -- the public handle of its line among 同块人, so the line doesn't give away the link
+	author text NOT NULL,
+	recipient text NOT NULL, -- a label, "18 岁的小满"
+	ciphertext text NOT NULL, -- base64 of iv (12 bytes) || AES-GCM ciphertext
+	fingerprint text NOT NULL, -- sha256 hex of the ciphertext bytes
+	escrow_key text NOT NULL, -- base64url AES key; never sent out before open_height is set
+	open_at timestamptz NOT NULL,
+	sealed_height int4 NOT NULL, -- the tip when it was sealed
+	sealed_at timestamptz NOT NULL DEFAULT now(),
+	line text NULL, -- the public one-liner shown to 同块人; null: not public
+	tag text NULL, -- birth | wedding | farewell | start | other
+	line_removed_by text NULL,
+	signed_message text NOT NULL,
+	signature text NOT NULL,
+	due_tip int4 NULL, -- no block times: the tip first seen after open_at; it opens at the next block
+	open_height int4 NULL, -- the first block at or past open_at, once seen
+	CONSTRAINT capsules_pk PRIMARY KEY (id)
+);
+CREATE INDEX IF NOT EXISTS capsules_author_idx ON social.capsules USING btree (author, sealed_at);
+CREATE INDEX IF NOT EXISTS capsules_height_idx ON social.capsules USING btree (sealed_height);
+CREATE UNIQUE INDEX IF NOT EXISTS capsules_signature_idx ON social.capsules USING btree (signature);
+CREATE UNIQUE INDEX IF NOT EXISTS capsules_ref_idx ON social.capsules USING btree (ref);
+
+-- Block header times (unix seconds) the capsules asked bitcoind for; they never change.
+CREATE TABLE IF NOT EXISTS social.block_times (
+	block_height int4 NOT NULL,
+	block_time int8 NOT NULL,
+	CONSTRAINT block_times_pk PRIMARY KEY (block_height)
+);
+
+-- 私信 (api/dms.py): one-to-one messages between addresses.
+CREATE TABLE IF NOT EXISTS social.dms (
+	id bigserial NOT NULL,
+	sender text NOT NULL,
+	recipient text NOT NULL,
+	body text NOT NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	read_at timestamptz NULL,
+	removed_at timestamptz NULL, -- by a site admin, after a report
+	CONSTRAINT dms_pk PRIMARY KEY (id)
+);
+CREATE INDEX IF NOT EXISTS dms_sender_idx ON social.dms USING btree (sender, recipient, id);
+CREATE INDEX IF NOT EXISTS dms_recipient_idx ON social.dms USING btree (recipient, sender, id);
+
+-- Who has turned off messages from strangers (addresses they never wrote to).
+CREATE TABLE IF NOT EXISTS social.dm_settings (
+	address text NOT NULL,
+	strangers bool NOT NULL DEFAULT true,
+	CONSTRAINT dm_settings_pk PRIMARY KEY (address)
+);
+
+-- Reports on what isn't a post: a private message or a capsule's public line (api/dms.py, api/capsule.py).
+CREATE TABLE IF NOT EXISTS social.item_reports (
+	kind text NOT NULL, -- dm | capsule
+	item_id text NOT NULL,
+	reporter text NOT NULL,
+	reason text NOT NULL,
+	note text NOT NULL DEFAULT '',
+	created_at timestamptz NOT NULL DEFAULT now(),
+	resolved_at timestamptz NULL,
+	resolved_by text NULL,
+	resolution text NULL, -- removed | dismissed
+	CONSTRAINT item_reports_pk PRIMARY KEY (kind, item_id, reporter)
+);
+
+-- Message notifications carry the message, so a new one is told after the last was read.
+DO $$
+BEGIN
+	IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'social' AND table_name = 'notifications' AND column_name = 'dm_id') THEN
+		ALTER TABLE social.notifications ADD COLUMN dm_id int8 NULL;
+		ALTER TABLE social.notifications DROP CONSTRAINT IF EXISTS notifications_once;
+		ALTER TABLE social.notifications ADD CONSTRAINT notifications_once
+			UNIQUE NULLS NOT DISTINCT (address, kind, actor, bitmap_number, post_id, tip_id, block_height, order_id, dm_id);
+	END IF;
+END $$;

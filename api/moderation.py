@@ -5,8 +5,12 @@ in ADMIN_ADDRESSES (comma separated), see open reports grouped by post and eithe
 post or dismiss the reports; either way every open report on that post is closed. Admins can
 also ban an address from posting anywhere, for some days or for good, and lift the ban. A ban
 stops every write of text others see (posts and replies, district profiles, polls, recruit
-notices and applications, events, park and pet names, shop items, tip comments): those routes
-take writer_address instead of current_address. Admins can also clear a district's bio and cover.
+notices and applications, events, park and pet names, shop items, tip comments, time capsules
+and private messages): those routes take writer_address instead of current_address. Admins can
+also clear a district's bio and cover.
+
+A private message (api/dms.py) or a time capsule's public line (api/capsule.py) is reported the
+same way into social.item_reports, and an admin removes it or dismisses the reports.
 
 District owners keep their own tools (removing posts in their district, muting); this is for
 what crosses districts: spam, scams and abuse.
@@ -216,4 +220,63 @@ def clear_profile(bitmap_number: int, admin: str = Depends(require_admin)):
             "insert into social.moderation (bitmap_number, action, by_address) values (%s, 'admin_clear_profile', %s);",
             (bitmap_number, admin),
         )
+    return {"ok": True}
+
+
+# --- reports on what isn't a post: a private message (api/dms.py) or a capsule's public line (api/capsule.py)
+
+ITEM_KINDS = ("dm", "capsule")
+
+
+def report_item(cur, kind, item_id, reporter, reason, note):
+    assert kind in ITEM_KINDS
+    if reason not in REASONS:
+        raise HTTPException(400, f"reason is one of {', '.join(REASONS)}")
+    cur.execute(
+        "insert into social.item_reports (kind, item_id, reporter, reason, note) values (%s, %s, %s, %s, %s) "
+        "on conflict (kind, item_id, reporter) do update set reason = excluded.reason, note = excluded.note, "
+        "created_at = now(), resolved_at = null, resolved_by = null, resolution = null;",
+        (kind, str(item_id), reporter, reason, note.strip()),
+    )
+
+
+@router.get("/v1/admin/item-reports")
+def open_item_reports(_: str = Depends(require_admin)):
+    """Reported private messages and capsule lines, most reported first, with the text reported.
+    Admins see a private message only once its recipient reports it."""
+    with cursor() as cur:
+        cur.execute(
+            "select r.kind, r.item_id, count(*), max(r.created_at), array_agg(r.reason order by r.created_at), "
+            "array_agg(r.note order by r.created_at), coalesce(d.sender, c.author), coalesce(d.body, c.line) "
+            "from social.item_reports r "
+            "left join social.dms d on r.kind = 'dm' and d.id::text = r.item_id and d.removed_at is null "
+            "left join social.capsules c on r.kind = 'capsule' and c.ref = r.item_id and c.line is not null "
+            "where r.resolved_at is null group by r.kind, r.item_id, d.sender, c.author, d.body, c.line "
+            "order by count(*) desc, max(r.created_at) desc limit 100;"
+        )
+        return {
+            "reports": [
+                {"kind": k, "item_id": i, "count": n, "last": last.isoformat(), "reasons": reasons, "notes": [x for x in notes if x], "author": who, "text": text}
+                for k, i, n, last, reasons, notes, who, text in cur.fetchall()
+                if text is not None
+            ]
+        }
+
+
+@router.post("/v1/admin/item-reports/{kind}/{item_id}")
+def resolve_item(kind: str, item_id: str, req: ResolveBody, admin: str = Depends(require_admin)):
+    if kind not in ITEM_KINDS or req.action not in ("remove", "dismiss"):
+        raise HTTPException(400, "kind is dm or capsule; action is remove or dismiss")
+    with cursor() as cur:
+        if req.action == "remove" and kind == "dm":
+            cur.execute("update social.dms set removed_at = now() where id::text = %s and removed_at is null;", (item_id,))
+        if req.action == "remove" and kind == "capsule":
+            cur.execute("update social.capsules set line = null, tag = null, line_removed_by = %s where ref = %s;", (admin, item_id))
+        cur.execute(
+            "update social.item_reports set resolved_at = now(), resolved_by = %s, resolution = %s "
+            "where kind = %s and item_id = %s and resolved_at is null;",
+            (admin, "removed" if req.action == "remove" else "dismissed", kind, item_id),
+        )
+        if cur.rowcount == 0 and req.action == "dismiss":
+            raise HTTPException(404, "no open reports on this")
     return {"ok": True}

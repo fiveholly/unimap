@@ -133,6 +133,11 @@ function Birthday({ tip }: { tip: number }) {
           </button>
         </div>
       </fieldset>
+      {y && m && d && (
+        <Link className="small birthday-letter" href={`/capsule?for=${y}-${pad(m)}-${pad(d)}`}>
+          {t("给这一天写一封信")}
+        </Link>
+      )}
       {error && <p className="error small">{error}</p>}
     </form>
   );
