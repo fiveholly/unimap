@@ -53,6 +53,9 @@ export const map: Record<string, string> = {
   "比特币诞生于 2009 年 1 月 3 日，换一个那之后的日子试试。":
     "Bitcoin began on January 3, 2009. Try a day after that.",
   "这一天还没有区块。": "There's no block for that day yet.",
+  "年": "Year",
+  "月": "Month",
+  "日": "Day",
   "找到你生日（或任何一天）的区块": "Find the block from your birthday (or any day)",
   "去看看": "Go",
 
