@@ -7,7 +7,7 @@ import { t } from "./i18n/index.ts";
 
 export const BLOCK_SECONDS = 600;
 export const MAX_LETTER = 2000;
-export const MAX_RECIPIENT = 40;
+export const MAX_RECIPIENT = 64; // a label, or a Bitcoin address
 export const MAX_LINE = 80;
 /** Blocks either side of a block that count as "前后 1 小时" among 同块人. */
 export const HOUR_BLOCKS = 6;
@@ -16,6 +16,83 @@ export const TAGS = ["birth", "wedding", "farewell", "start", "other"] as const;
 export type Tag = (typeof TAGS)[number];
 // Keys for t(): "#tag" keeps them apart from the same words elsewhere ("其他" as a report reason).
 export const TAG_NAMES: Record<Tag, string> = { birth: "出生#tag", wedding: "结婚#tag", farewell: "告别#tag", start: "开始#tag", other: "其他#tag" };
+
+// ---- tiers (api/capsule.py) ----------------------------------------------------------------
+// With billing off every capsule is "open": free, no limits. With it on, "free" is one per wallet
+// (text only, the default envelope, opening within a year) and "paid" (封存) is paid for over
+// Lightning before it counts as sealed. "inscribe" (刻上链) is shown as coming soon, never sold.
+
+export type Tier = "open" | "free" | "paid";
+export type TierOption = { tier: "free" | "paid" | "inscribe"; sats: number; available: boolean };
+
+/** The envelopes: paper and wax. classic is the free one. */
+export const STYLES = ["classic", "midnight", "celadon", "dusk"] as const;
+export type EnvelopeStyle = (typeof STYLES)[number];
+export const DEFAULT_STYLE: EnvelopeStyle = "classic";
+export const STYLE_NAMES: Record<EnvelopeStyle, string> = { classic: "素笺朱漆", midnight: "夜航金漆", celadon: "青瓷墨绿", dusk: "暮色紫漆" };
+/** The photo once shrunk in the browser, before it is encrypted. */
+export const MAX_PHOTO_BYTES = 300_000;
+export const PHOTO_SIDE = 1600;
+
+/** The options on the write page, in order: 免费体验 while the wallet still has it (or before
+ * anyone signs in), 封存 at its price, and 刻上链, never available. None with billing off. */
+export function tierOptions(billing: boolean, freeLeft: boolean | null, paidSats: number, inscribeSats: number): TierOption[] {
+  if (!billing) return [];
+  return [
+    ...(freeLeft !== false ? [{ tier: "free" as const, sats: 0, available: true }] : []),
+    { tier: "paid", sats: paidSats, available: paidSats > 0 },
+    { tier: "inscribe", sats: inscribeSats, available: false },
+  ];
+}
+
+/** The tier to start on: the free one while it is offered, else 封存; "open" with billing off. */
+export function defaultTier(options: TierOption[]): Tier {
+  if (!options.length) return "open";
+  return options.some((o) => o.tier === "free") ? "free" : "paid";
+}
+
+/** What a capsule of this tier may carry: a photo, an envelope style, any time up to 100 years, and 「信打开了」. */
+export function tierAllows(tier: Tier): { photo: boolean; style: boolean; anyTime: boolean; told: boolean } {
+  const all = tier !== "free";
+  return { photo: all, style: all, anyTime: all, told: all };
+}
+
+/** Whether openAt is too far off for the free tier: more than freeDays after now (unix seconds). */
+export function pastFreeLimit(tier: Tier, openAt: number, now: number, freeDays: number): boolean {
+  return tier === "free" && openAt > now + freeDays * 86400;
+}
+
+/** Width and height scaled down (never up) so the longer side is at most side. */
+export function fitWithin(w: number, h: number, side: number): [number, number] {
+  const k = Math.min(1, side / Math.max(w, h, 1));
+  return [Math.max(1, Math.round(w * k)), Math.max(1, Math.round(h * k))];
+}
+
+/** "286 KB" */
+export function kb(bytes: number): string {
+  return `${Math.max(1, Math.round(bytes / 1000))} KB`;
+}
+
+/** Shrink an image in the browser to a JPEG of at most maxBytes: lower quality first, then size. */
+export async function compressImage(file: Blob, maxBytes = MAX_PHOTO_BYTES, side = PHOTO_SIDE): Promise<Uint8Array> {
+  const bitmap = await createImageBitmap(file);
+  try {
+    for (let s = side; s >= 320; s = Math.round(s * 0.75)) {
+      const [w, h] = fitWithin(bitmap.width, bitmap.height, s);
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext("2d")!.drawImage(bitmap, 0, 0, w, h);
+      for (const q of [0.85, 0.72, 0.6, 0.48]) {
+        const blob = await new Promise<Blob | null>((done) => canvas.toBlob(done, "image/jpeg", q));
+        if (blob && blob.size <= maxBytes) return new Uint8Array(await blob.arrayBuffer());
+      }
+    }
+  } finally {
+    bitmap.close();
+  }
+  throw new Error(t("这张照片压不到 300 KB 以内，换一张试试。"));
+}
 
 /** Unix seconds as the API writes them in the signed text: 2044-10-15T00:00:00Z. */
 export function isoZ(unix: number): string {
@@ -99,27 +176,48 @@ export async function sha256Hex(bytes: Uint8Array): Promise<string> {
   return Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** Encrypt a letter: base64 of iv || ciphertext, the key as base64url, and the ciphertext's sha256. */
-export async function encryptLetter(text: string): Promise<{ ciphertext: string; key: string; fingerprint: string }> {
-  const raw = crypto.getRandomValues(new Uint8Array(32));
+async function sealBytes(key: CryptoKey, plain: Uint8Array): Promise<Uint8Array> {
   const iv = crypto.getRandomValues(new Uint8Array(12));
+  const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plain as BufferSource));
+  return concat(iv, sealed);
+}
+
+const concat = (a: Uint8Array, b: Uint8Array) => {
+  const all = new Uint8Array(a.length + b.length);
+  all.set(a);
+  all.set(b, a.length);
+  return all;
+};
+
+/** Encrypt a letter, and a photo if given, under one random key, each with its own iv: base64 of
+ * iv || ciphertext for each, the key as base64url, and the sha256 of the letter's bytes followed by
+ * the photo's (the letter's alone with no photo). That fingerprint is what the wallet signs. */
+export async function encryptLetter(text: string, photo?: Uint8Array | null): Promise<{ ciphertext: string; photo: string | null; key: string; fingerprint: string }> {
+  const raw = crypto.getRandomValues(new Uint8Array(32));
   const key = await crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt"]);
-  const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(text)));
-  const all = new Uint8Array(iv.length + sealed.length);
-  all.set(iv);
-  all.set(sealed, iv.length);
-  return { ciphertext: toB64(all), key: toB64url(raw), fingerprint: await sha256Hex(all) };
+  const letter = await sealBytes(key, new TextEncoder().encode(text));
+  const image = photo ? await sealBytes(key, photo) : null;
+  return { ciphertext: toB64(letter), photo: image ? toB64(image) : null, key: toB64url(raw), fingerprint: await sha256Hex(image ? concat(letter, image) : letter) };
+}
+
+async function openBytes(sealed: string, key: string): Promise<Uint8Array> {
+  const all = fromB64(sealed);
+  const k = await crypto.subtle.importKey("raw", fromB64url(key) as BufferSource, "AES-GCM", false, ["decrypt"]);
+  return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: all.slice(0, 12) }, k, all.slice(12)));
 }
 
 /** The letter back from encryptLetter's ciphertext and key; throws if the key is wrong. */
 export async function decryptLetter(ciphertext: string, key: string): Promise<string> {
-  const all = fromB64(ciphertext);
-  const k = await crypto.subtle.importKey("raw", fromB64url(key) as BufferSource, "AES-GCM", false, ["decrypt"]);
-  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: all.slice(0, 12) }, k, all.slice(12));
-  return new TextDecoder().decode(plain);
+  return new TextDecoder().decode(await openBytes(ciphertext, key));
 }
 
-/** Whether the ciphertext still hashes to the fingerprint the sender signed. */
-export async function fingerprintOk(ciphertext: string, fingerprint: string): Promise<boolean> {
-  return (await sha256Hex(fromB64(ciphertext))) === fingerprint;
+/** The photo's bytes (a JPEG) back from encryptLetter's photo and key; throws if the key is wrong. */
+export function decryptPhoto(photo: string, key: string): Promise<Uint8Array> {
+  return openBytes(photo, key);
+}
+
+/** Whether the ciphertext (and the photo, if any) still hash to the fingerprint the sender signed. */
+export async function fingerprintOk(ciphertext: string, fingerprint: string, photo?: string | null): Promise<boolean> {
+  const letter = fromB64(ciphertext);
+  return (await sha256Hex(photo ? concat(letter, fromB64(photo)) : letter)) === fingerprint;
 }

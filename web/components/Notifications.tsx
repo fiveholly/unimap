@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 
 import { Avatar } from "./Avatar";
 import { BadgeIcon } from "./Badge";
+import { WaxSeal } from "./Capsule";
 import { useSession } from "./Session";
 import { api, type Notification } from "@/lib/api";
 import { short, timeAgo } from "@/lib/format";
@@ -156,6 +157,15 @@ function sentence(item: Item): [React.ReactNode, string] {
       return [tn("{who} 来摸了摸你的宠物", { who }), "/me"];
     case "dm":
       return [tn("{who} 给你发了一条私信", { who }), `/messages/${n.actor}`];
+    case "capsule_open": {
+      const h = <span className="mono">{(n.block_height ?? 0).toLocaleString("en-US")}</span>;
+      return [
+        n.actor
+          ? tn("{who} 写给你的时间胶囊在区块 {h} 打开了", { who, h })
+          : tn("你写给「{name}」的时间胶囊在区块 {h} 打开了", { name: n.recipient ?? "", h }),
+        `/capsule/${n.capsule_id}`,
+      ];
+    }
     case "lucky":
       return [
         tn("区块 {h} 抽中你的街区 {place} 做今日幸运街区，你得到一枚徽章", { h: <span className="mono">{(n.block_height ?? 0).toLocaleString("en-US")}</span>, place }),
@@ -204,6 +214,8 @@ export function NotificationList() {
               <Link href={href}>
                 {item.first.kind === "treasure" || item.first.kind === "lucky" || item.first.kind === "crown" ? (
                   <BadgeIcon kind={item.first.kind} rarity={item.first.kind === "treasure" ? (item.first.rarity ?? "common") : item.first.kind === "crown" ? "legendary" : "rare"} />
+                ) : item.first.kind === "capsule_open" && !item.first.actor ? (
+                  <WaxSeal height={item.first.block_height ?? 0} size={32} />
                 ) : (
                   <Avatar seed={item.first.actor} size={32} />
                 )}

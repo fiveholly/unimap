@@ -291,7 +291,7 @@ expires: …
 
 ## 通知
 
-有人回复你的帖子、赞你的帖子、在你的街区发新帖、关注你的街区，申请入住你的街区，打赏你，或者区块给你送来宝箱、抽中你的街区做幸运街区，或者你的街区 agent 写好了草稿、自己发了帖子、发现附近有便宜的挂单，或者有人买了你店里的东西、来摸了你的宠物、主人同意你暂住时，会给你记一条通知（`api/notify.py`，表 `social.notifications`）。自己做的事不通知自己；同一个人对同一条帖子取消再点赞、取消再关注，只通知一次。
+有人回复你的帖子、赞你的帖子、在你的街区发新帖、关注你的街区，申请入住你的街区，打赏你，或者区块给你送来宝箱、抽中你的街区做幸运街区，或者你的街区 agent 写好了草稿、自己发了帖子、发现附近有便宜的挂单，或者有人买了你店里的东西、来摸了你的宠物、主人同意你暂住，或者你封存的时间胶囊（或写给你的）打开时，会给你记一条通知（`api/notify.py`，表 `social.notifications`）。自己做的事不通知自己；同一个人对同一条帖子取消再点赞、取消再关注，只通知一次。
 
 - 顶栏的铃铛显示未读数，每分钟和每次换页时检查一次。通知页 `/notifications` 打开后把列表里的都标成已读，同一条帖子的点赞、同一个街区的关注合成一行。
 - 接口：`GET /v1/notifications?before=`（每页 30 条，带帖子摘要和未读数）、`GET /v1/notifications/unread`、`POST /v1/notifications/read`（`up_to` 不填就是全部）。
@@ -425,9 +425,9 @@ Magic Eden 的接口需要 API key 才能稳定使用，在 `/etc/unimap/unimap.
 - 佩戴徽章：在 `/game` 的「我的徽章」里挑一枚佩戴（`PUT /v1/me/badge`，`{"id"}`，`null` 是取下，表 `social.worn_badges`），它会出现在这个地址的帖子、回复和个人主页上名字旁边（帖子的 `author.badge`，个人主页 `badges` 里 `worn` 为真的那枚）。每个地址同时只戴一枚。
 - 徽章现在只存在 unimap 的数据库里。按方案，下一步是把王冠和稀有徽章铭刻成挂在 unimap 父铭文下的真铭文，这需要项目方的钱包。
 
-## 时间胶囊（免费版）
+## 时间胶囊
 
-今天写一封信，等到未来某一天之后的第一个比特币区块出来才能打开（`api/capsule.py`，表 `social.capsules`、`social.block_times`；网页 `/capsule`）。免费版只用钱包签名存在 unimap，不上链、不收费。
+今天写一封信，等到未来某一天之后的第一个比特币区块出来才能打开（`api/capsule.py`，表 `social.capsules`、`social.block_times`；网页 `/capsule`）。信只用钱包签名存在 unimap，不上链。
 
 - 写信：浏览器用 WebCrypto AES-GCM 和一把随机钥匙加密（`web/lib/capsule.ts`），钱包签名 `capsule_message(...)`（写给谁、打开时间、密文的 sha256、公开的一句话和类型、签名时间），把密文和钥匙一起交给 `POST /v1/capsules`。服务器自己算密文的 sha256 核对签名，记下当时的高度（`bitmap_block_hashes` 的最大高度）作为封存区块。
 - 钥匙永远「两份都留」：unimap 托管一份，打开前任何接口都不返回；寄信人封好后拿到同一把钥匙，放在分享链接的 `#k=` 里（浏览器不会把 # 后面发给服务器），只显示这一次。收信人拿着它随时可以在浏览器里提前解开。
@@ -436,6 +436,23 @@ Magic Eden 的接口需要 API key 才能稳定使用，在 `/etc/unimap/unimap.
 - 接口：`GET /v1/capsules/rules`、`POST /v1/capsules`、`GET /v1/capsules/{id}`（任何拿到链接的人都能看信封；打开后带 `key` 和 `open_height`）、`GET /v1/capsules/mine`、`DELETE /v1/capsules/{id}/line`。id 是随机串，不能按顺序猜。
 - 同块人：封信时可以选一句公开的话和类型（出生、结婚、告别、开始、其他），默认不公开。`GET /v1/capsules/peers/{height}?scope=block|hour|day` 列出这一块、前后 6 块、同一个 UTC 日里的公开句子和三种数量，只有句子、类型、地址和时间，信的内容、收信人和链接都不出现（每句话用单独的 `ref` 表示）。作者可以撤下自己的那句话，别人可以举报（`POST /v1/capsules/lines/{ref}/report`）。
 - 被封禁的地址不能封信。
+
+### 收费档
+
+收费由 `api/billing.py` 的产品 `capsule` 控制：设了 `BILLING_PRICE_CAPSULE_SATS`（建议 5000）并且有收款闪电地址（`PLATFORM_LIGHTNING_ADDRESS`，没有就用 `AGENT_LIGHTNING_ADDRESS`）时才收费。**没开收费时一切照旧**：每封信都是 `tier = open`，免费、不限数量、可以附照片、选信封、打开时有通知；自己架站的服务器不设这个价格就和以前完全一样。
+
+| 档 | 价格 | 能做什么 |
+|---|---|---|
+| 免费体验（`free`） | 0 | 每个钱包组一封（关联钱包算在一起，和 billing 一样）；只有文字、默认信封；打开时间最多在封存后 366 天 |
+| 封存（`paid`） | `BILLING_PRICE_CAPSULE_SATS` | 最长 100 年；附一张照片；四种信封和火漆（`STYLES`：classic 素笺朱漆、midnight 夜航金漆、celadon 青瓷墨绿、dusk 暮色紫漆）；打开时通知寄信人，收信人一栏写的是在 unimap 登录过的地址时也通知 Ta |
+| 刻上链 | `CAPSULE_INSCRIBE_SATS`（默认 20000）+ 网络费 | 还没做。写信页上显示成灰的「即将开放」，不卖 |
+
+- 所有限制都在服务器上检查：免费档用完是 409，超过一年是 400，免费档带照片或非默认信封是 403。`GET /v1/capsules/rules` 告诉写信页现在收不收费（`billing`）、这个钱包还有没有免费的那封（`free_left`，没登录是 null）；价格在 `GET /v1/billing/products`。
+- 付费流程：浏览器照常加密、钱包签名，`POST /v1/capsules {"tier": "paid", "photo", "style", ...}`。服务器把信存成 `status = pending`（不出现在「我封存的信」和同块人里，别人打开链接是 404，钥匙照样托管），并通过 `billing.invoice` 开一张发票一起返回。网页显示二维码并每几秒查 `GET /v1/billing/payments/{id}`；到账后 billing 的 `on_settled`（`capsule.seal_paid`）把它改成 `sealed`，封存区块是到账那一刻的最新高度。发票过期可以 `POST /v1/billing/pay {"product": "capsule", "ref": <id>}` 再要一张。
+- 没付款的信：60 分钟（`PENDING_MINUTES`，和发票被检查的时间一样长）后，如果它的发票都不是 pending 了就删掉；还挂着 pending 的发票会先在后台再问一次钱包（可能最后一分钟付了）。付了款但信已经被删的情况会记日志，手动退款。
+- 照片：一张，浏览器里压成 JPEG（最长边 1600，不超过 300 KB），用信的同一把钥匙、另一个 iv 加密，存在 `photo` 列。指纹是「信的密文字节 + 照片密文字节」的 sha256，所以签名同时覆盖两者；没有照片时和以前一样只是信的。信封样式只是外观，不签名。
+- 「信打开了」通知（`api/notify.py` 的 `capsule_open`）：项目里没有后台任务，所以挂在已有的出块路径上——地图请求发现新块时（`game.ensure_soon`，就是抽宝箱的那个后台任务）每个块运行一次 `capsule.sweep()`：找出时间已到、还没通知的 `open`/`paid` 胶囊，算出打开的区块并通知，同时清理没付款的信。有人直接打开信的页面时也会顺便通知。每封只通知一次（`notified_at`）。
+- 演示站（`web/lib/demo.ts`）按收费开着的样子模拟：封存 5000 聪，付款页有「演示：模拟付款」按钮，点了立刻到账封存。
 
 ## 私信
 

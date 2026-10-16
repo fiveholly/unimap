@@ -132,10 +132,15 @@ def ensure(cur):
 
 
 def ensure_soon(cur, tasks: BackgroundTasks):
-    """For pages that only read draws: if the newest block isn't drawn yet, draw it after responding."""
+    """For pages that only read draws: if the newest block isn't drawn yet, draw it after responding;
+    and once a block, sweep the time capsules (api/capsule.py)."""
     tip = top(cur)
     if tip is None:
         return
+    from api import capsule  # the time capsules' once-a-block check rides on the same path
+
+    if capsule.sweep_due(tip):
+        tasks.add_task(capsule.sweep)
     cur.execute(
         "select exists(select 1 from social.block_draws where height = %s), "
         "exists(select 1 from social.seasons where number = %s and winners is not null);",

@@ -5,7 +5,7 @@ import type { BadgeKind, Rarity } from "./game";
 import type { Pet, PetKey, PublicPet } from "./pets";
 import type { Prosperity } from "./prosperity";
 import type { DistrictStyle } from "./style";
-import type { Tag } from "./capsule";
+import type { EnvelopeStyle, Tag, Tier } from "./capsule";
 
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 // The server (share images) can reach the API without going out through the public origin.
@@ -306,7 +306,7 @@ export type FeedItem = { type: "post"; time: number; post: Post } | { type: "eve
 /** The owner's view of what their wallet holds and what the district shows. */
 export type Showcase = { chosen: PetKey[]; held: Pet[]; wallets?: number; checked_at: string | null; error: string | null; shown: Pet[] };
 
-export type NotificationKind = "reply" | "like" | "post" | "follow" | "apply" | "tip" | "treasure" | "lucky" | "crown" | "event_win" | "sold" | "offer" | "offer_accepted" | "agent_draft" | "agent_posted" | "agent_alert" | "shop_sold" | "pat" | "tenant" | "dm";
+export type NotificationKind = "reply" | "like" | "post" | "follow" | "apply" | "tip" | "treasure" | "lucky" | "crown" | "event_win" | "sold" | "offer" | "offer_accepted" | "agent_draft" | "agent_posted" | "agent_alert" | "shop_sold" | "pat" | "tenant" | "dm" | "capsule_open";
 export type Notification = {
   id: number;
   kind: NotificationKind;
@@ -323,6 +323,8 @@ export type Notification = {
   rarity?: Rarity;
   agent_parcel?: number | null; // agent_*: set when it is a parcel's agent rather than the district's
   title?: string; // shop_sold: what was bought
+  capsule_id?: string; // capsule_open: the letter, and who it was for
+  recipient?: string | null;
 };
 
 /** 区块节拍 (api/game.py). */
@@ -484,7 +486,7 @@ export type Capsule = {
   open_at: string;
   sealed_height: number;
   sealed_at: string;
-  status: "sealed" | "open";
+  status: "pending" | "sealed" | "open"; // pending: 封存 waiting for its invoice to be paid, seen by its author alone
   tip: number | null;
   blocks_left: number | null;
   open_height: number | null;
@@ -492,11 +494,31 @@ export type Capsule = {
   line: string | null;
   tag: Tag | null;
   mine: boolean;
+  tier?: Tier; // open: sealed while billing was off
+  style?: EnvelopeStyle;
+  has_photo?: boolean;
   ciphertext?: string;
+  photo?: string | null; // base64 of iv || AES-GCM of a JPEG, under the letter's key
   signed_message?: string;
   signature?: string;
+  payment?: Payment; // POST /v1/capsules for 封存: the invoice that seals it
 };
-export type CapsuleRules = { min_lead_seconds: number; block_seconds: number; tags: Tag[]; tip: number | null };
+export type CapsuleRules = {
+  min_lead_seconds: number;
+  block_seconds: number;
+  tags: Tag[];
+  tip: number | null;
+  billing?: boolean; // 封存 is for sale (its price is in /v1/billing/products), so the free tier has limits
+  free_left?: boolean | null; // the wallet still has its free capsule; null when not signed in
+  free_days?: number;
+  max_years?: number;
+  styles?: EnvelopeStyle[];
+  max_photo_chars?: number;
+  inscribe_sats?: number; // 刻上链, shown as coming soon
+};
+/** api/billing.py: one payment for a product, as /v1/billing/pay and /v1/billing/payments/{id} give it. */
+export type Payment = { id: number; product: string; ref: string; amount_sats: number; status: "pending" | "settled" | "expired"; verifiable: boolean; invoice?: string };
+export type BillingProducts = { products: { product: string; amount_sats: number }[]; cosmetics: boolean };
 export type CapsuleScope = "block" | "hour" | "day";
 /** 同块人: someone's public line on a capsule they sealed near a block. */
 export type CapsulePeer = { ref: string; address: string; line: string; tag: Tag | null; sealed_at: string; sealed_height: number; mine: boolean; capsule_id?: string };

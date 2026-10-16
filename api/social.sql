@@ -814,3 +814,27 @@ BEGIN
 			UNIQUE NULLS NOT DISTINCT (address, kind, actor, bitmap_number, post_id, tip_id, block_height, order_id, dm_id);
 	END IF;
 END $$;
+
+-- 时间胶囊的收费档 (api/capsule.py). Capsules sealed before this, or while billing is off, are 'open':
+-- everything free with no limits. With billing on, 'free' is the one trial each wallet group gets and
+-- 'paid' (product capsule) waits as 'pending' until its invoice is paid.
+ALTER TABLE social.capsules ADD COLUMN IF NOT EXISTS tier text NOT NULL DEFAULT 'open'; -- open | free | paid
+ALTER TABLE social.capsules ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'sealed'; -- pending | sealed
+ALTER TABLE social.capsules ADD COLUMN IF NOT EXISTS photo text NULL; -- base64 of iv || AES-GCM of one image, under the letter's key
+ALTER TABLE social.capsules ADD COLUMN IF NOT EXISTS style text NOT NULL DEFAULT 'classic'; -- the envelope and its wax seal
+ALTER TABLE social.capsules ADD COLUMN IF NOT EXISTS payment_id int8 NULL; -- the social.payments row that sealed it
+ALTER TABLE social.capsules ADD COLUMN IF NOT EXISTS notified_at timestamptz NULL; -- when 「信打开了」 was told
+CREATE INDEX IF NOT EXISTS capsules_due_idx ON social.capsules USING btree (open_at) WHERE status = 'sealed' AND notified_at IS NULL AND tier <> 'free';
+CREATE INDEX IF NOT EXISTS capsules_pending_idx ON social.capsules USING btree (sealed_at) WHERE status = 'pending';
+
+-- 「你的信打开了」 notifications name the capsule.
+DO $$
+BEGIN
+	IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'social' AND table_name = 'notifications' AND column_name = 'capsule_id') THEN
+		ALTER TABLE social.notifications ADD COLUMN capsule_id text NULL;
+		ALTER TABLE social.notifications DROP CONSTRAINT IF EXISTS notifications_once;
+		ALTER TABLE social.notifications ADD CONSTRAINT notifications_once
+			UNIQUE NULLS NOT DISTINCT (address, kind, actor, bitmap_number, post_id, tip_id, block_height, order_id, dm_id, capsule_id);
+	END IF;
+END $$;
