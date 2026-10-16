@@ -7,8 +7,11 @@ import os
 import time
 import unittest
 
+from api import btc
 from tests import test_social as base
 from tests.test_social import ALICE, BOB, CAROL, PGURL, Wallet
+
+PLATFORM = btc.script_address(b"\x00\x14" + b"\x07" * 20, "regtest")  # PLATFORM_BTC_ADDRESS in the on-chain tests
 
 
 def b64url(raw):
@@ -196,7 +199,7 @@ class CapsuleApi(unittest.TestCase):
     # --- 收费档 ---
 
     def billing(self, on=True):
-        """Sell 封存 at 5000 sats through a fake Lightning wallet (as in test_social.py); returns it."""
+        """Sell 封存 at 2000 sats through a fake Lightning wallet (as in test_social.py); returns it."""
         from api import tips
 
         class Fake:
@@ -216,7 +219,7 @@ class CapsuleApi(unittest.TestCase):
         old = tips.lnurl
         tips.lnurl = Fake
         if on:
-            os.environ.update(BILLING_PRICE_CAPSULE_SATS="5000", PLATFORM_LIGHTNING_ADDRESS="pay@unimap.test")
+            os.environ.update(BILLING_PRICE_CAPSULE_SATS="2000", PLATFORM_LIGHTNING_ADDRESS="pay@unimap.test")
 
         def undo():
             tips.lnurl = old
@@ -279,15 +282,15 @@ class CapsuleApi(unittest.TestCase):
     def test_paid_capsule_waits_for_payment(self):
         fake = self.billing()
         w = self.wallet(34)
-        self.assertIn({"product": "capsule", "amount_sats": 5000}, self.client.get("/v1/billing/products").json()["products"])
+        self.assertIn({"product": "capsule", "amount_sats": 2000}, self.client.get("/v1/billing/products").json()["products"])
         height = self.tip()
         r = self.seal(w, tier="paid", open_in=60 * 365 * 86400, photo=self.photo(), style="celadon", line="六十年后见", tag="other")[0]
         self.assertEqual(r.status_code, 201, r.text)
         c = r.json()
         pay = c["payment"]
-        self.assertEqual((c["status"], c["tier"], c["key"], pay["amount_sats"], pay["status"]), ("pending", "paid", None, 5000, "pending"))
+        self.assertEqual((c["status"], c["tier"], c["key"], pay["amount_sats"], pay["status"]), ("pending", "paid", None, 2000, "pending"))
         self.assertTrue(pay["invoice"].startswith("lnbc"))
-        self.assertEqual(fake.made[-1], ("pay@unimap.test", 5000, f"unimap capsule {c['id']}"))
+        self.assertEqual(fake.made[-1], ("pay@unimap.test", 2000, f"unimap capsule {c['id']}"))
         # Not listed, not among 同块人, and nobody else can see it.
         self.assertNotIn(c["id"], [x["id"] for x in self.client.get("/v1/capsules/mine", headers=self.h(w)).json()["capsules"]])
         self.assertNotIn("六十年后见", str(self.client.get(f"/v1/capsules/peers/{height}?scope=hour").json()))
@@ -357,6 +360,190 @@ class CapsuleApi(unittest.TestCase):
         theirs = [n for n in told(BOB) if n["capsule_id"] in (c["id"], free["id"])]
         self.assertEqual([(n["capsule_id"], n["actor"]) for n in theirs], [(c["id"], w.address)])  # the free tier isn't told
         self.assertEqual(self.client.get(f"/v1/capsules/{free['id']}").json()["status"], "open")  # it still opens when read
+
+    # --- 用钱包支付: on-chain payments (api/billing.py) ---
+
+    def onchain(self, lightning=False):
+        """Sell 封存 at 2000 sats paid on-chain to a regtest address, against a fake bitcoind; returns it."""
+        from api import billing, btc
+
+        class Fake:
+            txs = {}  # txid -> getrawtransaction's answer; missing: bitcoind doesn't know it
+            down = False
+
+            @staticmethod
+            def transaction(txid):
+                if Fake.down:
+                    raise ConnectionError("bitcoind is down")
+                return Fake.txs.get(txid)
+
+        old = billing.chain
+        billing.chain = Fake
+        os.environ.update(BILLING_PRICE_CAPSULE_SATS="2000", PLATFORM_BTC_ADDRESS=PLATFORM.upper() if lightning else PLATFORM)
+        if lightning:
+            self.billing()  # a Lightning address too
+
+        def undo():
+            billing.chain = old
+            for k in ("BILLING_PRICE_CAPSULE_SATS", "PLATFORM_BTC_ADDRESS"):
+                os.environ.pop(k, None)
+
+        self.addCleanup(undo)
+        Fake.spk = btc.address_script(PLATFORM, "regtest")
+        return Fake
+
+    def tx(self, fake, outputs, confirmations=None):
+        """A transaction bitcoind knows, paying [(scriptPubKey, sats)]; in the mempool unless confirmations."""
+        txid = os.urandom(32).hex()
+        fake.txs[txid] = {"txid": txid, "vout": [{"value": sats / 100_000_000, "n": i, "scriptPubKey": {"hex": spk.hex()}}
+                                                for i, (spk, sats) in enumerate(outputs)],
+                          **({"confirmations": confirmations} if confirmations else {})}
+        return txid
+
+    def claim(self, wallet, payment, txid):
+        return self.client.post(f"/v1/billing/payments/{payment['id']}/tx", json={"txid": txid}, headers=self.h(wallet))
+
+    def poll(self, wallet, payment):
+        self.sql("update social.payments set checked_at = null where id = %s;", (payment["id"],))
+        return self.client.get(f"/v1/billing/payments/{payment['id']}", headers=self.h(wallet)).json()
+
+    def test_payment_methods_follow_the_env(self):
+        from api import billing, btc
+
+        products = lambda: self.client.get("/v1/billing/products").json()
+        os.environ["BILLING_PRICE_CAPSULE_SATS"] = "2000"
+        self.addCleanup(lambda: [os.environ.pop(k, None) for k in ("BILLING_PRICE_CAPSULE_SATS", "PLATFORM_BTC_ADDRESS", "PLATFORM_LIGHTNING_ADDRESS")])
+        self.assertEqual((products()["products"], products()["methods"]), ([], []))  # a price, but no way to be paid
+        self.assertFalse(self.client.get("/v1/capsules/rules").json()["billing"])
+        os.environ["PLATFORM_BTC_ADDRESS"] = PLATFORM
+        self.assertEqual((products()["products"], products()["methods"]), ([{"product": "capsule", "amount_sats": 2000}], ["onchain"]))
+        self.assertTrue(self.client.get("/v1/capsules/rules").json()["billing"])
+        os.environ["PLATFORM_LIGHTNING_ADDRESS"] = "pay@unimap.test"
+        self.assertEqual(products()["methods"], ["onchain", "lightning"])  # on-chain first: the default
+        os.environ.pop("PLATFORM_BTC_ADDRESS")
+        self.assertEqual(products()["methods"], ["lightning"])
+        os.environ.pop("PLATFORM_LIGHTNING_ADDRESS")
+        # Only addresses btc.address_script takes: P2TR, P2WPKH or P2SH, on a network it knows.
+        mainnet = btc.script_address(b"\x51\x20" + b"\x09" * 32, "mainnet")
+        for bad in ("notanaddress", "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2", PLATFORM[:-1] + ("q" if PLATFORM[-1] != "q" else "p")):
+            os.environ["PLATFORM_BTC_ADDRESS"] = bad
+            self.assertEqual(billing.methods(), [], bad)
+            self.assertEqual(products()["products"], [])
+        os.environ["PLATFORM_BTC_ADDRESS"] = mainnet
+        self.assertEqual(billing.methods(), ["onchain"])
+        # Asking for a method that isn't on, or isn't one.
+        w = self.wallet(40)
+        os.environ["PLATFORM_BTC_ADDRESS"] = PLATFORM
+        c = self.seal(w, tier="paid")[0].json()
+        self.assertEqual(c["payment"]["method"], "onchain")
+        pay = lambda method: self.client.post("/v1/billing/pay", json={"product": "capsule", "ref": c["id"], "method": method}, headers=self.h(w))
+        self.assertEqual(pay("lightning").status_code, 409)
+        self.assertEqual(pay("paypal").status_code, 400)
+        self.assertEqual(pay("onchain").json()["address"], PLATFORM)
+
+    def test_wallet_payment_seals_capsule(self):
+        fake = self.onchain()
+        w = self.wallet(41)
+        height = self.tip()
+        r = self.seal(w, tier="paid", line="链上付的", tag="other")[0]
+        self.assertEqual(r.status_code, 201, r.text)
+        c = r.json()
+        pay = c["payment"]
+        self.assertEqual((pay["method"], pay["address"], pay["amount_sats"], pay["status"], pay["txid"]), ("onchain", PLATFORM, 2000, "pending", None))
+        self.assertNotIn("invoice", pay)
+        self.assertEqual(self.poll(w, pay)["status"], "pending")  # nothing claimed yet
+        # The wallet sent it (2,000 to unimap and the change back) and the page posts the txid; in the mempool is enough.
+        txid = self.tx(fake, [(b"\x00\x14" + b"\x41" * 20, 51_000), (fake.spk, 2000)])
+        self.assertEqual(self.claim(BOB, pay, txid).status_code, 404)  # only the payer's group
+        [later] = self.mine(1)
+        st = self.claim(w, pay, txid)
+        self.assertEqual(st.status_code, 200, st.text)
+        self.assertEqual((st.json()["status"], st.json()["txid"]), ("settled", txid))
+        seen = self.client.get(f"/v1/capsules/{c['id']}").json()
+        self.assertEqual((seen["status"], seen["sealed_height"]), ("sealed", later))
+        self.assertIn("链上付的", [p["line"] for p in self.client.get(f"/v1/capsules/peers/{later}").json()["peers"]])
+        self.assertNotIn("链上付的", str(self.client.get(f"/v1/capsules/peers/{height}").json()))
+        row = self.sql("select method, txid, pay_address, status, settled_at is not null, invoice from social.payments where id = %s;", (pay["id"],))[0]
+        self.assertEqual(row, ("onchain", txid, PLATFORM, "settled", True, None))
+        self.assertEqual(self.claim(w, pay, txid).json()["status"], "settled")  # posting it again is harmless
+        # Revenue counts it with the rest.
+        os.environ["ADMIN_ADDRESSES"] = CAROL.address
+        self.addCleanup(os.environ.pop, "ADMIN_ADDRESSES", None)
+        months = self.client.get("/v1/admin/revenue", headers=self.h(CAROL)).json()["months"]
+        self.assertTrue(any(m["product"] == "capsule" and m["sats"] >= 2000 for m in months))
+        self.client.delete(f"/v1/capsules/{c['id']}/line", headers=self.h(w))
+
+    def test_wallet_payment_checks_the_transaction(self):
+        fake = self.onchain()
+        w = self.wallet(42)
+        c = self.seal(w, tier="paid")[0].json()
+        pay = c["payment"]
+        elsewhere = b"\x00\x14" + b"\x42" * 20
+        wrong = self.tx(fake, [(elsewhere, 2000)])
+        r = self.claim(w, pay, wrong)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("doesn't pay", r.json()["detail"])
+        short = self.tx(fake, [(fake.spk, 1500), (elsewhere, 600)])
+        r = self.claim(w, pay, short)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("1500 sats", r.json()["detail"])
+        self.assertEqual(self.claim(w, pay, "nothex").status_code, 422)
+        self.assertEqual(self.sql("select txid, status from social.payments where id = %s;", (pay["id"],))[0], (None, "pending"))  # neither was kept
+        # Two outputs to unimap add up; one confirmed in a block counts as well.
+        good = self.tx(fake, [(fake.spk, 1200), (fake.spk, 800)], confirmations=3)
+        self.assertEqual(self.claim(w, pay, good).json()["status"], "settled")
+        # A txid pays for one payment only, even for another capsule of the same wallet.
+        other = self.seal(w, tier="paid")[0].json()
+        self.assertEqual(self.claim(w, other["payment"], good).status_code, 409)
+        self.assertEqual(self.claim(w, other["payment"], good.upper()).status_code, 409)
+        self.assertEqual(self.sql("select status from social.capsules where id = %s;", (other["id"],))[0][0], "pending")
+        # A settled payment takes no other transaction.
+        self.assertEqual(self.claim(w, pay, self.tx(fake, [(fake.spk, 2000)])).status_code, 409)
+
+    def test_wallet_payment_waits_for_the_node(self):
+        fake = self.onchain(lightning=True)
+        w = self.wallet(43)
+        c = self.seal(w, tier="paid")[0].json()
+        pay = c["payment"]
+        self.assertEqual(pay["method"], "onchain")  # the default, with Lightning on too
+        txid = os.urandom(32).hex()  # sent, but not at unimap's node yet
+        r = self.claim(w, pay, txid)
+        self.assertEqual((r.status_code, r.json()["status"], r.json()["txid"]), (200, "pending", txid))
+        self.assertEqual(self.poll(w, pay)["status"], "pending")
+        fake.down = True
+        self.assertEqual(self.poll(w, pay)["status"], "pending")  # bitcoind down: still waiting
+        fake.down = False
+        fake.txs[txid] = {"txid": txid, "vout": [{"value": 0.00002, "scriptPubKey": {"hex": fake.spk.hex()}}]}
+        self.assertEqual(self.poll(w, pay)["status"], "settled")  # seen on a later poll
+        self.assertEqual(self.client.get(f"/v1/capsules/{c['id']}").json()["status"], "sealed")
+        # Lightning is still there as a second way, and its payment takes no txid.
+        other = self.seal(w, tier="paid")[0].json()
+        ln = self.client.post("/v1/billing/pay", json={"product": "capsule", "ref": other["id"], "method": "lightning"}, headers=self.h(w)).json()
+        self.assertEqual((ln["method"], ln["invoice"][:4]), ("lightning", "lnbc"))
+        self.assertEqual(self.claim(w, ln, os.urandom(32).hex()).status_code, 409)
+        # A claimed transaction that turns out (replaced) not to pay is let go, so another can be given.
+        third = self.seal(w, tier="paid")[0].json()
+        swapped = os.urandom(32).hex()
+        self.claim(w, third["payment"], swapped)
+        fake.txs[swapped] = {"txid": swapped, "vout": [{"value": 0.00002, "scriptPubKey": {"hex": "0014" + "42" * 20}}]}
+        self.assertEqual(self.poll(w, third["payment"])["txid"], None)
+
+    def test_unpaid_wallet_payment_expires(self):
+        fake = self.onchain()
+        w = self.wallet(44)
+        unpaid, late = self.seal(w, tier="paid")[0].json(), self.seal(w, tier="paid")[0].json()
+        late_tx = os.urandom(32).hex()
+        self.claim(w, unpaid["payment"], os.urandom(32).hex())  # never reaches the node
+        self.claim(w, late["payment"], late_tx)
+        ids = (unpaid["id"], late["id"])
+        self.sql("update social.capsules set sealed_at = now() - interval '2 hours' where id in (%s, %s);", ids)
+        self.sql("update social.payments set created_at = now() - interval '2 hours' where ref in (%s, %s);", ids)
+        fake.txs[late_tx] = {"txid": late_tx, "vout": [{"value": 0.00002, "scriptPubKey": {"hex": fake.spk.hex()}}]}  # seen at the last minute
+        self.capsule.sweep()
+        self.assertEqual(self.sql("select count(*) from social.capsules where id = %s;", (unpaid["id"],))[0][0], 0)
+        self.assertEqual(self.sql("select status from social.payments where ref = %s;", (unpaid["id"],))[0][0], "expired")
+        self.assertEqual(self.sql("select status from social.capsules where id = %s;", (late["id"],))[0][0], "sealed")
+        self.assertEqual(self.claim(w, unpaid["payment"], os.urandom(32).hex()).status_code, 410)
 
     # --- 私信 ---
 

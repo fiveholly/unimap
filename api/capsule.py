@@ -21,15 +21,16 @@ sets it to a few minutes to try a whole seal and open.
 is shown to others who sealed on the same block, within ±6 blocks or on the same UTC day; the
 letter never is. The author can take the line down, and anyone can report it (api/moderation.py).
 
-Tiers, while the product `capsule` sells (api/billing.py: BILLING_PRICE_CAPSULE_SATS and a
-Lightning address). With billing off every capsule is tier 'open': everything free, no limits.
+Tiers, while the product `capsule` sells (api/billing.py: BILLING_PRICE_CAPSULE_SATS and a way to
+be paid, PLATFORM_BTC_ADDRESS or a Lightning address). With billing off every capsule is tier 'open': everything free, no limits.
 - free (免费体验): one per wallet group, text only, the default envelope, opening at most FREE_DAYS
   after sealing.
 - paid (封存): any open_at up to MAX_YEARS, one photo, any envelope STYLE, and 「信打开了」 told to
   the sender (and the recipient, when the label is an address that has signed in here). It is
-  stored 'pending' (not listed, not on 同块人, key escrowed) with an invoice from the billing flow;
-  billing's on_settled hook (seal_paid) seals it at the tip of that moment. Unpaid ones are
-  deleted once PENDING_MINUTES have passed and their invoices are no longer pending (sweep()).
+  stored 'pending' (not listed, not on 同块人, key escrowed) with a payment from the billing flow
+  (sent on-chain from the writer's wallet by default, or a Lightning invoice); billing's
+  on_settled hook (seal_paid) seals it at the tip of that moment. Unpaid ones are deleted once
+  PENDING_MINUTES have passed and their payments are no longer pending (sweep()).
 The photo is encrypted in the browser under the letter's key; fingerprint is the sha256 of the
 letter's bytes followed by the photo's, so a signature covers both (with no photo it is the letter's
 alone, as before). The style is presentation only and isn't signed.

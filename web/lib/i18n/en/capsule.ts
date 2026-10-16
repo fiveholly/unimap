@@ -198,6 +198,26 @@ export const capsule: Record<string, string> = {
   "信已经加密交给 unimap，付款到账的那一刻封存，挂在当时最新的区块上。用任意闪电钱包扫码，或者复制发票。":
     "The letter is encrypted and with unimap; it is sealed the moment the payment lands, on the newest block then. Scan with any Lightning wallet, or copy the invoice.",
   "演示：模拟付款": "Demo: simulate payment",
+  "信已经加密交给 unimap，付款到账的那一刻封存，挂在当时最新的区块上。":
+    "The letter is encrypted and with unimap; it is sealed the moment the payment lands, on the newest block then.",
+  "用钱包支付": "Pay with your wallet",
+  "请在钱包里确认…": "Confirm in your wallet…",
+  "钱包会在这笔钱之外另收一点网络手续费，按现在的低费率大约两三百聪。":
+    "Your wallet adds a small network fee on top, about a couple hundred sats at today's low fees.",
+  "钱包没有发出这笔付款：{why}": "Your wallet didn't send the payment: {why}",
+  "用别的钱包转账": "Send from another wallet",
+  "从任意比特币钱包转账，正好 {n} 聪（{btc} BTC）到：": "From any Bitcoin wallet, send exactly {n} sats ({btc} BTC) to:",
+  "付好后把交易 ID 贴在这里": "Once sent, paste the transaction ID here",
+  "提交": "Submit",
+  "这不像交易 ID：应该是 64 位十六进制。": "That doesn't look like a transaction ID: it's 64 hex characters.",
+  "收到交易 {txid}，等它出现在 unimap 的比特币节点上，看到就封存，不用等出块。":
+    "Got transaction {txid}. It is sealed as soon as unimap's Bitcoin node sees it, without waiting for a block.",
+  "交易 ID 不对？换一个": "Wrong transaction ID? Change it",
+  "用闪电网络付款": "Pay over Lightning",
+  "改用比特币钱包支付": "Pay from a Bitcoin wallet instead",
+  "这笔付款等得太久，已经过期了。": "This payment waited too long and expired.",
+  "重新付款": "Start the payment again",
+  "正在准备付款…": "Getting the payment ready…",
   "一小时内没付款，这封信会被删掉，不扣钱。": "Not paid within an hour, the letter is deleted and nothing is charged.",
   "这封信还在等付款，付好才算封存。": "This letter is waiting for payment; it is sealed once paid.",
   "一张，和信一起打开": "One, opens with the letter",

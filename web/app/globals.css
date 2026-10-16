@@ -5355,6 +5355,45 @@ button.cap-tier:disabled .cap-tier-head b {
 button.cap-demo-pay {
   border-style: dashed;
 }
+.cap-pay button {
+  width: 100%;
+}
+.cap-pay .row button,
+.cap-pay button.link-btn {
+  width: auto;
+}
+.cap-pay button.link-btn {
+  align-self: flex-start;
+}
+/* 用别的钱包转账: the address, the amount and a box for the txid */
+.cap-pay-manual {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+}
+.cap-pay-addr {
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--fg);
+  user-select: all;
+}
+.cap-pay-paste {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cap-pay-paste .row {
+  flex-wrap: nowrap;
+}
+.cap-pay-paste input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+}
 .cap-side > button.ghost {
   width: 100%;
 }

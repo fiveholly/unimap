@@ -10,8 +10,9 @@
 | `MARKET_FEE_BPS`、`MARKET_FEE_ADDRESS` | 站内交易的手续费，按价格的万分比，作为交易里的一个输出直接付到这个比特币地址（`api/market.py`） | 空：不收 |
 | `GAME_SEASON_POOL_SATS` | 赛季奖池金额，由项目方用闪电发给前三名（`api/seasons.py`） | 空：不显示 |
 | `GAME_SEASON_SPONSOR_NAME`、`GAME_SEASON_SPONSOR_URL` | 奖池赞助商，`/game` 显示「本季奖池由 X 赞助」；链接只接受 https，不是 https 就只显示名字 | 空：不显示 |
-| `PLATFORM_LIGHTNING_ADDRESS` | unimap 自己产品的收款闪电地址，钱包要支持 LUD-21 verify；没设时用 `AGENT_LIGHTNING_ADDRESS` | 空 |
-| `BILLING_PRICE_<产品>_SATS` | 某个产品的价格（聪）。现在有 `STYLE`、`PROMOTION` 和 `CAPSULE`（时间胶囊「封存」，建议 5000）三个产品 | 空或 0：不卖 |
+| `PLATFORM_BTC_ADDRESS` | unimap 自己产品的链上收款地址（P2TR、P2WPKH 或 P2SH），用户从已连接的钱包直接付到这里；默认的付款方式 | 空：不收链上付款 |
+| `PLATFORM_LIGHTNING_ADDRESS` | unimap 自己产品的收款闪电地址，钱包要支持 LUD-21 verify；没设时用 `AGENT_LIGHTNING_ADDRESS`。作为第二种付款方式 | 空 |
+| `BILLING_PRICE_<产品>_SATS` | 某个产品的价格（聪）。现在有 `STYLE`、`PROMOTION` 和 `CAPSULE`（时间胶囊「封存」，建议 2000）三个产品。有价格、并且上面两种收款方式至少设了一种，才开卖 | 空或 0：不卖 |
 | `CAPSULE_INSCRIBE_SATS` | 时间胶囊「刻上链」在写信页上显示的价格（还没开放，不卖） | 空：20000 |
 | `BILLING_COSMETICS` | 设成 `1` 时，外观里标为高级的选项要有权益 `style:<选项>` 才能用；现在没有任何选项标为高级 | 空：全部免费 |
 | `RATE_LIMIT_KEY_WRITES`、`RATE_LIMIT_KEY_WRITES_<档位>` | 带有效 `X-API-Key` 的写操作每分钟上限，按 key 计数而不是按 IP | 空：600 |
@@ -20,22 +21,32 @@
 
 ## 平台收费（`api/billing.py`）
 
-所有 unimap 自己的付费产品走同一个流程，和 agent 付费一样：
+所有 unimap 自己的付费产品走同一个流程。付款方式有两种（`billing.METHODS`），哪种设了收款地址就提供哪种，链上在前、是默认：
 
-1. `GET /v1/billing/products`：现在在卖什么，默认是空列表；`cosmetics` 表示高级外观是否在收费。
-2. `POST /v1/billing/pay {"product", "ref"}`：向 `PLATFORM_LIGHTNING_ADDRESS` 的钱包要一张发票。产品不存在是 404，没定价是 409。每个钱包组 10 分钟最多要 5 张。
-3. `GET /v1/billing/payments/{id}`：只有付款人（含关联钱包）能查；还没到账时问钱包的 verify 地址，60 分钟后最后再查一次，还没付就标成过期。
-4. 到账后调用这个产品的 `on_settled`：
+- `onchain`（用钱包支付）：用户已经连接的比特币钱包（UniSat、Xverse、OKX）直接把正好这个金额转到 `PLATFORM_BTC_ADDRESS`，网页把钱包返回的 txid 交给服务器；连的是「粘贴签名」钱包或钱包调用失败时，网页显示地址、金额和复制按钮，可以从任何钱包转账后把 txid 贴回来。钱包会在金额之外另收网络手续费（按现在的低费率大约两三百聪），付款页上写明了。
+- `lightning`（用闪电网络付款）：向 `PLATFORM_LIGHTNING_ADDRESS` 的钱包要一张发票，和 agent 付费、打赏一样靠 LUD-21 确认到账。
+
+1. `GET /v1/billing/products`：现在在卖什么，默认是空列表；`cosmetics` 表示高级外观是否在收费；`methods` 是现在能用的付款方式，默认的在前。
+2. `POST /v1/billing/pay {"product", "ref", "method"}`：开一笔付款。不写 `method` 就用默认的。链上付款返回 `address` 和 `amount_sats`；闪电付款返回 `invoice`。产品不存在是 404，没定价是 409，这种方式没开也是 409。每个钱包组 10 分钟最多开 5 笔。
+3. `POST /v1/billing/payments/{id}/tx {"txid"}`（只用于链上付款）：交上付这笔钱的交易，马上用 bitcoind 查一次（`getrawtransaction`，节点要开 `txindex`）。交易要有付到这笔付款记下的收款地址的输出，合计不少于金额；付错地址或金额不够是 400，txid 不保存。一个 txid 只能付一笔（`social.payments.txid` 唯一），已经被别的付款用过是 409。节点还没看到这笔交易（或者暂时问不到 bitcoind）时付款保持 pending，之后查状态时再看。
+4. `GET /v1/billing/payments/{id}`：只有付款人（含关联钱包）能查；还没到账时问 bitcoind（链上）或钱包的 verify 地址（闪电），最多两秒一次。交上的交易后来被替换、不再付这笔钱时，txid 会被放掉，可以重新交。60 分钟后最后再查一次，还没付就标成过期。
+5. 到账后调用这个产品的 `on_settled`：
 
 | 产品 | `ref` | 到账后 |
 |---|---|---|
 | `style` | 一个标为高级的外观选项 | 给付款人权益 `style:<选项>`，永久。只在 `BILLING_COSMETICS=1` 时出售 |
 | `promotion` | 付款人持有的街区号 | 建一条等管理员审核的推广（没有开始时间，不显示）。管理员用 `POST /v1/admin/promotions/{id}/approve {"days"}` 让它从现在开始显示；不通过的话手动退款 |
-| `capsule` | 一封等付款的时间胶囊的 id | 把它封存，封存区块是到账那一刻的最新高度。发票由 `POST /v1/capsules` 直接开（`billing.invoice`），过期后可以用 `/v1/billing/pay` 再要一张。详见 `docs/social.md` 时间胶囊 |
+| `capsule` | 一封等付款的时间胶囊的 id | 把它封存，封存区块是到账那一刻的最新高度。付款由 `POST /v1/capsules` 直接开（`billing.invoice`，默认链上），换成闪电或过期后可以用 `/v1/billing/pay` 再开一笔。详见 `docs/social.md` 时间胶囊 |
 
-产品自己开发票时调用 `billing.invoice(address, product, ref)`；`billing.refresh(payment_id, force=True)` 在后台再问一次钱包（时间胶囊清理没付款的信时用）。
+产品自己开付款时调用 `billing.invoice(address, product, ref, method=None)`；`billing.refresh(payment_id, force=True)` 在后台再查一次（时间胶囊清理没付款的信时用）。新产品不用为付款方式写任何代码，两种方式都走 `billing.settle()`。
 
-付款记在 `social.payments`。agent 的付款还在原来的 `social.agent_payments`，以后可以搬成这里的一个产品。
+付款记在 `social.payments`：`method` 是 `onchain` 或 `lightning`，链上付款还记 `pay_address`（开单时的 `PLATFORM_BTC_ADDRESS`，之后改环境变量不影响已经开出的单）和 `txid`。
+
+### 链上付款为什么接受 0 确认
+
+交易进了 unimap 节点的内存池就算到账，不等出块。金额只有几千聪，用户付完马上就能看到信封好，这比等十分钟到一小时重要；双花需要用户自己再发一笔替换交易，为几千聪不划算，真发生了就是平台少收一次钱。节点不认识的交易（被拒、被替换掉、或者根本没广播）永远不算到账，只会一直 pending 到过期。
+
+已知的不足：收款地址是公开的，同一个金额的付款也很多，理论上有人能在内存池里看到别人刚发的交易，抢先把那个 txid 交到自己的付款上。钱包按钮在钱包一返回 txid 就提交，窗口很小；为几千聪不值得做更复杂的认领（比如按付款人地址核对输入）。被抢的用户会看到 409，联系管理员手动处理。agent 的付款还在原来的 `social.agent_payments`，以后可以搬成这里的一个产品。
 
 ## 权益
 
@@ -64,7 +75,7 @@
 
 ## 收入汇总
 
-`GET /v1/admin/revenue`（管理员）：已到账的付款按月份和产品汇总，包括 agent 的付款。交易手续费是在每笔交易里直接付到 `MARKET_FEE_ADDRESS` 的链上输出，不经过这里，也不在这里统计。
+`GET /v1/admin/revenue`（管理员）：已到账的付款按月份和产品汇总，链上和闪电的都算，包括 agent 的付款。交易手续费是在每笔交易里直接付到 `MARKET_FEE_ADDRESS` 的链上输出，不经过这里，也不在这里统计。
 
 ## 建议的打开顺序
 

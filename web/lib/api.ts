@@ -1,5 +1,6 @@
 // Typed client for the unimap API (api/ in this repo).
 
+import type { PayMethod } from "./billing";
 import { DEMO, demoApi } from "./demo";
 import type { BadgeKind, Rarity } from "./game";
 import type { Pet, PetKey, PublicPet } from "./pets";
@@ -516,9 +517,21 @@ export type CapsuleRules = {
   max_photo_chars?: number;
   inscribe_sats?: number; // 刻上链, shown as coming soon
 };
-/** api/billing.py: one payment for a product, as /v1/billing/pay and /v1/billing/payments/{id} give it. */
-export type Payment = { id: number; product: string; ref: string; amount_sats: number; status: "pending" | "settled" | "expired"; verifiable: boolean; invoice?: string };
-export type BillingProducts = { products: { product: string; amount_sats: number }[]; cosmetics: boolean };
+/** api/billing.py: one payment for a product, as /v1/billing/pay and /v1/billing/payments/{id} give it.
+ * onchain: send amount_sats to address, then post the txid; lightning: pay the invoice. */
+export type Payment = {
+  id: number;
+  product: string;
+  ref: string;
+  amount_sats: number;
+  status: "pending" | "settled" | "expired";
+  verifiable: boolean;
+  method?: PayMethod; // left out by older servers: lightning
+  invoice?: string;
+  address?: string;
+  txid?: string | null;
+};
+export type BillingProducts = { products: { product: string; amount_sats: number }[]; cosmetics: boolean; methods?: PayMethod[] };
 export type CapsuleScope = "block" | "hour" | "day";
 /** 同块人: someone's public line on a capsule they sealed near a block. */
 export type CapsulePeer = { ref: string; address: string; line: string; tag: Tag | null; sealed_at: string; sealed_height: number; mine: boolean; capsule_id?: string };

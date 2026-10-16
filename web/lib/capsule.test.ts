@@ -91,16 +91,16 @@ test("a photo is sealed under the letter's key, and the fingerprint covers both"
 });
 
 test("tier options on the write page", () => {
-  assert.deepEqual(tierOptions(false, true, 5000, 20000), []); // billing off: no choice, no limits
+  assert.deepEqual(tierOptions(false, true, 2000, 20000), []); // billing off: no choice, no limits
   assert.equal(defaultTier([]), "open");
-  const fresh = tierOptions(true, true, 5000, 20000);
+  const fresh = tierOptions(true, true, 2000, 20000);
   assert.deepEqual(
     fresh.map((o) => [o.tier, o.sats, o.available]),
-    [["free", 0, true], ["paid", 5000, true], ["inscribe", 20000, false]],
+    [["free", 0, true], ["paid", 2000, true], ["inscribe", 20000, false]],
   );
   assert.equal(defaultTier(fresh), "free");
-  assert.deepEqual(tierOptions(true, null, 5000, 20000).map((o) => o.tier), ["free", "paid", "inscribe"]); // not signed in yet
-  const used = tierOptions(true, false, 5000, 20000);
+  assert.deepEqual(tierOptions(true, null, 2000, 20000).map((o) => o.tier), ["free", "paid", "inscribe"]); // not signed in yet
+  const used = tierOptions(true, false, 2000, 20000);
   assert.deepEqual(used.map((o) => o.tier), ["paid", "inscribe"]);
   assert.equal(defaultTier(used), "paid");
 });

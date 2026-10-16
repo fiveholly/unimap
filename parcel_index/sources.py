@@ -5,7 +5,9 @@ import requests
 
 
 class RpcError(Exception):
-    pass
+    def __init__(self, message, code=None):
+        super().__init__(message)
+        self.code = code  # the JSON-RPC error code, when the server gave one
 
 
 def _call(url, method, params, auth=None):
@@ -19,7 +21,8 @@ def _call(url, method, params, auth=None):
         raise RpcError(f"{method}: HTTP {r.status_code}")
     js = r.json()
     if js.get("error"):
-        raise RpcError(f"{method}: {js['error']}")
+        err = js["error"]
+        raise RpcError(f"{method}: {err}", err.get("code") if isinstance(err, dict) else None)
     return js.get("result")
 
 
@@ -146,6 +149,16 @@ class Bitcoind:
 
     def send(self, raw_hex):
         return _call(self.url, "sendrawtransaction", [raw_hex], self.auth)
+
+    def transaction(self, txid):
+        """getrawtransaction, decoded, from the mempool or (with txindex) the chain; None while
+        bitcoind knows no such transaction. A mempool one has no confirmations."""
+        try:
+            return _call(self.url, "getrawtransaction", [txid, True], self.auth)
+        except RpcError as e:
+            if e.code == -5:  # RPC_INVALID_ADDRESS_OR_KEY: no such mempool or blockchain transaction
+                return None
+            raise
 
     def tx_values(self, block_hash):
         """Total output value in sats of each transaction, in block order."""

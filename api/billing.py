@@ -1,11 +1,17 @@
 """平台收费: the hooks for what unimap may charge for one day. All of it is off until switched on.
 
-- Payments (`/v1/billing/*`): one flow for every paid product. A product sells only while
-  BILLING_PRICE_<PRODUCT>_SATS is set and unimap has a Lightning address to be paid at
-  (PLATFORM_LIGHTNING_ADDRESS, else AGENT_LIGHTNING_ADDRESS). The invoice comes from that
-  address's wallet and is confirmed by its LUD-21 verify URL, as with tips (api/tips.py); once
-  paid, the product's on_settled hook delivers it. The agent's own payments (api/agent.py) came
-  first and stay where they are; they could move here as a product later.
+- Payments (`/v1/billing/*`): one flow for every paid product. A product sells while
+  BILLING_PRICE_<PRODUCT>_SATS is set and unimap can be paid at least one way (METHODS):
+  - onchain (the default): bitcoin sent from the buyer's wallet straight to PLATFORM_BTC_ADDRESS.
+    The browser asks the connected wallet to send it and posts the txid; a pasted txid works too.
+    bitcoind (BITCOIN_RPC_URL, with txindex) is asked for the transaction, which must pay that
+    address at least the price. One seen in the mempool counts (0-conf): for a few thousand sats
+    that is worth the risk of a double spend, and the buyer doesn't wait for a block. A txid pays
+    for one payment only.
+  - lightning: an invoice from unimap's Lightning address (PLATFORM_LIGHTNING_ADDRESS, else
+    AGENT_LIGHTNING_ADDRESS), confirmed by its LUD-21 verify URL, as with tips (api/tips.py).
+  Once paid either way, the product's on_settled hook delivers it. The agent's own payments
+  (api/agent.py) came first and stay where they are; they could move here as a product later.
 - Entitlements: what an address may use (a premium style option, say), granted free, paid, by a
   sponsor or by an admin, for good or until a date, and counted across linked wallets.
 - Promotions (推广): districts shown in a labelled slot on the home page, put up by an admin.
@@ -14,22 +20,26 @@
 - Revenue: what was paid to unimap, by product and month, for admins.
 """
 
+import functools
 import hashlib
+import logging
 import os
 import re
 import secrets
 import time
 from datetime import datetime
 
+import psycopg2.errors
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import roles, tips, wallets
+from api import btc, roles, tips, wallets
 from api.auth import current_address, normalize_address
 from api.db import cursor
 from api.moderation import require_admin
 
 router = APIRouter()
+log = logging.getLogger(__name__)
 
 PAY_PER_10_MINUTES = 5  # invoices one wallet group may ask for, as for the agent
 SOURCES = ("free", "paid", "sponsor", "admin")
@@ -37,15 +47,42 @@ SLOTS = ("home",)
 PROMOTION_DAYS = 7  # how long an approved promotion runs unless the admin says otherwise
 KEY_CACHE_SECONDS = 60  # a revoked key may keep its limit this long in the other API worker
 ITEM = re.compile(r"^[a-z0-9_-]{1,40}(:[a-z0-9_.-]{1,60})?$")
+METHODS = ("onchain", "lightning")  # in the order they are offered; the first one on is the default
+CHAIN_NETWORKS = ("mainnet", "testnet", "regtest")  # what PLATFORM_BTC_ADDRESS may be on (signet: as testnet)
 
 
 def pay_to():
+    """The Lightning address unimap is paid at, or None."""
     return (os.getenv("PLATFORM_LIGHTNING_ADDRESS") or os.getenv("AGENT_LIGHTNING_ADDRESS") or "").strip().lower() or None
+
+
+@functools.lru_cache(maxsize=16)
+def address_script(address):
+    """scriptPubKey of a P2TR, P2WPKH or P2SH address on any of CHAIN_NETWORKS, or None."""
+    for net in CHAIN_NETWORKS:
+        try:
+            return btc.address_script(address, net)
+        except btc.BadTx:
+            continue
+    log.warning("PLATFORM_BTC_ADDRESS %r isn't a P2TR, P2WPKH or P2SH address; on-chain payments are off", address)
+    return None
+
+
+def chain_to():
+    """The Bitcoin address unimap is paid at on-chain (PLATFORM_BTC_ADDRESS), or None."""
+    a = normalize_address(os.getenv("PLATFORM_BTC_ADDRESS") or "")
+    return a if a and address_script(a) else None
+
+
+def methods():
+    """The ways unimap can be paid now, default first."""
+    on = {"onchain": chain_to(), "lightning": pay_to()}
+    return [m for m in METHODS if on[m]]
 
 
 def price(product):
     """Sats the product sells for now; 0 when it isn't for sale."""
-    if product not in PRODUCTS or not pay_to() or (product == "style" and not cosmetics()):
+    if product not in PRODUCTS or not methods() or (product == "style" and not cosmetics()):
         return 0  # premium styles are free while BILLING_COSMETICS is off, so not sold either
     try:
         return max(0, int(os.getenv(f"BILLING_PRICE_{product.upper()}_SATS") or 0))
@@ -176,34 +213,58 @@ PRODUCTS = {
 @router.get("/v1/billing/products")
 def products():
     """What is for sale now. Nothing, unless a price is set."""
-    return {"products": [{"product": k, "amount_sats": price(k)} for k in PRODUCTS if price(k)], "cosmetics": cosmetics()}
+    return {"products": [{"product": k, "amount_sats": price(k)} for k in PRODUCTS if price(k)], "cosmetics": cosmetics(),
+            "methods": methods()}
 
 
 class PayBody(BaseModel):
     product: str = Field(max_length=40)
     ref: str = Field(default="", max_length=100)
+    method: str | None = Field(default=None, max_length=20)  # one of METHODS; left out: the default
 
 
-def _payment(row):
-    pid, product, ref, amount, status = row
-    return {"id": pid, "product": product, "ref": ref, "amount_sats": amount, "status": status, "verifiable": True}
+PAYMENT_COLUMNS = "id, product, ref, amount_sats, status, method, pay_address, txid"
 
 
-def invoice(address, product, ref=""):
-    """An invoice from unimap's Lightning wallet for a product, after its check hook; the payment
-    as /v1/billing/pay returns it. Products that make their own invoice (api/capsule.py) call this."""
+def _payment(row, invoice=None):
+    pid, product, ref, amount, status, method, address, txid = row
+    out = {"id": pid, "product": product, "ref": ref, "amount_sats": amount, "status": status, "verifiable": True, "method": method}
+    if method == "onchain":
+        out.update(address=address, txid=txid)
+    elif invoice:
+        out["invoice"] = invoice
+    return out
+
+
+def invoice(address, product, ref="", method=None):
+    """A payment for a product, after its check hook, as /v1/billing/pay returns it: on-chain, to
+    PLATFORM_BTC_ADDRESS (the default while it is set), or an invoice from unimap's Lightning
+    wallet. Products that start their own payment (api/capsule.py) call this."""
     if product not in PRODUCTS:
         raise HTTPException(404, "no such product")
-    amount = price(product)
+    if method is not None and method not in METHODS:
+        raise HTTPException(400, f"method is one of {', '.join(METHODS)}")
+    amount, offered = price(product), methods()
     if not amount:
         raise HTTPException(409, "not offered on this server")
+    method = method or offered[0]
+    if method not in offered:
+        raise HTTPException(409, f"paying by {method} isn't offered on this server")
     ref = ref.strip()
     with cursor() as cur:
         PRODUCTS[product][0](cur, address, ref)
         payer = wallets.main_of(cur, address)
         cur.execute("select count(*) from social.payments where payer = %s and created_at > now() - interval '10 minutes';", (payer,))
         if cur.fetchone()[0] >= PAY_PER_10_MINUTES:
-            raise HTTPException(429, "too many invoices at once, try again in a few minutes")
+            raise HTTPException(429, "too many payments at once, try again in a few minutes")
+    if method == "onchain":
+        with cursor() as cur:
+            cur.execute(
+                "insert into social.payments (payer, product, ref, amount_sats, method, pay_address) values (%s, %s, %s, %s, 'onchain', %s) "
+                f"returning {PAYMENT_COLUMNS};",
+                (payer, product, ref, amount, chain_to()),
+            )
+            return _payment(cur.fetchone())
     try:
         bolt11, verify = tips.lnurl.ask_invoice(pay_to(), amount, f"unimap {product} {ref}".strip())
     except tips.LnurlError as e:
@@ -212,47 +273,135 @@ def invoice(address, product, ref=""):
         raise HTTPException(502, "unimap's Lightning wallet can't confirm payments; tell the site's admin")
     with cursor() as cur:
         cur.execute(
-            "insert into social.payments (payer, product, ref, amount_sats, invoice, verify_url) values (%s, %s, %s, %s, %s, %s) returning id;",
+            "insert into social.payments (payer, product, ref, amount_sats, invoice, verify_url, method) "
+            f"values (%s, %s, %s, %s, %s, %s, 'lightning') returning {PAYMENT_COLUMNS};",
             (payer, product, ref, amount, bolt11, verify),
         )
-        return {**_payment((cur.fetchone()[0], product, ref, amount, "pending")), "invoice": bolt11}
+        return _payment(cur.fetchone(), invoice=bolt11)
 
 
 @router.post("/v1/billing/pay")
 def pay(req: PayBody, address: str = Depends(current_address)):
-    """An invoice from unimap's Lightning wallet for a product."""
-    return invoice(address, req.product, req.ref)
+    """A payment for a product: an address and amount to send on-chain, or a Lightning invoice."""
+    return invoice(address, req.product, req.ref, req.method)
+
+
+# --- on-chain payments ----------------------------------------------------------------------------
+
+
+class Chain:
+    """bitcoind, behind one object so tests can replace it."""
+
+    def transaction(self, txid):
+        from api.land import _bitcoind  # land imports style, which imports this module
+
+        return _bitcoind().transaction(txid)
+
+
+chain = Chain()
+
+
+def check_tx(txid, address, amount):
+    """(state, why) of a transaction meant to pay amount to address: "paid" once bitcoind has it,
+    in the mempool or a block, with outputs to address of at least amount; "unseen" while bitcoind
+    doesn't know it (or can't be asked), so it is looked for again; "wrong" when it pays too
+    little or not to address."""
+    try:
+        tx = chain.transaction(txid)
+    except Exception as e:  # bitcoind down or busy: look again on the next check
+        log.warning("on-chain payment %s: %s", txid, e)
+        return "unseen", "bitcoind can't be asked right now"
+    if not tx:
+        return "unseen", "this transaction hasn't reached unimap's node yet"
+    spk = address_script(address)
+    paid = [round(o["value"] * 100_000_000) for o in tx.get("vout", []) if spk and o.get("scriptPubKey", {}).get("hex") == spk.hex()]
+    if not paid:
+        return "wrong", f"this transaction doesn't pay {address}"
+    if sum(paid) < amount:
+        return "wrong", f"this transaction pays {sum(paid)} sats to {address}; {amount} are needed"
+    return "paid", None
+
+
+class TxBody(BaseModel):
+    txid: str = Field(pattern=r"^[0-9a-fA-F]{64}$")
+
+
+@router.post("/v1/billing/payments/{payment_id}/tx")
+def claim_tx(payment_id: int, req: TxBody, address: str = Depends(current_address)):
+    """The transaction that pays an on-chain payment, from the wallet or pasted. Checked at once;
+    while bitcoind hasn't seen it yet the payment stays pending and polling looks again. One that
+    pays the wrong address or too little is turned down and not kept."""
+    txid = req.txid.lower()
+    with cursor() as cur:
+        cur.execute("select payer, method, status, txid, pay_address, amount_sats from social.payments where id = %s;", (payment_id,))
+        row = cur.fetchone()
+        if row is None or row[0] not in wallets.group(cur, address):
+            raise HTTPException(404, "no such payment")
+        _, method, status, had, to, amount = row
+        if method != "onchain":
+            raise HTTPException(409, "this payment is over Lightning")
+        if status == "settled" and had == txid:
+            return refresh(payment_id, address)
+        if status == "settled":
+            raise HTTPException(409, "this payment is paid already")
+        if status != "pending":
+            raise HTTPException(410, "this payment expired; start again")
+        cur.execute("select 1 from social.payments where txid = %s and id <> %s;", (txid, payment_id))
+        if cur.fetchone():
+            raise HTTPException(409, "this transaction already paid for something else")
+    state, why = check_tx(txid, to, amount)
+    if state == "wrong":
+        raise HTTPException(400, why)
+    try:
+        with cursor() as cur:
+            cur.execute("update social.payments set txid = %s, checked_at = now() where id = %s and status = 'pending';", (txid, payment_id))
+    except psycopg2.errors.UniqueViolation as e:  # claimed by another payment a moment ago
+        raise HTTPException(409, "this transaction already paid for something else") from e
+    if state == "paid":
+        settle(payment_id)
+    return refresh(payment_id, address)
 
 
 def refresh(payment_id, address=None, force=False):
-    """Where a payment stands; while pending, asks the wallet whether it was paid (at most every
-    CHECK_SECONDS unless force), once more just before it expires, and runs on_settled once paid.
-    With address, only a payment of its wallet group; None if there is no such payment."""
+    """Where a payment stands; while pending, asks whether it was paid (bitcoind for the claimed
+    transaction, or the Lightning wallet; at most every CHECK_SECONDS unless force), once more just
+    before it expires, and runs on_settled once paid. With address, only a payment of its wallet
+    group; None if there is no such payment."""
     with cursor() as cur:
         cur.execute(
-            "select payer, product, ref, amount_sats, status, verify_url, created_at < now() - make_interval(mins => %s), "
+            f"select payer, {PAYMENT_COLUMNS}, verify_url, created_at < now() - make_interval(mins => %s), "
             "checked_at is null or checked_at < now() - make_interval(secs => %s) from social.payments where id = %s;",
             (tips.EXPIRE_MINUTES, tips.CHECK_SECONDS, payment_id),
         )
         row = cur.fetchone()
         if row is None or (address is not None and row[0] not in wallets.group(cur, address)):
             return None
-        payer, product, ref, amount, status, verify, old, due = row
+        view, (verify, old, due) = list(row[1:9]), row[9:]
+        amount, status, method, to, txid = view[3:]
         if status != "pending" or not (due or force):
-            return _payment((payment_id, product, ref, amount, status))
+            return _payment(view)
         cur.execute("update social.payments set checked_at = now() where id = %s;", (payment_id,))
-    try:
-        paid = tips.lnurl.settled(verify)
-    except tips.LnurlError:
-        paid = False
+    if method == "onchain":
+        state = check_tx(txid, to, amount)[0] if txid else "unseen"
+        if state == "wrong":  # replaced since it was claimed: free the txid so another can be given
+            with cursor() as cur:
+                cur.execute("update social.payments set txid = null where id = %s and status = 'pending';", (payment_id,))
+            view[7] = None
+        paid = state == "paid"
+    else:
+        try:
+            paid = tips.lnurl.settled(verify)
+        except tips.LnurlError:
+            paid = False
     if not paid:
         if old:
             with cursor() as cur:
                 cur.execute("update social.payments set status = 'expired' where id = %s and status = 'pending';", (payment_id,))
-            return _payment((payment_id, product, ref, amount, "expired"))
-        return _payment((payment_id, product, ref, amount, "pending"))
+            view[4] = "expired"
+        return _payment(view)
     settle(payment_id)
-    return _payment((payment_id, product, ref, amount, "settled"))
+    view[4] = "settled"
+    return _payment(view)
 
 
 def settle(payment_id):
