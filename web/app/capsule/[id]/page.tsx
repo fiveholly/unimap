@@ -11,7 +11,7 @@ import { api, ApiError, type Capsule } from "@/lib/api";
 import { decryptLetter, decryptPhoto, fingerprintOk, halfFromHash, imageType, keyFromHash, shortHash, spanText, TAG_NAMES } from "@/lib/capsule";
 import { DEMO } from "@/lib/demo";
 import { roundTime, tlockDecrypt } from "@/lib/drand";
-import { b64url, decodeContent, describeTx, joinKey } from "@/lib/gift";
+import { b64url, capsuleContent, describeTx, joinKey } from "@/lib/gift";
 import { chainFor, explorerTx } from "@/lib/giftchain";
 import { type GiftDraft, loadDraft, timelockLink } from "@/lib/giftseal";
 import { t } from "@/lib/i18n";
@@ -89,7 +89,7 @@ export default function CapsulePage() {
     try {
       if (ch.reveal_txid) {
         const ins = describeTx(await chainFor(ch.network, null, !!ch.live).txHex(ch.reveal_txid)).inscription;
-        const got = ins ? decodeContent(ins.body) : null;
+        const got = capsuleContent(ins); // from the metadata, or the content of a letter inscribed before metadata
         if (got) from = { ciphertext: toB64(got.letter), photo: got.photo ? toB64(got.photo) : null };
       }
     } catch {}

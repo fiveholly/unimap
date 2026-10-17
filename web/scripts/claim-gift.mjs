@@ -10,7 +10,11 @@
 // exactly that from the 时间锁 card's text backup (or its link), using a public Esplora API.
 //
 // The letter is the gift UTXO's inscription (the reveal transaction's input witness, an ord
-// envelope of type application/x-unimap-capsule: a JSON header line, then the AES-GCM ciphertexts).
+// envelope). Its capsule (a JSON header line, then the AES-GCM ciphertexts) is in the envelope's
+// metadata (tag 5, in 520-byte pushes joined), CBOR {"t": "application/x-unimap-capsule", "v": 1,
+// "b": <the capsule's bytes>}; what wallets show is an envelope (a shared one by delegate, tag 11, or
+// a small SVG as the content). Letters inscribed before that had the capsule as the content itself,
+// of type application/x-unimap-capsule; both are read.
 // Its key is timelock-encrypted to a drand quicknet round (tlock-js decrypts it once the round is
 // out), or is the xor of the 时间锁's half and unimap's half (--server-half, if unimap still gives it).
 //
@@ -109,14 +113,34 @@ async function letter() {
   const w = tx.getInput(0).finalScriptWitness;
   const ops = btc.Script.decode(w[w.length - 2]);
   const at = ops.findIndex((o, i) => (o === 0 || o === "OP_0") && ops[i + 1] === "IF");
-  const pushes = [];
   const isZero = (o) => o === 0 || o === "OP_0";
-  // <key> CHECKSIG OP_0 IF "ord" 01 <content type> OP_0 <body pushes...> ENDIF
-  let i = at + 3;
-  while (i < ops.length && !isZero(ops[i])) i += ops[i] instanceof Uint8Array ? 2 : 1; // tag, value
-  for (i++; ops[i] instanceof Uint8Array; i++) pushes.push(ops[i]);
-  const body = new Uint8Array(pushes.reduce((n, p) => n + p.length, 0));
-  pushes.reduce((n, p) => (body.set(p, n), n + p.length), 0);
+  const join = (parts) => {
+    const all = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    parts.reduce((n, p) => (all.set(p, n), n + p.length), 0);
+    return all;
+  };
+  // <key> CHECKSIG OP_0 IF "ord" (<tag> <value>)... [OP_0 <body pushes...>] ENDIF; tags are 1-byte pushes.
+  const pushes = [], meta = [];
+  let contentType = "";
+  for (let i = at + 3; i < ops.length && ops[i] !== "ENDIF"; i += 2) {
+    if (isZero(ops[i])) {
+      for (i++; ops[i] instanceof Uint8Array; i++) pushes.push(ops[i]);
+      break;
+    }
+    const tag = ops[i] instanceof Uint8Array ? ops[i][0] : ops[i];
+    const value = ops[i + 1] instanceof Uint8Array ? ops[i + 1] : new Uint8Array(0);
+    if (tag === 1) contentType = utf8.encode(value);
+    if (tag === 5) meta.push(value);
+  }
+  let body;
+  if (meta.length) {
+    const m = cbor(join(meta));
+    if (m?.t !== "application/x-unimap-capsule" || m.v !== 1 || !(m.b instanceof Uint8Array)) die("this inscription's metadata isn't a unimap capsule");
+    body = m.b;
+  } else {
+    if (contentType !== "application/x-unimap-capsule") die("this inscription isn't a unimap capsule");
+    body = join(pushes); // inscribed before metadata
+  }
   const nl = body.indexOf(10);
   const head = JSON.parse(utf8.encode(body.slice(0, nl)));
   const letterBytes = body.slice(nl + 1, nl + 1 + head.letter), photoBytes = head.photo ? body.slice(nl + 1 + head.letter) : null;
@@ -136,4 +160,25 @@ async function letter() {
     writeFileSync("letter.jpg", await open(photoBytes));
     console.error("photo written to letter.jpg");
   }
+}
+
+/** Just enough CBOR (RFC 8949) for the metadata: unsigned integers, bytes, text, arrays and maps. */
+function cbor(b) {
+  let at = 0;
+  const item = () => {
+    const first = b[at++], major = first >> 5, info = first & 31;
+    let n = info;
+    if (info >= 24) {
+      if (info > 26) die("metadata: CBOR this script doesn't read");
+      n = 0;
+      for (let i = 0; i < 1 << (info - 24); i++) n = n * 256 + b[at++];
+    }
+    if (major === 0) return n;
+    if (major === 2) return b.slice(at, (at += n));
+    if (major === 3) return utf8.encode(b.slice(at, (at += n)));
+    if (major === 4) return Array.from({ length: n }, item);
+    if (major === 5) return Object.fromEntries(Array.from({ length: n }, () => [item(), item()]));
+    die("metadata: CBOR this script doesn't read");
+  };
+  return item();
 }

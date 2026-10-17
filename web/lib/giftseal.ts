@@ -2,7 +2,10 @@
 // sealed (lib/gift.ts has the pieces), and the draft kept in localStorage until the gift is funded,
 // so a reload between paying 封存 and locking the sats loses nothing. 上链的信 (a letter inscribed
 // without a gift, api/capsule.py onchain()) is made the same way and funded by the same GiftFund:
-// its reveal sends POSTAGE to the recipient's address, or back to the sender's own.
+// its reveal sends POSTAGE to the recipient's address, or back to the sender's own. Either way the
+// inscription shows an envelope (lib/gift.ts Face): the operator's shared one by delegate when the
+// rules name it (envelope), else the small SVG saying the block it opens at; the letter rides in the
+// metadata.
 
 import { hex } from "@scure/base";
 
@@ -14,12 +17,15 @@ import {
   b64url,
   CONTENT_TYPE,
   encodeContent,
+  type Face,
   giftLine,
   giftTaproot,
   inscriptionScript,
   inscriptionVbytes,
+  INSCRIPTION_ID,
   isTestAddress,
   letterLine,
+  letterScript,
   newSecret,
   POSTAGE,
   packTimelock,
@@ -45,7 +51,8 @@ export type GiftDraft = {
   address: string; // the gift address; a letter's postage address, or "" for the sender's own (their wallet's, when funding)
   sats: number; // the gift; a letter's postage
   revealSecret: string; // hex
-  body: string; // base64url of the inscription's content
+  body: string; // base64url of the capsule's body (encodeContent), carried in the inscription's metadata
+  face?: Face; // what the inscription shows; a draft saved before there was one is built as then (content = body)
   timelock?: Timelock; // a gift's 时间锁
   letter?: { half: string; live?: true }; // an inscribed letter: the link's half of its key (base64url); live: 真实 Signet
   commit?: Outpoint; // broadcast already
@@ -68,7 +75,14 @@ export function saveDraft(d: GiftDraft) {
   } catch {}
 }
 
-export const envelopeOf = (d: GiftDraft) => inscriptionScript(xonlyOf(hex.decode(d.revealSecret)), CONTENT_TYPE, b64url.decode(d.body));
+/** The draft's ord envelope. A draft from before faces (its commit maybe paid already, to the
+ * envelope as it was then) keeps the body as the content. */
+export const envelopeOf = (d: GiftDraft) =>
+  d.face ? letterScript(xonlyOf(hex.decode(d.revealSecret)), b64url.decode(d.body), d.face) : inscriptionScript(xonlyOf(hex.decode(d.revealSecret)), CONTENT_TYPE, b64url.decode(d.body));
+
+/** What a letter opening at block height shows: the shared envelope when the rules name one, else the SVG. */
+export const faceOf = (rules: Pick<GiftRules, "envelope">, height: number): Face =>
+  rules.envelope && INSCRIPTION_ID.test(rules.envelope) ? { delegate: rules.envelope } : { opens: height };
 
 const b64ToBytes = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 
@@ -131,7 +145,7 @@ export async function prepareGift(o: {
     serverHalf: b64url.encode(server),
     gift,
     line: giftLine({ sats, address, height, network: r.network }),
-    draft: { network: r.network, esplora: r.esplora, address, sats, revealSecret: hex.encode(revealSecret), body: b64url.encode(body), timelock } satisfies Omit<GiftDraft, "capsuleId">,
+    draft: { network: r.network, esplora: r.esplora, address, sats, revealSecret: hex.encode(revealSecret), body: b64url.encode(body), face: faceOf(r, height), timelock } satisfies Omit<GiftDraft, "capsuleId">,
   };
 }
 
@@ -171,17 +185,18 @@ export async function prepareLetter(o: { rules: GiftRules; key: string; cipherte
     half: b64url.encode(half),
     chain,
     line: letterLine(chain),
-    draft: { network: r.network, esplora: r.esplora, address, sats: POSTAGE, revealSecret: hex.encode(revealSecret), body: b64url.encode(body),
+    draft: { network: r.network, esplora: r.esplora, address, sats: POSTAGE, revealSecret: hex.encode(revealSecret), body: b64url.encode(body), face: faceOf(r, height),
       letter: { half: b64url.encode(half), ...(r.live ? { live: true as const } : {}) } } satisfies Omit<GiftDraft, "capsuleId">,
   };
 }
 
 /** What inscribing a letter costs, before anything is signed: the network fee for commit and reveal
  * at feeRate sats/vB (vbytes from lib/gift.ts inscriptionVbytes: the witness counts a quarter), and
- * how much of it the photo is. letterBytes is the letter's UTF-8 length, photoBytes the shrunk photo's (0: none). */
-export function letterCost(letterBytes: number, photoBytes: number, feeRate: number) {
-  const vbytes = inscriptionVbytes(letterBytes, photoBytes);
-  const photoVbytes = photoBytes > 0 ? vbytes - inscriptionVbytes(letterBytes, 0) : 0;
+ * how much of it the photo is. letterBytes is the letter's UTF-8 length, photoBytes the shrunk photo's
+ * (0: none), face what it shows (faceOf; the fallback SVG is ~700 bytes of it, the delegate 35). */
+export function letterCost(letterBytes: number, photoBytes: number, feeRate: number, face: Face) {
+  const vbytes = inscriptionVbytes(letterBytes, photoBytes, face);
+  const photoVbytes = photoBytes > 0 ? vbytes - inscriptionVbytes(letterBytes, 0, face) : 0;
   return { vbytes, photoVbytes, fee: Math.ceil(vbytes * feeRate), photoFee: Math.ceil(photoVbytes * feeRate) };
 }
 

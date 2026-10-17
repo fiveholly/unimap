@@ -11,7 +11,10 @@ turns gifts off). Everything that holds value happens in the sender's browser an
   before H. The recipient's key is their wallet's, or a fresh "礼物钥匙" made in the browser and
   handed over in the 时间锁 card; unimap never sees it.
 - The letter's ciphertext is inscribed (ord envelope, commit/reveal) and the reveal's first output
-  is the gift address, so the letter's sat and the gift are one UTXO.
+  is the gift address, so the letter's sat and the gift are one UTXO. The ciphertext rides in the
+  inscription's metadata, and what wallets show is an envelope: the shared one by delegate
+  (CAPSULE_ENVELOPE_INSCRIPTION), else a small SVG naming the block it opens at (see "the
+  inscription" below).
 - The letter's AES key K is timelock-encrypted to the drand quicknet round at H's estimated time,
   and also split K = S xor R: S is the capsule's escrow_key here, R is in the 时间锁 card. This
   module hands out S only once the gift network's tip is at or past H (backup()). S alone opens
@@ -19,7 +22,9 @@ turns gifts off). Everything that holds value happens in the sender's browser an
 
 The checks that keep the release honest: H is not taken on trust; the address the sats go to is
 rebuilt here from the keys and H (taproot_address), so a capsule registered with a small H can't
-be one whose sats are locked to a later block. The tip comes from the operator's own sources
+be one whose sats are locked to a later block. When the reveal is reported, its inscription is read
+from the explorer's witness: its letter must hash to the capsule's signed fingerprint and name its
+block, and it must show this server's envelope (inscription_problem). The tip comes from the operator's own sources
 (GIFT_BITCOIN_RPC_URL, a bitcoind on the gift network, and/or GIFT_ESPLORA_URL); with both, the
 lower answer is used, and with none reachable nothing is released.
 
@@ -37,6 +42,8 @@ checks the facts before the capsule is stored, store_letter keeps them in social
 and POST /v1/capsules/{id}/chain/txs takes the txids, checked as a gift's are.
 """
 
+import hashlib
+import json
 import logging
 import os
 import re
@@ -233,6 +240,245 @@ def fetch_tx(net, txid):
         return None
 
 
+# --- the inscription: what a letter's reveal carries ---------------------------------------------
+#
+# The capsule (a JSON header line, then the letter's and photo's ciphertexts, web/lib/gift.ts
+# encodeContent) rides in the inscription's metadata: ord's tag 5, CBOR {"t": CONTENT_TYPE, "v": 1,
+# "b": <the capsule>}, in pushes of at most 520 bytes, each after its own tag. What wallets and
+# ordinals.com show is an envelope: the operator's shared envelope inscription by ord's delegate tag
+# (11; envelopes(), CAPSULE_ENVELOPE_INSCRIPTION), with no content of the letter's own, or, with none
+# set, envelope_svg(height) as the inscription's own content (image/svg+xml). Letters inscribed before
+# this had the capsule as their content (CONTENT_TYPE); those are still taken. Must match web/lib/gift.ts.
+
+CONTENT_TYPE = "application/x-unimap-capsule"
+SVG_TYPE = "image/svg+xml"
+INSCRIPTION_ID = re.compile(r"^[0-9a-f]{64}i\d+$")
+
+
+def envelopes():
+    """The shared envelope's inscription ids on the gift network, from CAPSULE_ENVELOPE_INSCRIPTION
+    (web/scripts/inscribe-envelope.mjs inscribes it): the first is what new letters use; any after it
+    (comma-separated) are older ones still accepted, so letters sealed before a change still check.
+    Empty: letters show the fallback SVG."""
+    raw = (os.getenv("CAPSULE_ENVELOPE_INSCRIPTION") or "").replace(",", " ").lower().split()
+    return [i for i in raw if INSCRIPTION_ID.match(i)]
+
+
+def envelope_svg(height):
+    """The fallback envelope: a sealed envelope and "Opens at block N", nothing else (no names, no
+    letter). Must match envelopeSvg in web/lib/gift.ts byte for byte."""
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 200">'
+        '<rect width="300" height="200" rx="6" fill="#f3eee4"/>'
+        '<path d="M0 0L150 112L300 0M0 200L120 90M300 200L180 90" fill="none" stroke="#d8d0c2" stroke-width="1.5"/>'
+        '<g transform="rotate(-6 150 100)"><circle cx="150" cy="100" r="28" fill="#b8352a"/>'
+        '<circle cx="150" cy="100" r="22" fill="none" stroke="#f3eee4" stroke-width="1.2" opacity=".85"/>'
+        '<text x="150" y="107" text-anchor="middle" font-family="serif" font-weight="700" font-size="19" fill="#f3eee4">封</text></g>'
+        f'<text x="150" y="182" text-anchor="middle" font-family="monospace" font-size="11" fill="#6b655c">Opens at block {int(height)}</text></svg>'
+    ).encode()
+
+
+def delegate_bytes(inscription_id):
+    """An inscription id as ord's delegate tag holds it: the txid's 32 bytes in internal order
+    (reversed from how it is written), then the index little-endian with trailing zeros dropped."""
+    txid, index = inscription_id.split("i")
+    return bytes.fromhex(txid)[::-1] + int(index).to_bytes(4, "little").rstrip(b"\x00")
+
+
+def delegate_id(raw):
+    """delegate_bytes undone; None if the bytes can't be an id."""
+    if not 32 <= len(raw) <= 36:
+        return None
+    return f"{raw[:32][::-1].hex()}i{int.from_bytes(raw[32:], 'little')}"
+
+
+def _cbor_head(major, n):
+    if n < 24:
+        return bytes([major << 5 | n])
+    for info, size in ((24, 1), (25, 2), (26, 4)):
+        if n < 1 << (8 * size):
+            return bytes([major << 5 | info]) + n.to_bytes(size, "big")
+    raise ValueError("too large for this CBOR")
+
+
+def cbor_encode(v):
+    """Just what the metadata needs (RFC 8949): unsigned integers, bytes, text, lists, dicts in their order."""
+    if isinstance(v, bool) or (isinstance(v, int) and v < 0):
+        raise ValueError("only unsigned integers")
+    if isinstance(v, int):
+        return _cbor_head(0, v)
+    if isinstance(v, (bytes, bytearray)):
+        return _cbor_head(2, len(v)) + bytes(v)
+    if isinstance(v, str):
+        b = v.encode()
+        return _cbor_head(3, len(b)) + b
+    if isinstance(v, list):
+        return _cbor_head(4, len(v)) + b"".join(cbor_encode(x) for x in v)
+    if isinstance(v, dict):
+        return _cbor_head(5, len(v)) + b"".join(cbor_encode(k) + cbor_encode(x) for k, x in v.items())
+    raise ValueError("not a kind this CBOR writes")
+
+
+def cbor_decode(b):
+    """The one CBOR item that is the whole of b, of the kinds cbor_encode writes (map keys text);
+    raises ValueError otherwise."""
+    at = 0
+
+    def take(n):
+        nonlocal at
+        if at + n > len(b):
+            raise ValueError("CBOR cut short")
+        at += n
+        return b[at - n:at]
+
+    def item(depth):
+        if depth > 16:
+            raise ValueError("CBOR too deep")
+        first = take(1)[0]
+        major, info = first >> 5, first & 31
+        n = info
+        if info >= 24:
+            if info > 26:
+                raise ValueError("CBOR this reader doesn't take")
+            n = int.from_bytes(take(1 << (info - 24)), "big")
+        if major == 0:
+            return n
+        if major == 2:
+            return bytes(take(n))
+        if major == 3:
+            return bytes(take(n)).decode()  # UnicodeDecodeError is a ValueError
+        if major == 4:
+            return [item(depth + 1) for _ in range(n)]
+        if major == 5:
+            out = {}
+            for _ in range(n):
+                k = item(depth + 1)
+                if not isinstance(k, str):
+                    raise ValueError("CBOR map keys are text here")
+                out[k] = item(depth + 1)
+            return out
+        raise ValueError("CBOR this reader doesn't take")
+
+    v = item(0)
+    if at != len(b):
+        raise ValueError("CBOR has bytes after it")
+    return v
+
+
+def letter_metadata(body):
+    """The letter's metadata: the capsule's bytes under its content type."""
+    return cbor_encode({"t": CONTENT_TYPE, "v": 1, "b": body})
+
+
+def script_ops(script):
+    """A script's ops: bytes for each push (b"" for OP_0), the opcode (an int) for anything else."""
+    ops, at = [], 0
+    while at < len(script):
+        op = script[at]
+        at += 1
+        if op <= 0x4E:
+            if op <= 0x4B:
+                n = op
+            else:
+                size = {0x4C: 1, 0x4D: 2, 0x4E: 4}[op]
+                n = int.from_bytes(script[at:at + size], "little")
+                at += size
+            if at + n > len(script):
+                raise ValueError("a push runs past the script")
+            ops.append(script[at:at + n])
+            at += n
+        else:
+            ops.append(op)
+    return ops
+
+
+def parse_inscription(script):
+    """The first ord envelope in a tapscript: its content type, body, metadata (tag 5's pushes joined)
+    and delegate; None if there is none."""
+    try:
+        ops = script_ops(script)
+    except ValueError:
+        return None
+
+    def tag_of(op):
+        if isinstance(op, bytes):
+            return op[0] if len(op) == 1 else None
+        return op - 0x50 if 0x51 <= op <= 0x60 else None
+
+    for i in range(len(ops) - 2):
+        if ops[i] != b"" or ops[i + 1] != 0x63 or ops[i + 2] != b"ord":
+            continue
+        content_type, delegate, body, meta = "", None, [], []
+        j = i + 3
+        while j < len(ops) and ops[j] != 0x68:
+            if ops[j] == b"":
+                j += 1
+                while j < len(ops) and isinstance(ops[j], bytes):
+                    body.append(ops[j])
+                    j += 1
+                break
+            if j + 1 >= len(ops) or not isinstance(ops[j + 1], bytes):
+                break
+            tag, value = tag_of(ops[j]), ops[j + 1]
+            if tag == 1:
+                content_type = value.decode(errors="replace")
+            elif tag == 5:
+                meta.append(value)
+            elif tag == 11:
+                delegate = delegate_id(value)
+            j += 2
+        return {"content_type": content_type, "body": b"".join(body), "metadata": b"".join(meta) if meta else None, "delegate": delegate}
+    return None
+
+
+def decode_content(body):
+    """A capsule's bytes (web/lib/gift.ts encodeContent): its JSON header, the letter's and the
+    photo's ciphertexts; None if they aren't one."""
+    nl = body.find(b"\n")
+    if nl < 0:
+        return None
+    try:
+        h = json.loads(body[:nl])
+        letter_len, photo_len = int(h["letter"]), int(h["photo"])
+        if h.get("p") != "unimap-capsule" or h.get("v") != 1 or len(body) != nl + 1 + letter_len + photo_len:
+            return None
+    except (ValueError, KeyError, TypeError):
+        return None
+    start = nl + 1
+    return {**h, "letter": body[start:start + letter_len], "photo": body[start + letter_len:] if photo_len else None}
+
+
+def capsule_content(ins):
+    """The capsule a letter's inscription carries: from its metadata, or (inscribed before metadata)
+    from its content; None if it carries none."""
+    if not ins:
+        return None
+    if ins["metadata"] is not None:
+        try:
+            m = cbor_decode(ins["metadata"])
+        except ValueError:
+            return None
+        if not isinstance(m, dict) or m.get("t") != CONTENT_TYPE or m.get("v") != 1 or not isinstance(m.get("b"), bytes):
+            return None
+        return decode_content(m["b"])
+    return decode_content(ins["body"]) if ins["content_type"] == CONTENT_TYPE else None
+
+
+def inscription_problem(ins, fingerprint, height, accepted):
+    """Why a reveal's inscription isn't this capsule's letter, or None: the letter's and photo's bytes
+    must hash to the fingerprint the sender signed, its block be the capsule's, and it must show one
+    of accepted (the shared envelope's ids, by delegate) or the fallback SVG for that block. A letter
+    inscribed before metadata is taken with no envelope. As inscriptionProblem in web/lib/gift.ts."""
+    c = capsule_content(ins)
+    if c is None or hashlib.sha256(c["letter"] + (c["photo"] or b"")).hexdigest() != fingerprint or c.get("h") != height:
+        return "the reveal doesn't carry this capsule's letter"
+    if ins["metadata"] is None:
+        return None
+    if ins["delegate"] is not None:
+        return None if ins["delegate"] in accepted else "the reveal's envelope isn't this server's"
+    return None if ins["content_type"] == SVG_TYPE and ins["body"] == envelope_svg(height) else "the reveal's envelope isn't this server's"
+
+
 # --- sealing (called from api/capsule.py seal) ----------------------------------------------------
 
 
@@ -316,12 +562,13 @@ def rules():
         "tip": tip(net),
         "esplora": esplora_url(net) or ESPLORA[net],
         "explorer": EXPLORER[net],
+        "envelope": (envelopes() or [None])[0],  # the shared envelope's id; None: the fallback SVG
     }
 
 
 GIFT_COLUMNS = (
     "g.capsule_id, g.network, g.sats, g.height, g.refund, g.recipient_key, g.sender_key, g.bearer, g.address, "
-    "g.drand_round, g.tlock, g.commit_txid, g.reveal_txid, g.verified, g.funded_at, c.author, c.status, c.escrow_key"
+    "g.drand_round, g.tlock, g.commit_txid, g.reveal_txid, g.verified, g.funded_at, c.author, c.status, c.escrow_key, c.fingerprint"
 )
 
 
@@ -388,8 +635,10 @@ class GiftTxs(BaseModel):
 
 
 def _check_reveal(row, commit, reveal):
-    """True if the reveal is on the network and pays the gift address (a letter's: its postage
-    address, or any when it has none), False if the explorer can't tell yet; raises if it says otherwise."""
+    """True if the reveal is on the network, pays the gift address (a letter's: its postage address,
+    or any when it has none), spends the commit, and inscribes this capsule's letter showing this
+    server's envelope (inscription_problem); False if the explorer can't tell yet (or gives no
+    witness); raises if it says otherwise."""
     tx = fetch_tx(row["network"], reveal)
     if not tx:
         return False
@@ -399,6 +648,16 @@ def _check_reveal(row, commit, reveal):
         raise HTTPException(400, "the reveal's first output doesn't pay the gift address its amount")
     if not ins or ins[0].get("txid") != commit:
         raise HTTPException(400, "the reveal doesn't spend the commit")
+    witness = ins[0].get("witness") or []
+    if len(witness) < 3:
+        return False
+    try:
+        inscription = parse_inscription(bytes.fromhex(witness[-2]))
+    except (ValueError, TypeError):
+        inscription = None
+    problem = inscription_problem(inscription, row["fingerprint"], row["height"], envelopes())
+    if problem:
+        raise HTTPException(400, problem)
     return True
 
 
@@ -506,7 +765,7 @@ def letter_txs(capsule_id: str, req: GiftTxs, address: str = Depends(current_add
         raise HTTPException(422, "txids are 64 hex characters each")
     with cursor(dict_rows=True) as cur:
         cur.execute(
-            "select i.network, i.address, i.sats, i.reveal_txid, i.verified, c.author, c.status from social.capsule_inscriptions i "
+            "select i.network, i.height, i.address, i.sats, i.reveal_txid, i.verified, c.author, c.status, c.fingerprint from social.capsule_inscriptions i "
             "join social.capsules c on c.id = i.capsule_id where i.capsule_id = %s;",
             (capsule_id,),
         )
