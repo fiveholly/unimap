@@ -19,8 +19,9 @@ export const TAG_NAMES: Record<Tag, string> = { birth: "出生#tag", wedding: "�
 
 // ---- tiers (api/capsule.py) ----------------------------------------------------------------
 // With billing off every capsule is "open": free, no limits. With it on, "free" is one per wallet
-// (text only, the default envelope, opening within a year) and "paid" (封存) is paid for over
-// Lightning before it counts as sealed. "inscribe" (刻上链) is shown as coming soon, never sold.
+// (text only, the default envelope, opening within a year) and "paid" (封存) is paid for (from the
+// connected wallet on-chain, or over Lightning; lib/billing.ts) before it counts as sealed.
+// "inscribe" (刻上链) is shown as coming soon, never sold.
 
 export type Tier = "open" | "free" | "paid";
 export type TierOption = { tier: "free" | "paid" | "inscribe"; sats: number; available: boolean };
