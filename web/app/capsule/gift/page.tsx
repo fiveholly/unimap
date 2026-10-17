@@ -11,7 +11,7 @@ import { api, ApiError, type Capsule, type CapsuleGift } from "@/lib/api";
 import { decryptLetter, decryptPhoto, imageType, shortHash, spanText } from "@/lib/capsule";
 import { DEMO } from "@/lib/demo";
 import { roundTime, tlockDecrypt } from "@/lib/drand";
-import { b64url, buildSweep, decodeContent, describeTx, finishSweep, isTestAddress, joinKey, packTimelock, REFUND_BLOCKS, sweepPsbt, timelockAddress, timelockFromHash, timelockKeys, unpackTimelock, type GiftContent, type Timelock } from "@/lib/gift";
+import { b64url, buildSweep, capsuleContent, describeTx, finishSweep, isTestAddress, joinKey, packTimelock, REFUND_BLOCKS, sweepPsbt, timelockAddress, timelockFromHash, timelockKeys, unpackTimelock, type GiftContent, type Timelock } from "@/lib/gift";
 import { chainFor, explorerAddress, explorerTx, type ChainUtxo } from "@/lib/giftchain";
 import { t } from "@/lib/i18n";
 import { drandProblem } from "@/lib/signet";
@@ -134,7 +134,7 @@ function Timelocked({ x }: { x: Timelock }) {
     if (id) {
       try {
         const ins = describeTx(await chain.txHex(id)).inscription;
-        const c = ins ? decodeContent(ins.body) : null;
+        const c = capsuleContent(ins); // the metadata, or an older letter's content
         if (c) return c;
       } catch {}
     }

@@ -8,7 +8,7 @@ import * as btc from "@scure/btc-signer";
 
 import type { Capsule, CapsuleChain, CapsuleGift, CapsulePeer, CapsuleScope, Conversation, DmMessage, MarketOffer, OfferQuote, Agent, AgentDraft, AgentGrant, AgentInfo, AgentTask, AgentView, Application, Tenant, Badge, CaredPet, Contest, MarketListing, ContestMetric, District, DistrictGame, Draw, Game, Season, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Metrics, ShopBought, ShopItem, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
 import { CLAIM_BLOCKS, pick, rarityOf, ROUND, roundOf, SEASON, seasonOf, sha256, type Rarity } from "./game";
-import { describeTx, GIFT_TIERS, giftTaproot, parseXonly, POSTAGE, REFUND_BLOCKS } from "./gift.ts";
+import { describeTx, GIFT_TIERS, giftTaproot, INSCRIPTION_ID, inscriptionProblem, parseXonly, POSTAGE, REFUND_BLOCKS } from "./gift.ts";
 import { connected } from "./parks";
 import { MAX_SHOWN, PET_KEYS, PETS, type Pet, type PetKey } from "./pets";
 import { prosperity, THRESHOLDS, type ProsperityParts } from "./prosperity";
@@ -16,6 +16,9 @@ import { cachedSignetTip, checkReveal, liveSignet, SIGNET_BLOCK_SECONDS, SIGNET_
 import { COLORS, DECOS, visibleStyle, type DistrictStyle } from "./style";
 
 export const DEMO = process.env.NEXT_PUBLIC_DEMO === "1";
+/** The shared envelope's inscription id on signet, as CAPSULE_ENVELOPE_INSCRIPTION on a server
+ * (api/gift.py envelopes); unset, inscribed letters show the fallback SVG (lib/gift.ts envelopeSvg). */
+const DEMO_ENVELOPE = ((s) => (INSCRIPTION_ID.test(s) ? s : null))((process.env.NEXT_PUBLIC_CAPSULE_ENVELOPE_INSCRIPTION ?? "").trim().toLowerCase());
 
 export const DEMO_TIP = 918_500;
 /** The visitor's demo wallet: owns 840000, the two districts that touch it in its quarter
@@ -1339,8 +1342,8 @@ function capsuleRoute(p: string, q: URLSearchParams, method: string, body: Recor
       onchain: true, max_chain_photo_bytes: MAX_CHAIN_PHOTO, postage_sats: POSTAGE, usd: { ...DEMO_USD, at: Math.floor(Date.now() / 1000) },
       gift: live
         ? // 真实 Signet: the real signet's tip and Esplora, ten-minute blocks.
-          { network: "signet", tiers: [...GIFT_TIERS], min_sats: 50_000, max_sats: 1_000_000, refund_blocks: REFUND_BLOCKS, block_seconds: SIGNET_BLOCK_SECONDS, tip: live.tip, esplora: SIGNET_ESPLORA, explorer: SIGNET_EXPLORER, live: true }
-        : { network: "signet", tiers: [...GIFT_TIERS], min_sats: 50_000, max_sats: 1_000_000, refund_blocks: REFUND_BLOCKS, block_seconds: DEMO_BLOCK_MS / 1000, tip: demoTip(), esplora: "demo", explorer: "#demo-explorer" } });
+          { network: "signet", tiers: [...GIFT_TIERS], min_sats: 50_000, max_sats: 1_000_000, refund_blocks: REFUND_BLOCKS, block_seconds: SIGNET_BLOCK_SECONDS, tip: live.tip, esplora: SIGNET_ESPLORA, explorer: SIGNET_EXPLORER, envelope: DEMO_ENVELOPE, live: true }
+        : { network: "signet", tiers: [...GIFT_TIERS], min_sats: 50_000, max_sats: 1_000_000, refund_blocks: REFUND_BLOCKS, block_seconds: DEMO_BLOCK_MS / 1000, tip: demoTip(), esplora: "demo", explorer: "#demo-explorer", envelope: DEMO_ENVELOPE } });
   if (p === "/v1/capsules" && method === "POST") {
     const a = needMe(), openAt = Number(body.open_at), line = String(body.line ?? "").trim() || null;
     const tier = (body.tier as "free" | "paid" | undefined) ?? "free", style = (body.style as Capsule["style"]) ?? "classic", photo = (body.photo as string | null) ?? null;
@@ -1440,13 +1443,16 @@ function capsuleRoute(p: string, q: URLSearchParams, method: string, body: Recor
     if (!/^[0-9a-f]{64}$/.test(commit) || !/^[0-9a-f]{64}$/.test(reveal)) fail(422, "txids are 64 hex characters each");
     if (r.reveal_txid && r.reveal_txid !== reveal && r.verified) fail(409, "this letter is inscribed already");
     let verified: boolean;
+    const letter = { fingerprint: c.fingerprint, height: r.height, envelopes: DEMO_ENVELOPE ? [DEMO_ENVELOPE] : [] };
     if (r.live) {
-      const said = checkReveal(live?.reveal ?? null, { address: r.address, sats: r.sats, commit });
+      const said = checkReveal(live?.reveal ?? null, { address: r.address, sats: r.sats, commit, letter });
       if (typeof said === "string") fail(400, said);
       verified = said === true;
     } else {
-      const out = giftTxs()[reveal] ? describeTx(giftTxs()[reveal].hex).outputs[0] : null;
+      const d = giftTxs()[reveal] ? describeTx(giftTxs()[reveal].hex) : null, out = d?.outputs[0];
       if (out && ((r.address && out.address !== r.address) || out.value < r.sats)) fail(400, "the reveal's first output doesn't pay the gift address its amount");
+      const why = d ? inscriptionProblem(d.inscription, letter) : null;
+      if (why) fail(400, why);
       verified = !!out;
     }
     Object.assign(r, { commit_txid: commit, reveal_txid: reveal, verified });
@@ -1466,13 +1472,16 @@ function capsuleRoute(p: string, q: URLSearchParams, method: string, body: Recor
       const commit = String(body.commit_txid ?? ""), reveal = String(body.reveal_txid ?? "");
       if (!/^[0-9a-f]{64}$/.test(commit) || !/^[0-9a-f]{64}$/.test(reveal)) fail(422, "txids are 64 hex characters each");
       let verified: boolean;
+      const letter = { fingerprint: c.fingerprint, height: c.giftRec!.height, envelopes: DEMO_ENVELOPE ? [DEMO_ENVELOPE] : [] };
       if (c.giftRec!.live) {
-        const said = checkReveal(live?.reveal ?? null, { address: c.giftRec!.address, sats: c.giftRec!.sats, commit });
+        const said = checkReveal(live?.reveal ?? null, { address: c.giftRec!.address, sats: c.giftRec!.sats, commit, letter });
         if (typeof said === "string") fail(400, said);
         verified = said === true;
       } else {
-        const out = giftTxs()[reveal] ? describeTx(giftTxs()[reveal].hex).outputs[0] : null;
+        const d = giftTxs()[reveal] ? describeTx(giftTxs()[reveal].hex) : null, out = d?.outputs[0];
         if (out && (out.address !== c.giftRec!.address || out.value < c.giftRec!.sats)) fail(400, "the reveal's first output doesn't pay the gift address its amount");
+        const why = d ? inscriptionProblem(d.inscription, letter) : null;
+        if (why) fail(400, why);
         verified = !!out;
       }
       Object.assign(c.giftRec!, { commit_txid: commit, reveal_txid: reveal, verified });

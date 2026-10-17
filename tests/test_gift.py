@@ -3,6 +3,7 @@ real Postgres (TEST_PGURL, as in test_social.py; its tables are dropped and recr
 
 import base64
 import hashlib
+import json
 import os
 import time
 import unittest
@@ -94,6 +95,135 @@ class GiftScripts(unittest.TestCase):
         for bad in ("", "00" * 32, "zz" * 32, "04" + RECIPIENT.hex()):
             with self.assertRaises(Exception):
                 gift.xonly(bad, "k")
+
+
+DELEGATE = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fi0"
+REVERSED = "1f1e1d1c1b1a191817161514131211100f0e0d0c0b0a09080706050403020100"
+
+
+def push(b):
+    """A minimal data push, as @scure/btc-signer writes one (a 1-byte value stays a push, never OP_n)."""
+    if len(b) == 0:
+        return b"\x00"
+    if len(b) <= 75:
+        return bytes([len(b)]) + b
+    if len(b) <= 255:
+        return b"\x4c" + bytes([len(b)]) + b
+    return b"\x4d" + len(b).to_bytes(2, "little") + b
+
+
+def chunks(b):
+    return [b[i:i + 520] for i in range(0, len(b), 520)]
+
+
+def letter_script(key, body, face=None, legacy=False):
+    """web/lib/gift.ts letterScript (face: an inscription id, or a block for the fallback SVG), or with
+    legacy, inscriptionScript as letters were inscribed before metadata."""
+    out = push(key) + b"\xac\x00\x63" + push(b"ord")
+    if legacy:
+        return out + push(b"\x01") + push(gift.CONTENT_TYPE.encode()) + b"\x00" + b"".join(push(c) for c in chunks(body)) + b"\x68"
+    meta = b"".join(push(b"\x05") + push(c) for c in chunks(gift.letter_metadata(body)))
+    if isinstance(face, str):
+        return out + meta + push(b"\x0b") + push(gift.delegate_bytes(face)) + b"\x68"
+    svg = b"".join(push(c) for c in chunks(gift.envelope_svg(face)))
+    return out + push(b"\x01") + push(gift.SVG_TYPE.encode()) + meta + b"\x00" + svg + b"\x68"
+
+
+def capsule_body(height, letter, photo=None, fingerprint="f"):
+    """web/lib/gift.ts encodeContent."""
+    head = {"p": "unimap-capsule", "v": 1, "net": "signet", "h": height, "round": 7, "tlock": TLOCK, "fingerprint": fingerprint,
+            "letter": len(letter), "photo": len(photo or b"")}
+    return json.dumps(head, separators=(",", ":"), ensure_ascii=False).encode() + b"\n" + letter + (photo or b"")
+
+
+def esplora_reveal(commit, address, value, script):
+    """A reveal as Esplora describes it, its input's witness [signature, envelope, control block] in hex."""
+    return {"vin": [{"txid": commit, "witness": [("aa" * 64), script.hex(), "c0" + "bb" * 32]}], "vout": [{"scriptpubkey_address": address, "value": value}]}
+
+
+class Inscription(unittest.TestCase):
+    """The letter's inscription: the capsule in the metadata, an envelope shown. The vectors are
+    web/lib/gift.test.ts's."""
+
+    def test_cbor(self):
+        self.assertEqual(gift.letter_metadata(b"\x01\x02\x03").hex(), "a3" + "6174" + "781c" + gift.CONTENT_TYPE.encode().hex() + "6176" + "01" + "6162" + "43010203")
+        for v in (0, 23, 24, 255, 256, 65_535, 65_536, 4_294_967_295, "", "封", b"", b"\x07" * 300, [1, "a", [b"\x09"]], {"a": 1, "b": {"c": "d"}}):
+            self.assertEqual(gift.cbor_decode(gift.cbor_encode(v)), v)
+        self.assertEqual(gift.cbor_encode(500).hex(), "1901f4")
+        self.assertEqual(gift.cbor_encode(b"\x00" * 70_000)[:5].hex(), "5a00011170")
+        for bad in (b"\x43\x01\x02", b"\x01\x01", b"\x5f\xff", b"\x62\xff\xfe", b""):
+            with self.assertRaises(ValueError):
+                gift.cbor_decode(bad)
+        with self.assertRaises(ValueError):
+            gift.cbor_encode(-1)
+
+    def test_delegate_id(self):
+        # ord's serialization: txid reversed, index little-endian with trailing zeros dropped.
+        self.assertEqual(gift.delegate_bytes(DELEGATE).hex(), REVERSED)
+        self.assertEqual(gift.delegate_bytes(DELEGATE[:-1] + "255").hex(), REVERSED + "ff")
+        self.assertEqual(gift.delegate_bytes(DELEGATE[:-1] + "256").hex(), REVERSED + "0001")
+        for i in (0, 1, 255, 256, 65_536, 4_294_967_295):
+            self.assertEqual(gift.delegate_id(gift.delegate_bytes(f"{DELEGATE[:-1]}{i}")), f"{DELEGATE[:-1]}{i}")
+        self.assertIsNone(gift.delegate_id(b"\x00" * 31))
+
+    def test_fallback_svg(self):
+        svg = gift.envelope_svg(H)
+        self.assertLess(len(svg), 1000)
+        self.assertTrue(svg.endswith(b">Opens at block 900000</text></svg>"))
+        self.assertEqual(hashlib.sha256(svg).hexdigest(), "530dd86f7f3371473667ca920626a95f89e77ff8f1df85a5dde013a02fb44784")
+
+    def test_same_envelope_as_the_web(self):
+        key, body = b"\x07" * 32, b"\x5a" * 600
+        self.assertEqual(hashlib.sha256(letter_script(key, body, H)).hexdigest(), "52c6f4daf161a48e34cc4d0827739a2cb1594b8569962140edc35cf91aef1bef")
+        self.assertEqual(hashlib.sha256(letter_script(key, body, DELEGATE[:-1] + "300")).hexdigest(), "f659c8e49c6f70a9ffaa50cf4b8a5f73b176ea225a2b3f0d76b7dfd107ddb00e")
+
+    def test_parse_both_layouts(self):
+        letter, photo = b"\x01\x02\x0a\x05", os.urandom(1500)
+        body = capsule_body(H, letter, photo)
+        ins = gift.parse_inscription(letter_script(b"\x07" * 32, body, H))
+        self.assertEqual((ins["content_type"], ins["body"], ins["metadata"], ins["delegate"]), (gift.SVG_TYPE, gift.envelope_svg(H), gift.letter_metadata(body), None))
+        c = gift.capsule_content(ins)
+        self.assertEqual((c["letter"], c["photo"], c["h"]), (letter, photo, H))
+        shared = gift.parse_inscription(letter_script(b"\x07" * 32, body, DELEGATE))
+        self.assertEqual((shared["content_type"], shared["body"], shared["delegate"]), ("", b"", DELEGATE))
+        self.assertEqual(gift.capsule_content(shared)["letter"], letter)
+        # Inscribed before metadata: the capsule is the content.
+        old = gift.parse_inscription(letter_script(b"\x07" * 32, body, legacy=True))
+        self.assertEqual((old["content_type"], old["metadata"]), (gift.CONTENT_TYPE, None))
+        self.assertEqual(gift.capsule_content(old)["photo"], photo)
+        self.assertIsNone(gift.capsule_content(gift.parse_inscription(push(b"\x07" * 32) + b"\xac\x00\x63" + push(b"ord") + push(b"\x01") + push(b"text/plain") + b"\x00" + push(b"hi") + b"\x68")))
+        self.assertIsNone(gift.parse_inscription(b"\x4d\xff"))  # a push past the end
+
+    def test_metadata_chunks(self):
+        body = b"\x33" * 1200
+        script = letter_script(b"\x01" * 32, body, DELEGATE)
+        ops = gift.script_ops(script)
+        meta = [ops[i + 1] for i in range(len(ops) - 1) if ops[i] == b"\x05"]
+        whole = gift.letter_metadata(body)
+        self.assertEqual([len(m) for m in meta], [520, 520, len(whole) - 1040])
+        self.assertEqual(gift.parse_inscription(script)["metadata"], whole)
+
+    def test_problems(self):
+        letter = b"\x04\x05\x06"
+        fp = hashlib.sha256(letter).hexdigest()
+        body, key = capsule_body(H, letter, fingerprint=fp), b"\x07" * 32
+        check = lambda script, **o: gift.inscription_problem(gift.parse_inscription(script), o.get("fp", fp), o.get("height", H), o.get("accepted", [DELEGATE]))
+        self.assertIsNone(check(letter_script(key, body, H)))
+        self.assertIsNone(check(letter_script(key, body, DELEGATE)))
+        self.assertIsNone(check(letter_script(key, body, legacy=True)))  # a draft from before
+        self.assertIn("envelope", check(letter_script(key, body, H + 1)))
+        self.assertIn("envelope", check(letter_script(key, body, DELEGATE[:-1] + "1")))
+        self.assertIn("envelope", check(letter_script(key, body, DELEGATE), accepted=[]))
+        self.assertIn("letter", check(letter_script(key, body, H), fp="00" * 32))
+        self.assertIn("letter", check(letter_script(key, body, H), height=H + 1))
+        self.assertIn("letter", gift.inscription_problem(None, fp, H, []))
+
+    def test_envelopes_from_the_environment(self):
+        os.environ["CAPSULE_ENVELOPE_INSCRIPTION"] = f" {DELEGATE.upper()}, nope {DELEGATE[:-1]}1"
+        self.addCleanup(lambda: os.environ.pop("CAPSULE_ENVELOPE_INSCRIPTION", None))
+        self.assertEqual(gift.envelopes(), [DELEGATE, DELEGATE[:-1] + "1"])
+        os.environ["CAPSULE_ENVELOPE_INSCRIPTION"] = ""
+        self.assertEqual(gift.envelopes(), [])
 
 
 @unittest.skipUnless(PGURL, "TEST_PGURL not set")
@@ -260,6 +390,12 @@ class GiftApi(unittest.TestCase):
         self.assertEqual((r.json()["tier"], r.json()["status"], r.json()["onchain"], r.json()["chain"]), ("free", "sealed", True, None))
         self.assertEqual(self.seal(w, self.gift_body(), tier="free")[0].status_code, 409)
 
+    def reveal(self, capsule_id, commit, address, value, height, face=None, **o):
+        """The reveal of the letter this capsule registered (its ciphertext and photo), as Esplora shows it."""
+        (ciphertext, photo, fp), = self.sql("select ciphertext, photo, fingerprint from social.capsules where id = %s;", (capsule_id,))
+        body = capsule_body(o.get("h", height), base64.b64decode(ciphertext), base64.b64decode(photo) if photo else None, fp)
+        return esplora_reveal(commit, address, value, letter_script(b"\x07" * 32, body, height if face is None else face, legacy=o.get("legacy", False)))
+
     def test_funding_txids(self):
         w = self.wallet(64)
         g = self.gift_body()
@@ -277,9 +413,26 @@ class GiftApi(unittest.TestCase):
         self.assertEqual(post(w, {"commit_txid": commit, "reveal_txid": "c" * 64}).status_code, 400)
         self.chain["txs"]["d" * 64] = {"vin": [{"txid": commit}], "vout": [{"scriptpubkey_address": g["address"], "value": 99_999}]}
         self.assertEqual(post(w, {"commit_txid": commit, "reveal_txid": "d" * 64}).status_code, 400)
+        # Paid as it should be, but no witness to read: not verified yet.
         self.chain["txs"][reveal] = {"vin": [{"txid": commit}], "vout": [{"scriptpubkey_address": g["address"], "value": 100_000}]}
+        self.assertEqual(post(w, {"commit_txid": commit, "reveal_txid": reveal}).json()["verified"], False)
+        # Another letter, another block, or an envelope this server didn't name: turned away.
+        self.chain["txs"]["f" * 64] = {**self.reveal(c["id"], commit, g["address"], 100_000, g["height"]), "vin": [{"txid": commit, "witness": ["aa" * 64, letter_script(b"\x07" * 32, capsule_body(g["height"], b"other"), g["height"]).hex(), "c0"]}]}
+        self.assertIn("letter", post(w, {"commit_txid": commit, "reveal_txid": "f" * 64}).json()["detail"])
+        self.chain["txs"]["f" * 64] = self.reveal(c["id"], commit, g["address"], 100_000, g["height"] + 1)
+        self.assertEqual(post(w, {"commit_txid": commit, "reveal_txid": "f" * 64}).status_code, 400)
+        self.chain["txs"]["f" * 64] = self.reveal(c["id"], commit, g["address"], 100_000, g["height"], face=DELEGATE)
+        self.assertIn("envelope", post(w, {"commit_txid": commit, "reveal_txid": "f" * 64}).json()["detail"])
+        os.environ["CAPSULE_ENVELOPE_INSCRIPTION"] = DELEGATE
+        self.addCleanup(lambda: os.environ.pop("CAPSULE_ENVELOPE_INSCRIPTION", None))
+        self.assertEqual(self.client.get("/v1/capsules/rules").json()["gift"]["envelope"], DELEGATE)
+        # The shared envelope, once named (checked directly: posting it would settle this gift).
+        (fp,), = self.sql("select fingerprint from social.capsules where id = %s;", (c["id"],))
+        row = {"network": "signet", "address": g["address"], "sats": 100_000, "fingerprint": fp, "height": g["height"]}
+        self.assertTrue(gift._check_reveal(row, commit, "f" * 64))
+        self.chain["txs"][reveal] = self.reveal(c["id"], commit, g["address"], 100_000, g["height"])
         r = post(w, {"commit_txid": commit, "reveal_txid": reveal})
-        self.assertEqual(r.json()["verified"], True)
+        self.assertEqual(r.json()["verified"], True)  # the fallback SVG is always taken
         self.assertEqual(post(w, {"commit_txid": commit, "reveal_txid": "e" * 64}).status_code, 409)  # verified: settled
         self.assertEqual(self.client.get(f"/v1/capsules/{c['id']}").json()["gift"]["funded"], True)
 
@@ -330,7 +483,7 @@ class LetterApi(unittest.TestCase):
     setUpClass = classmethod(base.SocialApi.setUpClass.__func__)
     login = classmethod(base.SocialApi.login.__func__)
     h = base.SocialApi.h
-    wallet, sql, mine = GiftApi.wallet, GiftApi.sql, GiftApi.mine
+    wallet, sql, mine, reveal = GiftApi.wallet, GiftApi.sql, GiftApi.mine, GiftApi.reveal
 
     def setUp(self):
         GiftApi.setUp(self)
@@ -446,6 +599,13 @@ class LetterApi(unittest.TestCase):
         self.chain["txs"]["c" * 64] = {"vin": [{"txid": "a" * 64}], "vout": [{"scriptpubkey_address": TB_ADDRESS, "value": 545}]}
         self.assertEqual(self.client.post(f"/v1/capsules/{c['id']}/chain/txs", json={"commit_txid": "a" * 64, "reveal_txid": "c" * 64}, headers=self.h(w)).status_code, 400)
         self.chain["txs"]["b" * 64] = {"vin": [{"txid": "a" * 64}], "vout": [{"scriptpubkey_address": TB_ADDRESS, "value": 546}]}
+        self.assertEqual(txs().json()["verified"], False)  # no witness to read the inscription from
+        height = self.letter()["height"]
+        self.chain["txs"]["b" * 64] = self.reveal(c["id"], "a" * 64, TB_ADDRESS, 546, height, h=height + 1)
+        self.assertEqual(txs().status_code, 400)  # its letter names another block
+        self.chain["txs"]["b" * 64] = self.reveal(c["id"], "a" * 64, TB_ADDRESS, 546, height, legacy=True)
+        self.assertEqual(txs().json()["verified"], True)  # a letter inscribed as before metadata still counts
+        self.chain["txs"]["b" * 64] = self.reveal(c["id"], "a" * 64, TB_ADDRESS, 546, height)
         self.assertEqual(txs().json()["verified"], True)
         self.assertEqual(self.client.post(f"/v1/capsules/{c['id']}/chain/txs", json={"commit_txid": "a" * 64, "reveal_txid": "d" * 64}, headers=self.h(w)).status_code, 409)
 

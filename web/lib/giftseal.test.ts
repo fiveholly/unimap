@@ -3,8 +3,8 @@ import { test } from "node:test";
 
 import { encryptLetter } from "./capsule.ts";
 import { roundAtOrAfter } from "./drand.ts";
-import { b64url, decodeContent, inscriptionVbytes, joinKey, letterLine, POSTAGE } from "./gift.ts";
-import { letterCost, postageAddress, prepareLetter } from "./giftseal.ts";
+import { b64url, capsuleContent, CONTENT_TYPE, decodeContent, inscriptionScript, inscriptionVbytes, joinKey, letterLine, parseInscription, POSTAGE, xonlyOf } from "./gift.ts";
+import { envelopeOf, faceOf, letterCost, postageAddress, prepareLetter } from "./giftseal.ts";
 
 const RULES = { network: "signet" as const, tiers: [], min_sats: 50_000, max_sats: 1_000_000, refund_blocks: 262_800, block_seconds: 600, tip: 200_000, esplora: "https://esplora.test/api", explorer: "" };
 const TB = "tb1pqxuqm6tl9ahdr6pu00w67cj3ynt7c65rkct9un6q2y9tueenhzwqqx4cd7";
@@ -21,9 +21,24 @@ test("an inscribed letter: the round at the open time, the key in two halves, po
   assert.deepEqual([named.draft.address, named.draft.sats, named.draft.letter.half, "timelock" in named.draft], ["", POSTAGE, named.half, false]);
   const body = decodeContent(b64url.decode(named.draft.body))!;
   assert.deepEqual([body.h, body.round, body.fingerprint, body.photo], [200_010, roundAtOrAfter(openAt), sealed.fingerprint, null]);
+  // No shared envelope in the rules: the SVG for its block; the envelope carries the body in its metadata.
+  assert.deepEqual(named.draft.face, { opens: 200_010 });
+  assert.deepEqual(capsuleContent(parseInscription(envelopeOf({ ...named.draft, capsuleId: "x" }))), body);
+  const ENVELOPE = "ab".repeat(32) + "i0";
+  const shared = await prepareLetter({ rules: { ...RULES, envelope: ENVELOPE }, ...sealed, openAt, now, recipient: "小满" });
+  assert.deepEqual(shared.draft.face, { delegate: ENVELOPE });
+  assert.equal(parseInscription(envelopeOf({ ...shared.draft, capsuleId: "x" }))?.delegate, ENVELOPE);
   const toAddress = await prepareLetter({ rules: RULES, ...sealed, openAt, now, recipient: ` ${TB.toUpperCase()} ` });
   assert.equal(toAddress.chain.address, TB);
   assert.equal(toAddress.draft.address, TB);
+});
+
+test("a draft saved before faces is still built as it was: its commit paid that envelope", () => {
+  const body = new Uint8Array([1, 2, 3]), revealSecret = "07".repeat(32);
+  const draft = { capsuleId: "x", network: "signet" as const, esplora: "", address: "", sats: POSTAGE, revealSecret, body: b64url.encode(body) };
+  assert.deepEqual(envelopeOf(draft), inscriptionScript(xonlyOf(new Uint8Array(32).fill(7)), CONTENT_TYPE, body));
+  assert.deepEqual(faceOf({ envelope: "nope" }, 5), { opens: 5 }); // a malformed id: the SVG
+  assert.deepEqual(faceOf({}, 5), { opens: 5 });
 });
 
 test("postage goes to a test network's P2WPKH or P2TR address, else back", () => {
@@ -35,11 +50,13 @@ test("postage goes to a test network's P2WPKH or P2TR address, else back", () =>
 });
 
 test("what inscribing costs: vbytes × fee rate, and the photo's share", () => {
-  const plain = letterCost(300, 0, 4);
-  assert.deepEqual(plain, { vbytes: inscriptionVbytes(300, 0), photoVbytes: 0, fee: inscriptionVbytes(300, 0) * 4, photoFee: 0 });
-  const photo = letterCost(300, 25_000, 4);
-  assert.equal(photo.photoVbytes, inscriptionVbytes(300, 25_000) - inscriptionVbytes(300, 0));
+  const face = { opens: 200_010 };
+  const plain = letterCost(300, 0, 4, face);
+  assert.deepEqual(plain, { vbytes: inscriptionVbytes(300, 0, face), photoVbytes: 0, fee: inscriptionVbytes(300, 0, face) * 4, photoFee: 0 });
+  const photo = letterCost(300, 25_000, 4, face);
+  assert.equal(photo.photoVbytes, inscriptionVbytes(300, 25_000, face) - inscriptionVbytes(300, 0, face));
   assert.ok(photo.photoVbytes > 6_200 && photo.photoVbytes < 6_400); // ~25,028 witness bytes / 4
   assert.equal(photo.photoFee, photo.photoVbytes * 4);
-  assert.equal(letterCost(300, 0, 1.5).fee, Math.ceil(inscriptionVbytes(300, 0) * 1.5));
+  assert.equal(letterCost(300, 0, 1.5, face).fee, Math.ceil(inscriptionVbytes(300, 0, face) * 1.5));
+  assert.ok(plain.vbytes - letterCost(300, 0, 4, { delegate: "ab".repeat(32) + "i0" }).vbytes > 150); // by delegate, the SVG isn't paid for
 });

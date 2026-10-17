@@ -555,7 +555,7 @@ export type CapsuleGift = {
   explorer: string;
   live?: boolean; // the demo's 真实 Signet (lib/signet.ts)
 };
-export type GiftRules = { network: GiftNetwork; tiers: number[]; min_sats: number; max_sats: number; refund_blocks: number; block_seconds: number; tip: number | null; esplora: string; explorer: string; live?: boolean }; // live: the demo's 真实 Signet (lib/signet.ts)
+export type GiftRules = { network: GiftNetwork; tiers: number[]; min_sats: number; max_sats: number; refund_blocks: number; block_seconds: number; tip: number | null; esplora: string; explorer: string; envelope?: string | null; live?: boolean }; // envelope: the shared envelope's inscription id (api/gift.py envelopes), null: the SVG; live: the demo's 真实 Signet (lib/signet.ts)
 export type CapsuleRules = {
   min_lead_seconds: number;
   block_seconds: number;

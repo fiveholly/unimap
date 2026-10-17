@@ -16,12 +16,12 @@ import {
   buildSweep,
   commitPsbt,
   commitTaproot,
-  CONTENT_TYPE,
+  capsuleContent,
   describeTx,
   encodeContent,
   finishCommit,
   giftTaproot,
-  inscriptionScript,
+  letterScript,
   packTimelock,
   revealFee,
   unpackTimelock,
@@ -94,8 +94,9 @@ test("a whole gift on signet: commit, reveal and sweep are signed as a node chec
   const keys = { height: H, recipient: xonlyOf(giftKey), sender: xonlyOf(sender), refund: true };
   const gift = giftTaproot(keys);
   const revealSecret = new Uint8Array(32).fill(5);
-  const body = encodeContent({ net: "signet", h: H, round: 12345, tlock: "-----BEGIN AGE ENCRYPTED FILE-----x", fingerprint: "f", letter: new Uint8Array(900).fill(1), photo: null });
-  const envelope = inscriptionScript(xonlyOf(revealSecret), CONTENT_TYPE, body);
+  const letter = new Uint8Array(900).fill(1), fingerprint = hex.encode(sha256(letter));
+  const body = encodeContent({ net: "signet", h: H, round: 12345, tlock: "-----BEGIN AGE ENCRYPTED FILE-----x", fingerprint, letter, photo: null });
+  const envelope = letterScript(xonlyOf(revealSecret), body, { opens: H });
   const sats = 100_000, feeRate = 1;
   const amount = sats + revealFee(revealSecret, envelope, gift.address!, sats, feeRate);
 
@@ -114,14 +115,21 @@ test("a whole gift on signet: commit, reveal and sweep are signed as a node chec
   verifyInputs(reveal.hex, [{ script: commitTaproot(revealSecret, envelope).script, amount }]);
   const r = describeTx(reveal.hex);
   assert.equal(r.outputs[0].address, gift.address);
-  assert.ok(r.inscription && r.inscription.body.length === body.length);
+  assert.deepEqual(capsuleContent(r.inscription)?.letter, letter);
 
   // What the demo's stand-in checks when the txids are reported, from Esplora's view of the reveal.
-  const esploraView = { txid: reveal.txid, vin: [{ txid: commit.txid, vout: 0 }], vout: r.outputs.map((o) => ({ scriptpubkey_address: o.address ?? undefined, value: o.value })) };
+  const witness = r.inputs[0].witness.map((w) => hex.encode(w));
+  const esploraView = { txid: reveal.txid, vin: [{ txid: commit.txid, vout: 0, witness }], vout: r.outputs.map((o) => ({ scriptpubkey_address: o.address ?? undefined, value: o.value })) };
   const e = await fakeEsplora({ tip, txs: { [reveal.txid]: esploraView } });
   try {
     const seen = await signet.signetTx(reveal.txid, e.base);
     assert.equal(signet.checkReveal(seen, { address: gift.address!, sats, commit: commit.txid }), true);
+    // The inscription is the capsule's letter, showing the fallback envelope for its block.
+    const want = { fingerprint, height: H, envelopes: [] };
+    assert.equal(signet.checkReveal(seen, { address: gift.address!, sats, commit: commit.txid, letter: want }), true);
+    assert.match(String(signet.checkReveal(seen, { address: gift.address!, sats, commit: commit.txid, letter: { ...want, fingerprint: "00".repeat(32) } })), /letter/);
+    const bare = { ...esploraView, vin: [{ txid: commit.txid, vout: 0 }] };
+    assert.equal(signet.checkReveal(bare, { address: gift.address!, sats, commit: commit.txid, letter: want }), false); // no witness to look at yet
     assert.match(String(signet.checkReveal(seen, { address: gift.address!, sats: sats + 1, commit: commit.txid })), /doesn't pay/);
     assert.match(String(signet.checkReveal(seen, { address: gift.address!, sats, commit: "bb".repeat(32) })), /doesn't spend the commit/);
     assert.deepEqual(await signet.signetTx("cc".repeat(32), e.base), {}); // not seen yet

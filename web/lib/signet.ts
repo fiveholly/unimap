@@ -7,6 +7,10 @@
 //
 // No React and nothing from lib/demo.ts here, so demo.ts and the node tests can import it.
 
+import { hex } from "@scure/base";
+
+import { inscriptionProblem, parseInscription } from "./gift.ts";
+
 const DEMO = process.env.NEXT_PUBLIC_DEMO === "1";
 
 export const SIGNET_ESPLORA = "https://mempool.space/signet/api";
@@ -79,7 +83,7 @@ export async function cachedSignetTip(): Promise<number | null> {
   return tip;
 }
 
-export type EsploraTx = { txid: string; vin: { txid: string; vout: number }[]; vout: { scriptpubkey_address?: string; value: number }[] };
+export type EsploraTx = { txid: string; vin: { txid: string; vout: number; witness?: string[] }[]; vout: { scriptpubkey_address?: string; value: number }[] };
 
 /** A transaction as Esplora describes it; {} if it doesn't know it (yet), null if it can't be asked. */
 export async function signetTx(txid: string, base = SIGNET_ESPLORA): Promise<EsploraTx | Record<string, never> | null> {
@@ -94,13 +98,27 @@ export async function signetTx(txid: string, base = SIGNET_ESPLORA): Promise<Esp
 }
 
 /** As api/gift.py _check_reveal: true if the reveal pays the gift address (an inscribed letter's
- * postage address, or any when null) its amount and spends the commit, false if Esplora doesn't
- * know it yet; a reason string if it says otherwise. */
-export function checkReveal(tx: EsploraTx | Record<string, never> | null, o: { address: string | null; sats: number; commit: string }): true | false | string {
+ * postage address, or any when null) its amount and spends the commit, and (given letter) its
+ * inscription is the capsule's letter with this server's envelope (lib/gift.ts inscriptionProblem);
+ * false if Esplora doesn't know it (or its witness) yet; a reason string if it says otherwise. */
+export function checkReveal(
+  tx: EsploraTx | Record<string, never> | null,
+  o: { address: string | null; sats: number; commit: string; letter?: { fingerprint: string; height: number; envelopes: string[] } },
+): true | false | string {
   if (!tx || !("vout" in tx)) return false;
   const out = tx.vout?.[0], input = tx.vin?.[0];
   if (!out?.scriptpubkey_address || (o.address && out.scriptpubkey_address !== o.address) || Number(out.value ?? 0) < o.sats) return "the reveal's first output doesn't pay the gift address its amount";
   if (!input || input.txid !== o.commit) return "the reveal doesn't spend the commit";
+  if (o.letter) {
+    const w = input.witness ?? [];
+    if (w.length < 3) return false;
+    let ins = null;
+    try {
+      ins = parseInscription(hex.decode(w[w.length - 2]));
+    } catch {}
+    const why = inscriptionProblem(ins, o.letter);
+    if (why) return why;
+  }
   return true;
 }
 

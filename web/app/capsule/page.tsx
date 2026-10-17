@@ -40,9 +40,9 @@ import {
   usd,
 } from "@/lib/capsule";
 import { DEMO } from "@/lib/demo";
-import { NETWORK_NAMES, POSTAGE } from "@/lib/gift";
+import { type Face, NETWORK_NAMES, POSTAGE } from "@/lib/gift";
 import { chainFor } from "@/lib/giftchain";
-import { chosenSats, type GiftDraft, letterCost, NO_GIFT, postageAddress, prepareGift, prepareLetter, saveDraft } from "@/lib/giftseal";
+import { chosenSats, faceOf, type GiftDraft, letterCost, NO_GIFT, postageAddress, prepareGift, prepareLetter, saveDraft } from "@/lib/giftseal";
 import { t } from "@/lib/i18n";
 
 const YEAR = 365.25 * 86400;
@@ -144,6 +144,8 @@ export default function CapsuleWritePage() {
   const tooFar = openAt != null && pastFreeLimit(chosen, openAt, now, freeDays, onchain);
   const left = openAt != null ? blocksUntil(openAt, now, blockSeconds) : null;
   const giftHeight = giftRules?.tip != null && openAt != null ? giftRules.tip + blocksUntil(openAt, now, giftRules.block_seconds) : null;
+  // What the inscription will show, for its cost: the shared envelope, or the SVG naming this block.
+  const face = faceOf(giftRules ?? {}, giftHeight ?? giftRules?.tip ?? 0);
   const at = (seconds: number) => {
     const when = Math.floor(Date.now() / 1000) + seconds;
     setDay(dayOf(when));
@@ -273,9 +275,10 @@ export default function CapsuleWritePage() {
         postage={giftOn ? null : postageAddress(recipient) ? "them" : "you"}
         giftSats={giftOn && Number.isInteger(chosenSats(gift)) ? chosenSats(gift) : null}
         network={giftRules.network}
+        face={face}
       />
     ) : null;
-  const photoGuess = letterCost(Math.max(1, utf8Length(letter)), CHAIN_PHOTO_TARGET, rate?.fee_rate ?? feeRate ?? 1).photoFee;
+  const photoGuess = letterCost(Math.max(1, utf8Length(letter)), CHAIN_PHOTO_TARGET, rate?.fee_rate ?? feeRate ?? 1, face).photoFee;
 
   return (
     <div className="page capsule-page">
@@ -311,7 +314,7 @@ export default function CapsuleWritePage() {
                 photo={photo}
                 busy={photoBusy}
                 guess={money(photoGuess, rate)}
-                extra={photo ? money(letterCost(Math.max(1, utf8Length(letter)), photo.bytes.length, rate?.fee_rate ?? feeRate ?? 1).photoFee, rate) : ""}
+                extra={photo ? money(letterCost(Math.max(1, utf8Length(letter)), photo.bytes.length, rate?.fee_rate ?? feeRate ?? 1, face).photoFee, rate) : ""}
                 upgrade={options.some((o) => o.tier === "paid" && o.available) ? () => setTier("paid") : null}
                 serviceFee={money(paidSats, rate)}
                 setOn={(v) => (setPhotoOn(v), v ? null : setPhoto(null))}
@@ -603,10 +606,11 @@ function CostSummary(p: {
   postage: "them" | "you" | null; // the postage's way; null: the letter rides a gift
   giftSats: number | null;
   network: keyof typeof NETWORK_NAMES;
+  face: Face; // what the inscription shows (lib/giftseal.ts faceOf): the fallback SVG is part of the fee
 }) {
   const mainRate = p.rate?.fee_rate ?? p.feeRate ?? 1;
-  const main = letterCost(p.letterBytes, p.photoBytes, mainRate);
-  const test = p.feeRate != null ? letterCost(p.letterBytes, p.photoBytes, p.feeRate) : null;
+  const main = letterCost(p.letterBytes, p.photoBytes, mainRate, p.face);
+  const test = p.feeRate != null ? letterCost(p.letterBytes, p.photoBytes, p.feeRate, p.face) : null;
   const postage = p.postage ? POSTAGE : 0;
   const total = main.fee + (p.feePaid ? 0 : p.serviceSats) + postage;
   const m = (n: number) => money(n, p.rate);
