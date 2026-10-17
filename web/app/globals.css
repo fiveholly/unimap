@@ -4765,6 +4765,8 @@ h1 .worn-badge {
 .cap-title {
   font-size: 30px;
   line-height: 1.3;
+  white-space: pre-line; /* the title breaks where its text has a newline */
+  text-wrap: balance;
 }
 .cap-side-title {
   font-size: 19px;
