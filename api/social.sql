@@ -330,8 +330,8 @@ CREATE INDEX IF NOT EXISTS block_draws_lucky_idx ON social.block_draws USING btr
 CREATE TABLE IF NOT EXISTS social.badges (
 	id bigserial NOT NULL,
 	address text NOT NULL,
-	kind text NOT NULL, -- treasure | lucky | lucky_visit | crown | tour | opening
-	height int4 NOT NULL, -- the block that drew it; tour: the day, as days since 1970-01-01; opening: the district
+	kind text NOT NULL, -- treasure | lucky | lucky_visit | crown | tour | opening | newcomer
+	height int4 NOT NULL, -- the block that drew it; tour: the day, as days since 1970-01-01; opening: the district; newcomer: 0
 	bitmap_number int4 NOT NULL,
 	tx_index int4 NULL, -- treasure: the parcel
 	rarity text NOT NULL,
@@ -838,3 +838,13 @@ BEGIN
 			UNIQUE NULLS NOT DISTINCT (address, kind, actor, bitmap_number, post_id, tip_id, block_height, order_id, dm_id, capsule_id);
 	END IF;
 END $$;
+
+-- 新手任务 (api/newcomer.py): the step the server can't see for itself, the birthday lookup, as the
+-- browser reported it. The other two steps are read from social.checkins and social.capsules.
+CREATE TABLE IF NOT EXISTS social.newcomers (
+	address text NOT NULL,
+	birthday_at timestamptz NULL,
+	birthday_block int4 NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT newcomers_pk PRIMARY KEY (address)
+);
