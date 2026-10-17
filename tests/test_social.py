@@ -2560,7 +2560,7 @@ class SocialApi(unittest.TestCase):
         pay = lambda w, **body: self.client.post("/v1/billing/pay", json=body, headers=self.h(w))
         try:
             # Nothing for sale by default; a priced product needs somewhere to be paid too.
-            self.assertEqual(self.client.get("/v1/billing/products").json(), {"products": [], "cosmetics": False})
+            self.assertEqual(self.client.get("/v1/billing/products").json(), {"products": [], "cosmetics": False, "methods": []})
             self.assertEqual(pay(ALICE, product="promotion", ref="100").status_code, 409)
             self.assertEqual(pay(ALICE, product="nope").status_code, 404)
             os.environ["BILLING_PRICE_PROMOTION_SATS"] = "5000"

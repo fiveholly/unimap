@@ -3,6 +3,7 @@
 // Each wallet gives the address that holds the user's inscriptions (the
 // ordinals / taproot address) and signs with BIP-322 where it can.
 
+import { demoTxid, walletTxid } from "./billing.ts";
 import { DEMO, DEMO_ADDRESS, DEMO_SECOND_ADDRESS } from "./demo";
 import { t } from "./i18n/index.ts";
 
@@ -15,6 +16,7 @@ export type Wallet = {
   connect: () => Promise<string>;
   sign: (address: string, message: string) => Promise<string>;
   psbt?: PsbtSigner; // 站内交易: wallets that can sign transactions
+  pay?: (to: string, sats: number) => Promise<string>; // 用钱包支付: send exactly sats to an address; the txid
 };
 
 /** The addresses a purchase pays from and receives the inscription at, with the keys a PSBT needs. */
@@ -49,6 +51,7 @@ const unisat: Wallet = {
   available: () => !!w().unisat,
   connect: async () => (await w().unisat.requestAccounts())[0],
   sign: (_address, message) => w().unisat.signMessage(message, "bip322-simple"),
+  pay: async (to, sats) => walletTxid(await w().unisat.sendBitcoin(to, sats)),
   psbt: hexSigner(
     () => w().unisat,
     async () => ({ address: (await w().unisat.getAccounts())[0], publicKey: await w().unisat.getPublicKey() }),
@@ -61,6 +64,7 @@ const okx: Wallet = {
   available: () => !!w().okxwallet?.bitcoin,
   connect: async () => (await w().okxwallet.bitcoin.connect()).address,
   sign: (_address, message) => w().okxwallet.bitcoin.signMessage(message, "bip322-simple"),
+  pay: async (to, sats) => walletTxid(await w().okxwallet.bitcoin.sendBitcoin(to, sats)),
   psbt: hexSigner(
     () => w().okxwallet.bitcoin,
     async () => {
@@ -92,6 +96,8 @@ const xverse: Wallet = {
     return ordinals.address;
   },
   sign: async (address, message) => (await xverseRequest("signMessage", { address, message, protocol: "BIP322" })).signature,
+  // Sent from the payment address, which holds Xverse's coins.
+  pay: async (to, sats) => walletTxid(await xverseRequest("sendTransfer", { recipients: [{ address: to, amount: sats }] })),
   // Xverse keeps inscriptions and coins at two addresses, and signs with the sighash the PSBT asks for.
   psbt: {
     accounts: async () => {
@@ -144,6 +150,7 @@ const demo: Wallet = {
   available: () => DEMO,
   connect: async () => DEMO_ADDRESS,
   sign: async () => "demo-" + Math.random().toString(36).slice(2),
+  pay: async () => demoTxid(), // pretends to send; lib/demo.ts takes any txid
   // The demo market (lib/demo.ts) takes any PSBT back; nothing is signed or sent.
   psbt: {
     accounts: async () => ({ payment_address: DEMO_ADDRESS, payment_public_key: null, receive_address: DEMO_ADDRESS, receive_public_key: null }),

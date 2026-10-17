@@ -449,7 +449,7 @@ Magic Eden 的接口需要 API key 才能稳定使用，在 `/etc/unimap/unimap.
 
 ### 收费档
 
-收费由 `api/billing.py` 的产品 `capsule` 控制：设了 `BILLING_PRICE_CAPSULE_SATS`（建议 5000）并且有收款闪电地址（`PLATFORM_LIGHTNING_ADDRESS`，没有就用 `AGENT_LIGHTNING_ADDRESS`）时才收费。**没开收费时一切照旧**：每封信都是 `tier = open`，免费、不限数量、可以附照片、选信封、打开时有通知；自己架站的服务器不设这个价格就和以前完全一样。
+收费由 `api/billing.py` 的产品 `capsule` 控制：设了 `BILLING_PRICE_CAPSULE_SATS`（建议 2000）并且至少有一种收款方式时才收费：链上收款地址 `PLATFORM_BTC_ADDRESS`（默认，用户从已连接的钱包直接付），或者收款闪电地址（`PLATFORM_LIGHTNING_ADDRESS`，没有就用 `AGENT_LIGHTNING_ADDRESS`）。**没开收费时一切照旧**：每封信都是 `tier = open`，免费、不限数量、可以附照片、选信封、打开时有通知；自己架站的服务器不设这个价格就和以前完全一样。
 
 | 档 | 价格 | 能做什么 |
 |---|---|---|
@@ -458,11 +458,11 @@ Magic Eden 的接口需要 API key 才能稳定使用，在 `/etc/unimap/unimap.
 | 刻上链 | `CAPSULE_INSCRIBE_SATS`（默认 20000）+ 网络费 | 还没做。写信页上显示成灰的「即将开放」，不卖 |
 
 - 所有限制都在服务器上检查：免费档用完是 409，超过一年是 400，免费档带照片或非默认信封是 403。`GET /v1/capsules/rules` 告诉写信页现在收不收费（`billing`）、这个钱包还有没有免费的那封（`free_left`，没登录是 null）；价格在 `GET /v1/billing/products`。
-- 付费流程：浏览器照常加密、钱包签名，`POST /v1/capsules {"tier": "paid", "photo", "style", ...}`。服务器把信存成 `status = pending`（不出现在「我封存的信」和同块人里，别人打开链接是 404，钥匙照样托管），并通过 `billing.invoice` 开一张发票一起返回。网页显示二维码并每几秒查 `GET /v1/billing/payments/{id}`；到账后 billing 的 `on_settled`（`capsule.seal_paid`）把它改成 `sealed`，封存区块是到账那一刻的最新高度。发票过期可以 `POST /v1/billing/pay {"product": "capsule", "ref": <id>}` 再要一张。
-- 没付款的信：60 分钟（`PENDING_MINUTES`，和发票被检查的时间一样长）后，如果它的发票都不是 pending 了就删掉；还挂着 pending 的发票会先在后台再问一次钱包（可能最后一分钟付了）。付了款但信已经被删的情况会记日志，手动退款。
+- 付费流程：浏览器照常加密、钱包签名，`POST /v1/capsules {"tier": "paid", "photo", "style", ...}`。服务器把信存成 `status = pending`（不出现在「我封存的信」和同块人里，别人打开链接是 404，钥匙照样托管），并通过 `billing.invoice` 开一笔付款一起返回（默认链上）。付款页的主按钮是「用钱包支付」：请已连接的钱包把这笔付款的准确金额（价格加几聪独有的尾数，见 `docs/monetization.md`）转到平台地址（UniSat `sendBitcoin`、OKX `bitcoin.sendBitcoin`、Xverse `sendTransfer`，见 `web/lib/wallets.ts` 的 `pay`），再把 txid 交给 `POST /v1/billing/payments/{id}/tx`；下面一行写明钱包会另收一点网络费。「粘贴签名」钱包或钱包调用失败时显示地址、金额、复制按钮和贴 txid 的框。服务器设了闪电地址时，下面还有「用闪电网络付款」，换成二维码发票。网页每几秒查 `GET /v1/billing/payments/{id}`；节点在内存池里看到交易（或闪电钱包确认）后，billing 的 `on_settled`（`capsule.seal_paid`）把它改成 `sealed`，封存区块是到账那一刻的最新高度。付款过期可以 `POST /v1/billing/pay {"product": "capsule", "ref": <id>, "method"}` 再开一笔。链上验证的细节见 `docs/monetization.md`。
+- 没付款的信：60 分钟（`PENDING_MINUTES`，和付款被检查的时间一样长）后，如果它的付款都不是 pending 了就删掉；还挂着 pending 的付款会先在后台再查一次（可能最后一分钟付了，或者交易刚到节点）。付了款但信已经被删的情况会记日志，手动退款。
 - 照片：一张，浏览器里压成 JPEG（最长边 1600，不超过 300 KB），用信的同一把钥匙、另一个 iv 加密，存在 `photo` 列。指纹是「信的密文字节 + 照片密文字节」的 sha256，所以签名同时覆盖两者；没有照片时和以前一样只是信的。信封样式只是外观，不签名。
 - 「信打开了」通知（`api/notify.py` 的 `capsule_open`）：项目里没有后台任务，所以挂在已有的出块路径上——地图请求发现新块时（`game.ensure_soon`，就是抽宝箱的那个后台任务）每个块运行一次 `capsule.sweep()`：找出时间已到、还没通知的 `open`/`paid` 胶囊，算出打开的区块并通知，同时清理没付款的信。有人直接打开信的页面时也会顺便通知。每封只通知一次（`notified_at`）。
-- 演示站（`web/lib/demo.ts`）按收费开着的样子模拟：封存 5000 聪，付款页有「演示：模拟付款」按钮，点了立刻到账封存。
+- 演示站（`web/lib/demo.ts`）按收费开着、两种付款方式都有的样子模拟：封存 2000 聪；演示钱包的「用钱包支付」假装发出一笔交易（随机 txid），立刻到账封存；「演示：模拟付款」按钮也还在。
 
 ## 私信
 

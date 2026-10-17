@@ -167,7 +167,7 @@ type State = {
   shop?: DemoItem[]; // 店铺
   orders?: DemoOrder[];
   capsules?: DemoCapsule[]; // 时间胶囊 the visitor sealed
-  capsulePays?: { id: number; ref: string; at: number; settled: boolean }[]; // 封存 invoices (api/billing.py), paid by 演示：模拟付款
+  capsulePays?: { id: number; ref: string; at: number; settled: boolean; method?: "onchain" | "lightning"; txid?: string | null; amount?: number }[]; // 封存 payments (api/billing.py), paid by the demo wallet or 演示：模拟付款
   dms?: DemoDm[]; // 私信
   dmStrangers?: boolean;
   blocked?: string[]; // addresses the visitor muted (and so won't hear from)
@@ -1103,7 +1103,9 @@ function agentView(a: DemoAgent, s: State): AgentView {
 // minutes on and the whole seal and open can be tried. Other people's public lines are made up
 // per block; the visitor's own capsules are kept in localStorage, key and all.
 const CAPSULE_LEAD = 120; // seconds
-const CAPSULE_SATS = 5000; // 封存, as deploy/unimap.env.example suggests
+const CAPSULE_SATS = 2000; // 封存, as deploy/unimap.env.example suggests
+// unimap's address for on-chain payments (PLATFORM_BTC_ADDRESS); the demo wallet only pretends to send to it.
+const DEMO_PAY_ADDRESS = "bc1pxnjyjj0cxauyt5hhmu29qg3yqa2pljnnqtpnjuelzgwqn6f64tnq8rtqhp";
 const demoBlockTime = (h: number) => (load().boot ?? Date.now()) + (h - DEMO_TIP) * DEMO_BLOCK_MS;
 const PEER_LINES: [string, CapsulePeer["tag"]][] = [
   ["儿子，凌晨四点。和你家孩子是同一块，以后他们算同块的兄妹了。", "birth"],
@@ -1226,12 +1228,31 @@ function capsuleRoute(p: string, q: URLSearchParams, method: string, body: Recor
   let m: RegExpMatchArray | null;
   // 封存 sells in the demo, so the whole paid flow can be tried; payment is simulated.
   const freeUsed = (a: string | null) => !!a && (s.capsules ?? []).some((c) => c.author === a && c.tier === "free");
-  const invoice = (ref: string) => {
-    const pay = { id: Math.max(0, ...(s.capsulePays ?? []).map((x) => x.id)) + 1, ref, at: Date.now(), settled: false };
+  // Both ways are on, as on a server with PLATFORM_BTC_ADDRESS and a Lightning address; on-chain is the default.
+  type Pay = NonNullable<State["capsulePays"]>[number];
+  const payView = (pay: Pay) => ({
+    id: pay.id, product: "capsule", ref: pay.ref, amount_sats: pay.amount ?? CAPSULE_SATS, status: pay.settled ? ("settled" as const) : ("pending" as const), verifiable: true,
+    method: pay.method ?? "lightning",
+    ...(pay.method === "onchain" ? { address: DEMO_PAY_ADDRESS, txid: pay.txid ?? null } : {}),
+  });
+  const invoice = (ref: string, method: "onchain" | "lightning" = "onchain") => {
+    // On-chain, the price plus 1..99 sats no other waiting payment asks for (api/billing.py TAG_SATS).
+    const taken = new Set((s.capsulePays ?? []).filter((x) => x.method === "onchain" && !x.settled).map((x) => x.amount));
+    const free = Array.from({ length: 99 }, (_, i) => CAPSULE_SATS + i + 1).filter((a) => !taken.has(a));
+    const amount = method === "onchain" ? free[Math.floor(Math.random() * free.length)] ?? CAPSULE_SATS + 1 : CAPSULE_SATS;
+    const pay: Pay = { id: Math.max(0, ...(s.capsulePays ?? []).map((x) => x.id)) + 1, ref, at: Date.now(), settled: false, method, txid: null, amount };
     (s.capsulePays ??= []).push(pay);
-    return { id: pay.id, product: "capsule", ref, amount_sats: CAPSULE_SATS, status: "pending" as const, verifiable: true, invoice: `lnbc${CAPSULE_SATS * 10}n1pdemocapsule0unimap0city${pay.id}` };
+    return { ...payView(pay), ...(method === "lightning" ? { invoice: `lnbc${CAPSULE_SATS * 10}n1pdemocapsule0unimap0city${pay.id}` } : {}) };
   };
-  if (p === "/v1/billing/products") return ok({ products: [{ product: "capsule", amount_sats: CAPSULE_SATS }], cosmetics: false });
+  // billing's on_settled: sealed on the block of this moment.
+  const settle = (pay: Pay) => {
+    pay.settled = true;
+    const c = (s.capsules ?? []).find((x) => x.id === pay.ref);
+    if (c && c.pending) Object.assign(c, { pending: false, sealed_height: demoTip(), sealed_at: new Date().toISOString() });
+    newcomerAward(s);
+    save();
+  };
+  if (p === "/v1/billing/products") return ok({ products: [{ product: "capsule", amount_sats: CAPSULE_SATS }], cosmetics: false, methods: ["onchain", "lightning"] });
   if (p === "/v1/capsules/rules")
     return ok({ min_lead_seconds: CAPSULE_LEAD, block_seconds: DEMO_BLOCK_MS / 1000, tags: ["birth", "wedding", "farewell", "start", "other"], tip: demoTip(),
       billing: true, free_left: me ? !freeUsed(me) : null, free_days: 366, max_years: 100, styles: ["classic", "midnight", "celadon", "dusk"], max_photo_chars: 420_000, inscribe_sats: 20_000 });
@@ -1259,22 +1280,30 @@ function capsuleRoute(p: string, q: URLSearchParams, method: string, body: Recor
     const a = needMe();
     const c = (s.capsules ?? []).find((x) => x.id === body.ref && x.author === a) ?? fail(404, "no such capsule of yours");
     if (!c.pending) fail(409, "this capsule is sealed already");
-    const pay = invoice(c.id);
+    if (body.method != null && body.method !== "onchain" && body.method !== "lightning") fail(400, "method is one of onchain, lightning");
+    const pay = invoice(c.id, (body.method as "onchain" | "lightning" | undefined) ?? "onchain");
     save();
     return ok(pay);
+  }
+  if ((m = p.match(/^\/v1\/billing\/payments\/(\d+)\/tx$/)) && method === "POST") {
+    // 用钱包支付: the demo wallet's pretend txid, or any pasted one, is taken as seen in the mempool.
+    needMe();
+    const pay = (s.capsulePays ?? []).find((x) => x.id === +m![1]) ?? fail(404, "no such payment");
+    if (pay.method !== "onchain") fail(409, "this payment is over Lightning");
+    const txid = String(body.txid ?? "").toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(txid)) fail(422, "txid is 64 hex characters");
+    if ((s.capsulePays ?? []).some((x) => x.txid === txid && x.id !== pay.id)) fail(409, "this transaction already paid for something else");
+    if (!pay.settled) {
+      pay.txid = txid;
+      settle(pay);
+    }
+    return ok(payView(pay));
   }
   if ((m = p.match(/^\/v1\/billing\/payments\/(\d+)(\/demo-settle)?$/))) {
     needMe();
     const pay = (s.capsulePays ?? []).find((x) => x.id === +m![1]) ?? fail(404, "no such payment");
-    if (m[2] && !pay.settled) {
-      // 演示：模拟付款 — billing's on_settled: sealed on the block of this moment.
-      pay.settled = true;
-      const c = (s.capsules ?? []).find((x) => x.id === pay.ref);
-      if (c) Object.assign(c, { pending: false, sealed_height: demoTip(), sealed_at: new Date().toISOString() });
-      newcomerAward(s);
-      save();
-    }
-    return ok({ id: pay.id, product: "capsule", ref: pay.ref, amount_sats: CAPSULE_SATS, status: pay.settled ? "settled" : "pending", verifiable: true });
+    if (m[2] && !pay.settled) settle(pay); // 演示：模拟付款
+    return ok(payView(pay));
   }
   if (p === "/v1/capsules/mine") {
     const a = needMe();

@@ -668,7 +668,7 @@ CREATE TABLE IF NOT EXISTS social.agent_calls (
 	CONSTRAINT agent_calls_pk PRIMARY KEY (day, owner)
 );
 
--- 平台收费 (api/billing.py): payments to unimap's own Lightning wallet for its paid products.
+-- 平台收费 (api/billing.py): payments to unimap for its paid products, on-chain or over Lightning.
 -- Nothing is for sale until a BILLING_PRICE_<PRODUCT>_SATS is set, so by default this stays empty.
 CREATE TABLE IF NOT EXISTS social.payments (
 	id bigserial NOT NULL,
@@ -686,6 +686,14 @@ CREATE TABLE IF NOT EXISTS social.payments (
 );
 CREATE INDEX IF NOT EXISTS payments_payer_idx ON social.payments USING btree (payer, created_at);
 CREATE INDEX IF NOT EXISTS payments_settled_idx ON social.payments USING btree (settled_at) WHERE status = 'settled';
+-- Paid on-chain (billing.METHODS): no invoice; the buyer's wallet sends to pay_address and the
+-- transaction is checked with bitcoind. A txid pays for one payment only.
+ALTER TABLE social.payments ADD COLUMN IF NOT EXISTS method text NOT NULL DEFAULT 'lightning'; -- onchain | lightning
+ALTER TABLE social.payments ADD COLUMN IF NOT EXISTS pay_address text NULL; -- onchain: PLATFORM_BTC_ADDRESS when it was made
+ALTER TABLE social.payments ADD COLUMN IF NOT EXISTS txid text NULL; -- onchain: the transaction claimed to pay it
+ALTER TABLE social.payments ALTER COLUMN invoice DROP NOT NULL; -- lightning only
+ALTER TABLE social.payments ALTER COLUMN verify_url DROP NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS payments_txid_idx ON social.payments USING btree (txid) WHERE txid IS NOT NULL;
 
 -- What an address may use (api/billing.py): a premium style option, say. Granted free, paid,
 -- by a sponsor or by an admin; checked across the owner's linked wallets.
