@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { Avatar } from "./Avatar";
@@ -10,6 +10,7 @@ import { LangSwitch } from "./Lang";
 import { Bell } from "./Notifications";
 import { Search } from "./Search";
 import { short, useSession } from "./Session";
+import { api } from "@/lib/api";
 import { WALLETS, type WalletId } from "@/lib/wallets";
 import { t } from "@/lib/i18n";
 
@@ -42,10 +43,12 @@ export function Header() {
               ["/me", t("我的"), "M5 20v-.5a7 7 0 0 1 14 0v.5M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"],
             ] as const
           ).map(([href, label, d]) => {
-            // 时间胶囊 stays lit on its letters and 同块人 pages; the tab bar has room for five, so 招募 is left to wider screens.
+            // 时间胶囊 stays lit on its letters and 同块人 pages. The tab bar has room for five, so 招募
+            // is left to wider screens; 我的 is only in the tab bar, as wider screens reach it from the wallet menu.
             const on = path === href || (href === "/capsule" && path.startsWith("/capsule/"));
+            const only = href === "/recruit" ? " wide-only" : href === "/me" ? " phone-only" : "";
             return (
-            <Link key={href} href={href} className={`${on ? "active" : ""}${href === "/recruit" ? " wide-only" : ""}`} aria-current={on ? "page" : undefined}>
+            <Link key={href} href={href} className={`${on ? "active" : ""}${only}`} aria-current={on ? "page" : undefined}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                 <path d={d} />
               </svg>
@@ -63,21 +66,26 @@ export function Header() {
   );
 }
 
+const LOGIN_EVENT = "unimap:login";
+/** Open the 连接钱包 dialog from anywhere on the page (the header's button holds it). */
+export function askLogin() {
+  window.dispatchEvent(new Event(LOGIN_EVENT));
+}
+
 function WalletButton() {
-  const { address, ready, logout } = useSession();
+  const { address, ready } = useSession();
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const on = () => setOpen(true);
+    window.addEventListener(LOGIN_EVENT, on);
+    return () => window.removeEventListener(LOGIN_EVENT, on);
+  }, []);
   if (!ready) return <div className="wallet" />;
   if (address) {
     return (
       <div className="wallet">
         <Bell />
-        <Link href="/me" className="me-link" title={address}>
-          <Avatar seed={address} size={22} />
-          <span className="mono">{short(address)}</span>
-        </Link>
-        <button type="button" className="ghost small" onClick={logout}>
-          {t("退出")}
-        </button>
+        <WalletMenu address={address} />
       </div>
     );
   }
@@ -88,6 +96,181 @@ function WalletButton() {
       </button>
       {open && <LoginDialog close={() => setOpen(false)} />}
     </div>
+  );
+}
+
+/** The avatar and address open a menu: your pages, copy the address, and disconnect. Arrow keys
+ * move through it; Escape, Tab or a click elsewhere closes it. */
+function WalletMenu({ address }: { address: string }) {
+  const { token, logout } = useSession();
+  const router = useRouter();
+  const path = usePathname();
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [unread, setUnread] = useState(0);
+  const box = useRef<HTMLDivElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const items = () => Array.from(menu.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
+  const close = useCallback((focus = false) => {
+    setOpen(false);
+    if (focus) button.current?.focus();
+  }, []);
+
+  // Unread private messages, for the 私信 item: on each page change, as the bell does.
+  useEffect(() => {
+    if (!token) return;
+    let live = true;
+    api<{ unread: number }>("/v1/dms/unread", { token })
+      .then((r) => live && setUnread(r.unread))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [token, path]);
+  useEffect(() => close(), [path, close]);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => !box.current?.contains(e.target as Node) && close();
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && close(box.current?.contains(document.activeElement) ?? false);
+    document.addEventListener("pointerdown", away);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("pointerdown", away);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [open, close]);
+
+  const openWith = (which: "first" | "last") => {
+    setOpen(true);
+    requestAnimationFrame(() => {
+      const list = items();
+      (which === "first" ? list[0] : list[list.length - 1])?.focus();
+    });
+  };
+  const onButtonKey = (e: React.KeyboardEvent) => {
+    if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openWith("first");
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      openWith("last");
+    }
+  };
+  const onMenuKey = (e: React.KeyboardEvent) => {
+    const list = items();
+    const i = list.indexOf(document.activeElement as HTMLElement);
+    const go = (j: number) => {
+      e.preventDefault();
+      list[(j + list.length) % list.length]?.focus();
+    };
+    if (e.key === "ArrowDown") go(i + 1);
+    else if (e.key === "ArrowUp") go(i - 1);
+    else if (e.key === "Home") go(0);
+    else if (e.key === "End") go(list.length - 1);
+    else if (e.key === "Escape") {
+      e.preventDefault();
+      close(true);
+    } else if (e.key === "Tab") close();
+  };
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(address);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {}
+  };
+  const go = (href: string) => {
+    close();
+    router.push(href);
+  };
+
+  return (
+    <div className="wallet-menu" ref={box}>
+      <button
+        ref={button}
+        type="button"
+        className={`me-link${open ? " open" : ""}`}
+        title={address}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls="wallet-menu"
+        aria-label={t("钱包菜单：{address}", { address: short(address) })}
+        onClick={() => (open ? close() : setOpen(true))}
+        onKeyDown={onButtonKey}
+      >
+        <Avatar seed={address} size={22} />
+        <span className="mono">{short(address)}</span>
+        <svg className="chev" width="10" height="6" viewBox="0 0 10 6" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="m1 1 4 4 4-4" />
+        </svg>
+      </button>
+      {open && (
+        <div className="menu" id="wallet-menu" role="menu" aria-label={t("钱包菜单")} ref={menu} onKeyDown={onMenuKey}>
+          <div className="menu-who" role="presentation">
+            <Avatar seed={address} size={28} />
+            <span className="mono small break">{short(address)}</span>
+          </div>
+          <MenuLink href="/me" go={go} d="M5 20v-.5a7 7 0 0 1 14 0v.5M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z">
+            {t("我的主页")}
+          </MenuLink>
+          <MenuLink href="/capsule#mine" go={go} d="M3.5 6.5h17v11h-17zM3.5 7l8.5 6.5L20.5 7">
+            {t("我的时间胶囊")}
+          </MenuLink>
+          <MenuLink href="/messages" go={go} d="M4 5.5h16v10H9l-5 4v-14Z">
+            {t("私信")}
+            {unread > 0 && (
+              <span className="menu-count" aria-label={t("{n} 条未读", { n: unread })}>
+                {unread > 99 ? "99+" : unread}
+              </span>
+            )}
+          </MenuLink>
+          <hr role="separator" />
+          <button type="button" role="menuitem" tabIndex={-1} onClick={copy}>
+            <MenuIcon d="M8.5 8.5h11v11h-11zM15.5 8.5v-4h-11v11h4" />
+            <span className="grow">{copied ? t("已复制") : t("复制地址")}</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            onClick={() => {
+              close();
+              logout();
+            }}
+          >
+            <MenuIcon d="M14 4.5h5.5v15H14M10 8l-4 4 4 4M6 12h10" />
+            <span className="grow">{t("断开钱包")}</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MenuIcon({ d }: { d: string }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d={d} />
+    </svg>
+  );
+}
+
+function MenuLink({ href, go, d, children }: { href: string; go: (href: string) => void; d: string; children: React.ReactNode }) {
+  return (
+    <Link
+      href={href}
+      role="menuitem"
+      tabIndex={-1}
+      onClick={(e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+        e.preventDefault();
+        go(href);
+      }}
+    >
+      <MenuIcon d={d} />
+      <span className="grow">{children}</span>
+    </Link>
   );
 }
 

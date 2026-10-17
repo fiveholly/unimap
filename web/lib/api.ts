@@ -357,6 +357,8 @@ export type Tour = {
   streak?: number;
   rules: { stops: number; active: number; active_days: number; streaks: [number, Rarity][] };
 };
+/** 新手任务 (api/newcomer.py): the signed-in address's three steps and, once done, the 新居民 badge. */
+export type Newcomer = { steps: { birthday: boolean; checkin: boolean; capsule: boolean }; done: number; of: number; badge: Badge | null; new: boolean };
 export type Game = { tip: number | null; round: LuckyRound | null; draws: Draw[]; badges: Badge[] | null; rules: { round: number; claim_blocks: number } };
 /** 街区活动 (api/events.py): an owner's prizes for whoever does the most in the district over a season. */
 export type ContestMetric = "posts" | "replies" | "checkins";

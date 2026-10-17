@@ -4,14 +4,16 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { short } from "@/components/Session";
+import { PageIntro } from "@/components/PageIntro";
 import { ShareMenu } from "@/components/ShareMenu";
+import { Term } from "@/components/Term";
 import { TileThumb } from "@/components/TileThumb";
 import { PostCard } from "@/components/PostCard";
 import { api, type Ranking, type TipTop } from "@/lib/api";
 import { LEVEL_NAMES, type Level } from "@/lib/prosperity";
 import { rankText } from "@/lib/share";
 import { ZONES, zoneOf } from "@/lib/zones";
-import { t } from "@/lib/i18n";
+import { t, tn } from "@/lib/i18n";
 
 export default function RankPage() {
   const [tab, setTab] = useState<"prosperity" | "tips">("prosperity");
@@ -24,6 +26,11 @@ export default function RankPage() {
   }, []);
   return (
     <div className="page narrow rank">
+      <PageIntro page="rank" title={t("繁荣榜")}>
+        {tn("按{prosperity}排的街区排行：签到、发帖和居民越多越靠前。点进任意一个去逛逛，看看热闹的街区在聊什么。", {
+          prosperity: <Term k="prosperity">{t("繁荣度#term")}</Term>,
+        })}
+      </PageIntro>
       <div className="row between">
         <h1>{t("繁荣榜")}</h1>
         <ShareMenu path="/rank" text={rankText()} />

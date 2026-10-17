@@ -1186,107 +1186,6 @@ button.lang-switch {
 .lucky-strip > a:hover {
   color: var(--fg);
 }
-.welcome {
-  padding-top: 16px;
-  border-top: 1px solid var(--rule);
-}
-.welcome-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 4px;
-}
-.welcome-head h2 {
-  margin: 0;
-}
-.welcome-steps {
-  display: flex;
-  flex-direction: column;
-  margin: 8px 0 0;
-  padding: 0;
-  list-style: none;
-  counter-reset: step;
-}
-.welcome-steps li {
-  counter-increment: step;
-  display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
-  padding: 16px 0;
-  border-top: 1px solid var(--rule);
-}
-.welcome-steps li::before {
-  content: "0" counter(step);
-  grid-column: 1;
-  grid-row: 1 / 9;
-  padding-top: 3px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--fg-3);
-}
-.welcome-steps li b {
-  font-family: var(--font-serif);
-  font-size: 17px;
-  line-height: 1.5;
-}
-.welcome-steps p {
-  margin: 6px 0 0;
-  max-width: 40em;
-  line-height: 1.75;
-}
-.welcome-steps a {
-  color: var(--fg);
-  text-decoration: underline;
-  text-decoration-color: var(--line);
-  text-underline-offset: 3px;
-}
-.welcome-steps a:hover {
-  text-decoration-color: var(--fg-2);
-}
-.birthday {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 14px;
-}
-.birthday fieldset {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  min-width: 0;
-}
-.birthday legend {
-  padding: 0;
-  margin-bottom: 6px;
-  color: var(--fg-2);
-}
-.birthday-fields {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.birthday-fields button.sm {
-  margin-left: 2px;
-}
-.birthday select {
-  height: 34px;
-  font-family: var(--font-mono);
-  font-size: 13px;
-}
-.birthday button.sm {
-  height: 34px;
-  padding: 0 14px;
-}
-.birthday .error {
-  flex-basis: 100%;
-  margin: 0;
-}
-.welcome-reopen {
-  align-self: flex-start;
-}
 .today,
 .tour-card {
   padding-top: 16px;
@@ -2576,9 +2475,6 @@ button.lang-switch {
   }
   .city-continent span {
     display: none;
-  }
-  .welcome-steps {
-    grid-template-columns: 1fr;
   }
   /* One 52px row: the logo, then search, language and wallet as quiet icons. */
   .header-inner {
@@ -5644,15 +5540,9 @@ button.cap-demo-pay {
     display: none;
   }
 }
-.birthday .birthday-letter {
-  align-self: center;
-  color: var(--fg-2);
-  text-decoration: underline;
-  text-decoration-color: var(--line);
-  text-underline-offset: 3px;
-}
 
-/* Between phone and desktop the six links keep to one line: the gaps tighten, the address
+/* Between phone and desktop the five links (我的 lives in the wallet menu there) keep to one line,
+ * 招募 included: the gaps tighten, the address
  * beside the avatar goes, and below 1000px the search box folds to its icon until focused. */
 @media (min-width: 641px) and (max-width: 1140px) {
   .header-inner {
@@ -5708,28 +5598,882 @@ button.cap-demo-pay {
     width: auto;
   }
 }
-/* Narrower still, 招募 leaves the header as it does on a phone, so English labels fit too. */
-@media (min-width: 641px) and (max-width: 860px) {
-  .nav a.wide-only {
-    display: none;
-  }
-}
+/* With 招募 back in the header here, the five links and 连接钱包 still fit in English at 641px. */
 @media (min-width: 641px) and (max-width: 740px) {
   .header-inner {
     padding: 0 16px;
     gap: 6px;
   }
   .logo {
-    margin-right: 8px;
+    margin-right: 4px;
   }
   .nav {
-    gap: 12px;
+    gap: 10px;
   }
   .wallet .cta-pill {
-    padding: 0 12px;
+    padding: 0 10px;
   }
   .search:focus-within {
     left: 16px;
     right: 16px;
+  }
+}
+
+/* ---------- first visit: the home page's first screen ---------- */
+/* The title and the three cards are a column on the left, in the page's flow, so the first screen
+   grows when 30 秒看懂 opens; the map fills the whole first screen behind them and keeps its land to
+   the right of the column (room() in app/page.tsx). */
+.atlas {
+  display: flex;
+  height: auto;
+  min-height: clamp(640px, calc(100svh - 28px), 980px);
+}
+.atlas-over {
+  flex: 1 1 auto;
+  width: 100%;
+  height: auto;
+}
+.atlas-hero {
+  position: relative;
+  left: auto;
+  top: auto;
+  width: 440px;
+  max-width: none;
+  margin-left: 24px;
+  padding: 92px 0 48px;
+  pointer-events: auto;
+}
+.atlas-hero p {
+  max-width: 400px;
+}
+.on-narrow {
+  display: none;
+}
+.atlas-live {
+  position: absolute;
+  top: 76px;
+  right: 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--fg-2);
+  pointer-events: auto;
+}
+.atlas-live .mono {
+  color: var(--fg);
+}
+.atlas-live:hover .mono {
+  color: var(--accent);
+}
+@media (min-width: 901px) {
+  .atlas .world-key {
+    left: calc(max(24px, calc((100% - 1200px) / 2 + 24px)) + 472px);
+    max-width: 330px;
+  }
+}
+/* 城市概况 now sits under the first screen, unboxed like the rest of the page there. */
+.home-more .atlas-sheet {
+  position: static;
+  width: auto;
+  max-height: none;
+  overflow: visible;
+  padding: 16px 0 0;
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  border-radius: 0;
+}
+
+.start {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 22px;
+}
+.start-label {
+  font-size: 12px;
+  color: var(--fg-3);
+}
+.start-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.start-card,
+.start-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  color: var(--fg);
+}
+.start-card {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(17, 19, 22, 0.96);
+  transition: border-color 150ms;
+}
+a.start-card:hover {
+  border-color: var(--fg-3);
+  color: var(--fg);
+}
+a.start-card:hover .start-go {
+  color: var(--fg);
+}
+.start-card.main {
+  border-color: rgba(242, 165, 65, 0.45);
+  background: linear-gradient(180deg, rgba(242, 165, 65, 0.07), rgba(242, 165, 65, 0) 70%), rgba(17, 19, 22, 0.96);
+}
+form.start-card {
+  display: block;
+}
+button.start-row {
+  width: 100%;
+  height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  font-size: inherit;
+  text-align: left;
+  white-space: normal;
+}
+button.start-row:hover:not(:disabled) {
+  color: var(--fg);
+}
+.start-ic {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--fg-2);
+}
+.start-card.main .start-ic {
+  color: var(--accent);
+}
+.start-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.start-text b {
+  font-size: 14px;
+  line-height: 1.45;
+}
+.start-text small {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-3);
+}
+.start-tag {
+  padding: 1px 8px;
+  border: 1px solid rgba(76, 183, 130, 0.4);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--success);
+  white-space: nowrap;
+}
+.start-go {
+  font-size: 15px;
+  color: var(--fg-3);
+}
+.birthday fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  margin: 10px 0 0 46px;
+  padding: 0;
+  border: 0;
+}
+.birthday-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.birthday select {
+  height: 32px;
+  background-color: var(--bg);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+.birthday button.sm {
+  height: 32px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+.birthday .error {
+  margin: 0;
+}
+.birthday .birthday-letter {
+  align-self: flex-start;
+  color: var(--fg-2);
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+  text-underline-offset: 3px;
+}
+.start-why {
+  margin-top: 4px;
+  font-size: 12.5px;
+  color: var(--fg-2);
+}
+.start-why .link-btn {
+  font-size: inherit;
+  color: var(--fg);
+  text-decoration-color: var(--line);
+}
+.explain {
+  padding: 14px 16px 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(17, 19, 22, 0.96);
+  animation: rise 220ms var(--ease);
+}
+.explain-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: -4px -8px 4px 0;
+}
+.explain-head h2 {
+  font-size: 16px;
+}
+.explain-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+.explain-steps li {
+  counter-increment: step;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  padding: 10px 0;
+  border-top: 1px solid var(--rule);
+}
+.explain-steps li::before {
+  content: "0" counter(step);
+  grid-row: 1 / 3;
+  padding-top: 2px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-3);
+}
+.explain-steps b {
+  font-family: var(--font-serif);
+  font-size: 15px;
+}
+.explain-steps p {
+  margin-top: 2px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--fg-2);
+}
+.explain-steps a {
+  color: var(--fg);
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+  text-underline-offset: 3px;
+}
+
+/* ---------- terms explained in place (components/Term.tsx) ---------- */
+.term-box {
+  position: relative;
+  display: inline;
+}
+button.term {
+  display: inline;
+  height: auto;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px dotted var(--fg-3);
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  cursor: help;
+  vertical-align: baseline;
+}
+button.term:hover:not(:disabled),
+button.term[aria-describedby]:focus-visible {
+  border-color: var(--fg-2);
+  color: inherit;
+}
+.term-tip {
+  position: absolute;
+  z-index: 45;
+  left: 0;
+  top: calc(100% + 6px);
+  display: block;
+  width: max-content;
+  max-width: min(260px, calc(100vw - 24px));
+  padding: 10px 12px;
+  transform: translateX(var(--shift, 0px));
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+  font: 400 12px/1.6 var(--font-sans);
+  letter-spacing: 0;
+  color: var(--fg-2);
+  text-align: left;
+  white-space: normal;
+  text-transform: none;
+}
+.term-tip[hidden] {
+  display: none;
+}
+.term-tip b {
+  display: block;
+  margin-bottom: 2px;
+  font-weight: 500;
+  color: var(--fg);
+}
+
+/* ---------- 新手任务 (components/Newcomer.tsx) ---------- */
+.quest {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5);
+  font-size: 13px;
+}
+.atlas .quest,
+.quest-dot {
+  position: absolute;
+  z-index: 5;
+  right: 24px;
+  bottom: 24px;
+  pointer-events: auto;
+}
+.atlas .quest {
+  width: 300px;
+}
+.quest-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.quest-head b {
+  flex: 1;
+}
+.quest-count {
+  font-size: 12px;
+  color: var(--accent);
+}
+.quest-meter {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+.quest-meter i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 400ms var(--ease);
+}
+.quest-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.quest-steps li {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 9px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--fg-2);
+}
+.quest-steps li a {
+  color: var(--fg-2);
+}
+.quest-steps li.next a {
+  color: var(--fg);
+}
+.quest-steps li a:hover {
+  color: var(--fg);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.quest-steps li.done {
+  color: var(--fg-3);
+  text-decoration: line-through;
+  text-decoration-color: var(--fg-3);
+}
+.quest-check {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border: 1.5px solid var(--fg-3);
+  border-radius: 50%;
+  font-size: 10px;
+  line-height: 1;
+}
+.quest-steps li.done .quest-check {
+  border-color: var(--success);
+  background: var(--success);
+  color: var(--bg);
+}
+.quest-reward {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--rule);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--fg-2);
+}
+.quest-reward a {
+  color: var(--fg);
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+  text-underline-offset: 3px;
+}
+.quest-reward.won {
+  color: var(--fg);
+}
+.quest-star {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: 1.5px dashed var(--lucky);
+  border-radius: 50%;
+  font-size: 13px;
+  color: var(--lucky);
+}
+.quest-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: -4px;
+}
+.quest-actions:empty {
+  display: none;
+}
+.quest-actions .link-btn {
+  font-size: 12px;
+  color: var(--fg-3);
+}
+button.quest-dot {
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border-radius: 50%;
+  border-color: var(--line);
+  background: var(--surface-2);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+  font-size: 11px;
+  color: var(--accent);
+}
+.quest-bar-wrap {
+  display: none;
+}
+/* Below 900px the map is under the cards, so the task is a bar along the bottom (above the tab
+   bar on a phone), and its card opens above the bar. */
+@media (max-width: 900px) {
+  .atlas .quest:not(.quest-sheet),
+  .quest-dot {
+    display: none;
+  }
+  .quest-bar-wrap {
+    position: fixed;
+    z-index: 25;
+    left: 16px;
+    right: 16px;
+    bottom: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: 520px;
+    margin: 0 auto;
+  }
+  .quest-bar-wrap .quest {
+    position: static;
+    width: auto;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.6);
+  }
+  .quest-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 8px 7px 10px;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+    font-size: 12.5px;
+  }
+  button.quest-bar-open {
+    flex: 1 1 auto;
+    justify-content: flex-start;
+    gap: 10px;
+    min-width: 0;
+    height: 32px;
+    padding: 0;
+    border: 0;
+    background: none;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--fg);
+  }
+  .quest-bar .quest-star {
+    width: 24px;
+    height: 24px;
+    font-size: 11px;
+  }
+  .quest-bar-next {
+    flex: none;
+    padding-right: 4px;
+    color: var(--fg-2);
+    white-space: nowrap;
+  }
+  .home {
+    padding-bottom: 72px;
+  }
+}
+
+/* ---------- one-line page intros (components/PageIntro.tsx) ---------- */
+.page-intro {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 22px;
+  padding: 11px 8px 11px 14px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--accent);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--fg-2);
+}
+.page-intro p {
+  flex: 1;
+  padding-top: 3px;
+}
+.page-intro b {
+  color: var(--fg);
+}
+.page-intro a {
+  color: var(--fg);
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+  text-underline-offset: 3px;
+}
+.page-intro .icon-btn {
+  flex: none;
+  width: 28px;
+  height: 28px;
+}
+.capsule-page > .page-intro {
+  max-width: 760px;
+}
+
+/* ---------- 我的, signed out ---------- */
+.me-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 560px;
+  margin-top: 12px;
+  padding: 26px 28px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.me-empty h1 {
+  font-size: 24px;
+  line-height: 1.4;
+  text-wrap: balance;
+}
+.me-empty ul {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.me-empty li {
+  display: flex;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--fg-2);
+}
+.me-empty li::before {
+  content: "";
+  flex: none;
+  width: 5px;
+  height: 5px;
+  margin-top: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.me-empty-cta {
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.me-empty-free {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--rule);
+}
+.me-empty-free .row {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.btn.small {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+@media (max-width: 640px) {
+  .me-empty {
+    padding: 22px 18px;
+  }
+  .me-empty h1 {
+    font-size: 21px;
+  }
+}
+
+/* ---------- the wallet menu in the header ---------- */
+.wallet-menu {
+  position: relative;
+}
+button.me-link {
+  height: 32px;
+  padding: 0 8px 0 5px;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  font-size: 13px;
+  color: var(--fg-2);
+}
+button.me-link:hover:not(:disabled),
+button.me-link.open {
+  border-color: transparent;
+  background: var(--surface-2);
+  color: var(--fg);
+}
+.me-link .chev {
+  color: var(--fg-3);
+  transition: transform 150ms;
+}
+.me-link.open .chev {
+  transform: rotate(180deg);
+}
+.menu {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 8px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  width: 240px;
+  max-width: calc(100vw - 24px);
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  animation: rise 160ms var(--ease);
+}
+.menu-who {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+  padding: 8px 10px 10px;
+  border-bottom: 1px solid var(--rule);
+  color: var(--fg-2);
+}
+.menu [role="menuitem"] {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font-size: 13.5px;
+  color: var(--fg);
+  text-align: left;
+}
+.menu [role="menuitem"] svg {
+  flex: none;
+  color: var(--fg-3);
+}
+.menu [role="menuitem"]:hover,
+.menu [role="menuitem"]:focus-visible {
+  outline: none;
+  background: var(--surface-2);
+  color: var(--fg);
+}
+.menu [role="menuitem"]:hover svg,
+.menu [role="menuitem"]:focus-visible svg {
+  color: var(--fg-2);
+}
+.menu hr {
+  margin: 4px 0;
+  border: 0;
+  border-top: 1px solid var(--rule);
+}
+.menu-count {
+  display: inline-block;
+  margin-left: 8px;
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  color: var(--on-accent);
+}
+/* Sections the menu and the task card link to (/game#badges, /capsule#mine) stop below the sticky header. */
+#badges,
+#mine,
+#birthday {
+  scroll-margin-top: 80px;
+}
+/* 我的 is in the phone's tab bar only; wider screens reach it from the wallet menu. */
+.nav a.phone-only {
+  display: none;
+}
+
+/* ---------- the first screen below 900px and on a phone ---------- */
+/* Title, a short line and the three cards first, then the map. */
+@media (max-width: 900px) {
+  .atlas {
+    flex-direction: column;
+    min-height: 0;
+  }
+  .atlas-over {
+    display: contents;
+  }
+  .atlas-hero {
+    order: 1;
+    width: auto;
+    margin: 0;
+    padding: 20px 16px 22px;
+  }
+  .atlas-hero p {
+    max-width: 34em;
+  }
+  .atlas-map {
+    order: 2;
+  }
+  .atlas-live {
+    display: none;
+  }
+  .start {
+    max-width: 520px;
+  }
+}
+@media (max-width: 640px) {
+  .nav a.phone-only {
+    display: flex;
+  }
+  .me-link .chev {
+    display: none;
+  }
+  button.me-link {
+    padding: 0 6px;
+  }
+  .menu {
+    right: -4px;
+  }
+  .on-wide {
+    display: none;
+  }
+  .on-narrow {
+    display: revert;
+  }
+  .atlas-hero {
+    padding: 16px 16px 18px;
+  }
+  .atlas-hero h1 {
+    font-size: 22px;
+  }
+  .atlas-hero p {
+    margin-top: 6px;
+  }
+  .start {
+    margin-top: 14px;
+    gap: 8px;
+  }
+  .start-label {
+    display: none;
+  }
+  .start-card,
+  .start-row {
+    grid-template-columns: 30px minmax(0, 1fr) auto;
+    gap: 11px;
+  }
+  .start-card {
+    padding: 11px 12px;
+  }
+  .start-ic {
+    width: 30px;
+    height: 30px;
+  }
+  /* The birthday card is one line until tapped; then the picker opens under it. */
+  .birthday fieldset {
+    display: none;
+    margin-left: 0;
+  }
+  .birthday.open fieldset {
+    display: flex;
+  }
+  .birthday select {
+    height: 36px;
+    font-size: 16px;
+  }
+  .birthday button.sm {
+    height: 36px;
+  }
+  .start-why {
+    margin-top: 0;
+  }
+  .quest-bar-wrap {
+    left: 12px;
+    right: 12px;
+    bottom: calc(56px + env(safe-area-inset-bottom) + 10px);
+  }
+  .home {
+    padding-bottom: 64px;
+  }
+  .page-intro {
+    margin-bottom: 18px;
   }
 }

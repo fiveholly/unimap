@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { BadgeIcon, BadgeList } from "@/components/Badge";
+import { PageIntro } from "@/components/PageIntro";
+import { Term } from "@/components/Term";
 import { CityContests } from "@/components/Contests";
 import { useTip } from "@/components/BlockWatch";
 import { short, useSession } from "@/components/Session";
@@ -29,6 +31,10 @@ export default function GamePage() {
       .catch((e) => setError(e.message));
   }, [token, ready, tip]);
   const r = game?.round;
+  // From the task card's 去看看 (/game#badges): bring the badges into view once they are here.
+  useEffect(() => {
+    if (game?.badges && window.location.hash === "#badges") document.getElementById("badges")?.scrollIntoView({ block: "start" });
+  }, [game]);
   const wear = async (id: number | null) => {
     try {
       await api("/v1/me/badge", { method: "PUT", token, body: { id } });
@@ -40,6 +46,17 @@ export default function GamePage() {
 
   return (
     <div className="page narrow game">
+      <PageIntro page="game" title={t("区块节拍")}>
+        {tn("每出一个新区块，城里就{draw}一次奖。", { draw: <Term k="beat">{t("抽")}</Term> })}
+        {r?.bitmap_number != null &&
+          tn("今天的幸运街区是 {n}，去签到就能领幸运来访徽章。", {
+            n: (
+              <Link className="mono" href={`/district/${r.bitmap_number}`}>
+                {r.bitmap_number}
+              </Link>
+            ),
+          })}
+      </PageIntro>
       <h1>{t("区块节拍")}</h1>
       <p className="muted">
         {t("比特币大约每 10 分钟出一个区块。每出一个新区块，城市里就抽一次奖，结果由区块哈希决定，谁也没法提前知道或者操控。公式写在这一页最下面，任何人都能用区块浏览器自己验算。参与永远免费。")}
@@ -105,7 +122,7 @@ export default function GamePage() {
       )}
 
       {game?.badges && (
-        <section className="game-card">
+        <section className="game-card" id="badges">
           <h2 className="section-title">
             {t("我的徽章")} <span className="mono">{game.badges.length}</span>
           </h2>

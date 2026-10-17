@@ -7,14 +7,16 @@ import { Suspense, useEffect, useState } from "react";
 import { useTip } from "@/components/BlockWatch";
 import { CityMap } from "@/components/CityMap";
 import { LuckyStrip } from "@/components/GameBits";
+import { NewcomerTask } from "@/components/Newcomer";
+import { Term } from "@/components/Term";
 import { Today } from "@/components/Today";
-import { TourCard } from "@/components/Tour";
+import { TourCard, useTour } from "@/components/Tour";
 import { OpenedList } from "@/components/Opening";
 import { Promoted } from "@/components/Promoted";
-import { Welcome } from "@/components/Welcome";
+import { StartHere } from "@/components/Welcome";
 import { phone, WorldMap } from "@/components/WorldMap";
 import { epochName, timeAgo } from "@/lib/format";
-import { t } from "@/lib/i18n";
+import { t, tn } from "@/lib/i18n";
 import { continent, HALVING } from "@/lib/terrain";
 import { ISLANDS } from "@/lib/world";
 
@@ -27,15 +29,16 @@ export default function Home() {
 }
 
 const num = (n: number) => n.toLocaleString("en-US");
-const SHEET = 360; // the floating sheet's width, as in globals.css
-/** Where the world map may put land: clear of the header, the sentence and the sheet on a wide
- * screen; nearly the whole canvas on a phone, where the sheet sits under the map. */
+const COLUMN = 440; // the title and the three cards, as .atlas-hero in globals.css
+/** Where the world map may put land: right of the title and the cards on a wide screen; nearly
+ * the whole canvas below 900px, where the map sits under them. */
 const room = (w: number) => {
   // A phone's legend sits under the map, so the land can come down to the bottom edge.
   if (phone()) return { top: 40, right: 14, bottom: 14, left: 14 };
   if (w <= 900) return { top: 34, right: 12, bottom: 40, left: 12 };
   const side = (w - Math.min(w, 1200)) / 2 + 24;
-  return { top: 190, right: side + SHEET + 12, bottom: 84, left: side - 8 };
+  // The bottom is kept for the 新手任务 card at the bottom right and the legend.
+  return { top: 120, right: side, bottom: 250, left: side + COLUMN + 32 };
 };
 
 /** The home page is the map: the whole world first, and the city map of a spot once you pick one
@@ -44,6 +47,7 @@ function HomeView() {
   const router = useRouter();
   const search = useSearchParams();
   const { tip, error } = useTip();
+  const tour = useTour();
   const [highlight, setHighlight] = useState<number | null>(null);
   // Where the city map opens: ?b=, else the newest block when the page was opened (a new block later doesn't move it).
   const [opened, setOpened] = useState<number | null>(null);
@@ -57,7 +61,12 @@ function HomeView() {
   const hero = (
     <>
       <h1>{t("比特币的每一个区块，都是城市里的一个街区")}</h1>
-      <p>{t("持有 Bitmap 街区就能经营它的社区，持有地块就是这里的居民，其他人可以来逛、关注和回复。")}</p>
+      <p className="on-wide">
+        {tn("你出生那天、结婚那天，比特币上都出了一个块。在这里，每个块是一个{bitmap}，你可以去逛、签到，也可以给未来写一封信。", {
+          bitmap: <Term k="bitmap">{t("街区#term")}</Term>,
+        })}
+      </p>
+      <p className="on-narrow">{t("你出生那天，比特币上也出了一个块。")}</p>
     </>
   );
 
@@ -85,6 +94,7 @@ function HomeView() {
             </span>
           </nav>
           <CityMap tip={tip} focus={b} />
+          <NewcomerTask tour={tour} card={false} />
         </div>
       )}
       {tip != null && !city && (
@@ -93,8 +103,12 @@ function HomeView() {
             <WorldMap tip={tip} highlight={highlight} onEnter={enter} room={room} />
           </div>
           <div className="atlas-over">
-            <div className="atlas-hero">{hero}</div>
-            <Sheet tip={tip} highlight={highlight} setHighlight={setHighlight} enter={enter} />
+            <div className="atlas-hero">
+              {hero}
+              <StartHere tip={tip} tour={tour} />
+            </div>
+            <LiveTip tip={tip} />
+            <NewcomerTask tour={tour} />
           </div>
         </section>
       )}
@@ -102,7 +116,7 @@ function HomeView() {
         <div className="page home-more">
           <div>
             <LuckyStrip tip={tip} />
-            <Welcome tip={tip} />
+            {!city && <Sheet tip={tip} highlight={highlight} setHighlight={setHighlight} enter={enter} />}
           </div>
           <div>
             <Today />
@@ -116,8 +130,20 @@ function HomeView() {
   );
 }
 
-/** The sheet over the map: the newest block, how far the epoch has come, the epochs as a table
- * of contents (hover one to light it on the map, click to go in) and the districts just opened. */
+/** The newest block over the map's top right, live. */
+function LiveTip({ tip }: { tip: number }) {
+  const { since } = useTip();
+  return (
+    <Link className="atlas-live" href={`/district/${tip}`}>
+      <span className="live-dot" aria-hidden />
+      {t("最新区块")} <span className="mono">{num(tip)}</span>
+      {since != null && <span className="dim"> · {timeAgo(since / 1000)}</span>}
+    </Link>
+  );
+}
+
+/** 城市概况, under the first screen: the newest block, how far the epoch has come, the epochs as a
+ * table of contents (hover one to light it on the map, click to go in) and the districts just opened. */
 function Sheet({ tip, highlight, setHighlight, enter }: { tip: number; highlight: number | null; setHighlight: (e: number | null) => void; enter: (n: number) => void }) {
   const { since } = useTip();
   const [, tick] = useState(0);
@@ -130,7 +156,7 @@ function Sheet({ tip, highlight, setHighlight, enter }: { tip: number; highlight
   const share = (tip - cur * HALVING + 1) / HALVING;
   const nextYear = ISLANDS[cur + 1]?.years.slice(0, 4);
   return (
-    <aside className="atlas-sheet">
+    <aside className="atlas-sheet" aria-label={t("城市概况")}>
       <div>
         <div className="live">
           <span className="live-dot" aria-hidden />
@@ -150,7 +176,9 @@ function Sheet({ tip, highlight, setHighlight, enter }: { tip: number; highlight
         </div>
       </div>
       <section className="sheet-block" aria-label={t("纪元")}>
-        <h2 className="eyebrow">{t("纪元")}</h2>
+        <h2 className="eyebrow">
+          <Term k="epoch">{t("纪元")}</Term>
+        </h2>
         <ol className="era-toc">
           {ISLANDS.slice(0, Math.min(epochs + 1, ISLANDS.length)).map((isle, e) => {
             const first = e * HALVING, last = Math.min(tip, (e + 1) * HALVING - 1);

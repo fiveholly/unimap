@@ -4,13 +4,15 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { BuyButton, useMarket } from "@/components/Market";
+import { PageIntro } from "@/components/PageIntro";
+import { Term } from "@/components/Term";
 import { short, useSession } from "@/components/Session";
 import { TileThumb } from "@/components/TileThumb";
 import { api, type ParcelForSale, type Recruiting } from "@/lib/api";
 import { btc } from "@/lib/format";
 import { LEVEL_NAMES, type Level } from "@/lib/prosperity";
 import { ZONES, zoneOf } from "@/lib/zones";
-import { t } from "@/lib/i18n";
+import { t, tn } from "@/lib/i18n";
 
 export default function RecruitPage() {
   const [rows, setRows] = useState<Recruiting[] | null>(null);
@@ -22,6 +24,9 @@ export default function RecruitPage() {
   }, []);
   return (
     <div className="page narrow rank">
+      <PageIntro page="recruit" title={t("招募")}>
+        {tn("这些街区的主人在找{residents}。持有那个区块里的一笔交易，就能住进去。", { residents: <Term k="parcel">{t("居民#term")}</Term> })}
+      </PageIntro>
       <h1>{t("招募居民")}</h1>
       <p className="muted">{t("这些街区在找新邻居。进去看看说明，申请入住后，街区主人会把地块转给你。")}</p>
       {error ? (
