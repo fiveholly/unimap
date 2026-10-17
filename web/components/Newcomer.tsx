@@ -91,7 +91,7 @@ export function focusBirthday(e?: React.MouseEvent) {
   window.dispatchEvent(new Event(BIRTHDAY_EVENT));
 }
 
-/** 新手任务: on a wide screen a card at the bottom right of the home page's first screen, folding
+/** 新手任务: on a wide screen a card floating at the bottom right of the home page, folding
  * to a dot; on a phone a bar above the tab bar that opens the card. Gone once done and closed. */
 export function NewcomerTask({ tour, card = true }: { tour: Tour | null; card?: boolean }) {
   const { ready, local, progress, badge, signedIn } = useNewcomer();
@@ -103,7 +103,23 @@ export function NewcomerTask({ tour, card = true }: { tour: Tour | null; card?: 
     window.addEventListener("keydown", esc);
     return () => window.removeEventListener("keydown", esc);
   }, [sheet]);
+  // The card floats over the page; once the first screen is scrolled past it folds to the dot, so
+  // it doesn't sit on the content further down. A tap on the dot opens it there anyway.
+  const [below, setBelow] = useState(false);
+  const [peek, setPeek] = useState(false);
+  useEffect(() => {
+    if (!card) return;
+    const onScroll = () => {
+      const b = window.scrollY > window.innerHeight * 0.5;
+      setBelow(b);
+      if (!b) setPeek(false);
+    };
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [card]);
   if (!ready || !local || local.dismissed) return null;
+  const folded = local.collapsed || (below && !peek);
   const n = doneCount(progress), all = complete(progress), next = nextStep(progress);
   const label = t("新手任务 {k}/{n}", { k: n, n: STEPS.length });
 
@@ -192,8 +208,8 @@ export function NewcomerTask({ tour, card = true }: { tour: Tour | null; card?: 
   return (
     <>
       {card &&
-        (local.collapsed ? (
-          <button type="button" className="quest-dot" onClick={() => saveLocal({ collapsed: false })} aria-label={t("打开新手任务（{k}/{n}）", { k: n, n: STEPS.length })}>
+        (folded ? (
+          <button type="button" className="quest-dot" onClick={() => (local.collapsed ? saveLocal({ collapsed: false }) : setPeek(true))} aria-label={t("打开新手任务（{k}/{n}）", { k: n, n: STEPS.length })}>
             <span className="mono">{n}/{STEPS.length}</span>
           </button>
         ) : (

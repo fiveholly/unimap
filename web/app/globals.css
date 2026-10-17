@@ -5721,9 +5721,13 @@ button.cap-demo-pay {
   color: var(--accent);
 }
 @media (min-width: 901px) {
+  /* The legend sits under the title column, in room the column keeps for it, so the map's land
+     has the whole height on the right. */
+  .atlas-hero {
+    padding-bottom: 200px;
+  }
   .atlas .world-key {
-    left: calc(max(24px, calc((100% - 1200px) / 2 + 24px)) + 472px);
-    max-width: 330px;
+    max-width: 440px;
   }
 }
 /* 城市概况 now sits under the first screen, unboxed like the rest of the page there. */
@@ -6006,10 +6010,11 @@ button.term[aria-describedby]:focus-visible {
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5);
   font-size: 13px;
 }
+/* A floating window at the bottom right of the screen, over the page rather than in its layout. */
 .atlas .quest,
 .quest-dot {
-  position: absolute;
-  z-index: 5;
+  position: fixed;
+  z-index: 20;
   right: 24px;
   bottom: 24px;
   pointer-events: auto;
@@ -6801,4 +6806,15 @@ button.me-link.open {
     width: 17cm;
     border: 1px solid #999;
   }
+}
+
+/* ---------- a page that failed in the browser (app/error.tsx) ---------- */
+.page-error {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-block: 64px;
+}
+.page-error .error {
+  word-break: break-word;
 }

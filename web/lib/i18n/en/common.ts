@@ -50,4 +50,8 @@ export const common: Record<string, string> = {
   "第六纪元": "Epoch 6",
   "推广": "Promoted",
   "高级": "Premium",
+  "网站刚更新过，正在刷新…": "The site was just updated. Reloading…",
+  "这个页面出错了": "This page hit an error",
+  "刷新一下通常就好。还不行的话，把下面这行发给我们。": "Reloading usually fixes it. If it doesn't, send us the line below.",
+  "刷新": "Reload",
 };
