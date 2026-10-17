@@ -5,10 +5,12 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { CapsulePay, Envelope, LetterPaper, utcDay, utcMinute, WaitBars } from "@/components/Capsule";
+import { GiftFund, NetBadge, sats } from "@/components/Gift";
 import { short, useSession } from "@/components/Session";
 import { api, ApiError, type Capsule } from "@/lib/api";
 import { decryptLetter, decryptPhoto, fingerprintOk, keyFromHash, shortHash, spanText, TAG_NAMES } from "@/lib/capsule";
 import { DEMO } from "@/lib/demo";
+import { type GiftDraft, loadDraft, timelockLink } from "@/lib/giftseal";
 import { t } from "@/lib/i18n";
 import { SITE_URL } from "@/lib/share";
 
@@ -24,6 +26,7 @@ export default function CapsulePage() {
   const [letter, setLetter] = useState<{ text: string; early: boolean; photo: string | null } | null>(null);
   const [verified, setVerified] = useState<boolean | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
+  const [draft, setDraft] = useState<GiftDraft | null>(null); // 礼物: this browser sealed it, and keeps its 时间锁
 
   const load = useCallback(
     () =>
@@ -37,7 +40,8 @@ export default function CapsulePage() {
     if (!ready) return;
     load();
     setSpare(keyFromHash(window.location.hash));
-  }, [load, ready]);
+    setDraft(loadDraft(id));
+  }, [load, ready, id]);
   // Watch for the block that opens it.
   useEffect(() => {
     if (c?.status !== "sealed") return;
@@ -141,6 +145,8 @@ export default function CapsulePage() {
               </div>
               <WaitBars sealed={c.sealed_height} tip={tip} left={left} />
             </>
+          ) : c.gift ? (
+            <p className="muted">{t("到时间了。这封信带着礼物，要用收礼人手里的时间锁打开。")}</p>
           ) : (
             <p className="muted">{t("到时间了，正在打开…")}</p>
           )}
@@ -161,7 +167,7 @@ export default function CapsulePage() {
             </div>
             <div>
               <span>{t("钥匙")}</span>
-              <span>{t("两份都留")}</span>
+              <span>{c.gift ? t("一半在 unimap，一半在时间锁") : t("两份都留")}</span>
             </div>
             {c.has_photo && (
               <div>
@@ -187,7 +193,13 @@ export default function CapsulePage() {
           <p className="cap-hash">
             {t("密文指纹 sha256: {hash} · 任何人都能核对，内容从封存起没被改过", { hash: shortHash(c.fingerprint) })}
           </p>
-          {spare ? <SpareKey id={c.id} spare={spare} mine={c.mine} open={() => open(spare, true)} /> : <CopyButton text={`${SITE_URL}/capsule/${c.id}`} label={t("复制信封链接（现在只能看到信封）")} />}
+          {c.gift ? (
+            <GiftSide c={c} draft={c.mine ? draft : null} token={token} reload={() => (load(), setDraft(loadDraft(c.id)))} />
+          ) : spare ? (
+            <SpareKey id={c.id} spare={spare} mine={c.mine} open={() => open(spare, true)} />
+          ) : (
+            <CopyButton text={`${SITE_URL}/capsule/${c.id}`} label={t("复制信封链接（现在只能看到信封）")} />
+          )}
           {openError && <p className="error small">{openError}</p>}
           <Link className="btn" href={`/capsule/block/${c.sealed_height}`}>
             {t("看看同块的人")}
@@ -195,6 +207,44 @@ export default function CapsulePage() {
           {c.mine && c.line && <RemoveLine id={c.id} token={token} done={load} />}
         </aside>
       </div>
+    </div>
+  );
+}
+
+/** 礼物 on the envelope: the amount and its block; for the sender who sealed it in this browser,
+ * locking the sats if that isn't done, and the 时间锁 to hand over. */
+function GiftSide({ c, draft, token, reload }: { c: Capsule; draft: GiftDraft | null; token: string | null; reload: () => void }) {
+  const g = c.gift!;
+  return (
+    <div className="cap-spare">
+      <span className="small">
+        {t("随信的礼物")} <NetBadge network={g.network} />
+      </span>
+      <div className="cap-kv">
+        <div>
+          <span>{t("金额")}</span>
+          <span className="mono">{sats(g.sats)}</span>
+        </div>
+        <div>
+          <span>{t("锁到区块")}</span>
+          <span className="mono">{g.height.toLocaleString("en-US")}</span>
+        </div>
+        <div>
+          <span>{t("状态")}</span>
+          <span>{g.funded ? t("已锁在链上") : t("还没锁进去")}</span>
+        </div>
+      </div>
+      {draft && !draft.done && <GiftFund draft={draft} token={token} done={reload} />}
+      {draft ? (
+        <CopyButton text={timelockLink(SITE_URL, draft.timelock)} label={t("复制时间锁链接（交给收礼人）")} primary />
+      ) : (
+        <p className="dim small">{c.mine ? t("时间锁存在封信的那个浏览器里。") : t("收礼人拿着时间锁，到点就能打开信、领走礼物。")}</p>
+      )}
+      {draft && (
+        <a className="btn" href={timelockLink(SITE_URL, draft.timelock)}>
+          {t("打开时间锁")}
+        </a>
+      )}
     </div>
   );
 }

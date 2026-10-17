@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { heightAt, heightOnDay } from "./blocktime.ts";
+import { heightAt, heightOnDay, timeAtHeight } from "./blocktime.ts";
 
 test("known blocks land where they were mined", () => {
   assert.equal(heightAt(1231006505), 0);
@@ -20,4 +20,9 @@ test("days before bitcoin or after the tip have no block", () => {
   assert.equal(heightOnDay("2099-01-01", 900000), null);
   assert.equal(heightOnDay("not a day", 900000), null);
   assert.ok(heightOnDay("2024-04-20", 900000)! >= 839900);
+});
+
+test("timeAtHeight counts blocks from the tip", () => {
+  assert.equal(timeAtHeight(210, 200, 1_000_000), 1_006_000);
+  assert.equal(timeAtHeight(195, 200, 1_000_000, 75), 999_625);
 });

@@ -25,6 +25,12 @@ export function heightAt(t: number): number | null {
   return Math.round(h + (t - t0) / 600);
 }
 
+/** Roughly when block h will come (unix seconds), from the tip now at blockSeconds a block; for a
+ * block already mined, roughly when it was. 礼物 times its drand round with this (lib/drand.ts). */
+export function timeAtHeight(h: number, tip: number, now: number, blockSeconds = 600): number {
+  return Math.round(now + (h - tip) * blockSeconds);
+}
+
 /** The block around noon UTC of a YYYY-MM-DD date, at most tip; null before bitcoin or after tip. */
 export function heightOnDay(day: string, tip: number): number | null {
   const t = Date.parse(`${day}T12:00:00Z`) / 1000;

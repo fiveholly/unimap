@@ -3,8 +3,12 @@
 // here from deterministic fake data; what the visitor does (posts, likes, follows, profile
 // edits) is kept in localStorage, and "重置演示数据" clears it.
 
-import type { Capsule, CapsulePeer, CapsuleScope, Conversation, DmMessage, MarketOffer, OfferQuote, Agent, AgentDraft, AgentGrant, AgentInfo, AgentTask, AgentView, Application, Tenant, Badge, CaredPet, Contest, MarketListing, ContestMetric, District, DistrictGame, Draw, Game, Season, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Metrics, ShopBought, ShopItem, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
+import { hex } from "@scure/base";
+import * as btc from "@scure/btc-signer";
+
+import type { Capsule, CapsuleGift, CapsulePeer, CapsuleScope, Conversation, DmMessage, MarketOffer, OfferQuote, Agent, AgentDraft, AgentGrant, AgentInfo, AgentTask, AgentView, Application, Tenant, Badge, CaredPet, Contest, MarketListing, ContestMetric, District, DistrictGame, Draw, Game, Season, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Metrics, ShopBought, ShopItem, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
 import { CLAIM_BLOCKS, pick, rarityOf, ROUND, roundOf, SEASON, seasonOf, sha256, type Rarity } from "./game";
+import { describeTx, GIFT_TIERS, giftTaproot, parseXonly, REFUND_BLOCKS } from "./gift.ts";
 import { connected } from "./parks";
 import { MAX_SHOWN, PET_KEYS, PETS, type Pet, type PetKey } from "./pets";
 import { prosperity, THRESHOLDS, type ProsperityParts } from "./prosperity";
@@ -167,17 +171,20 @@ type State = {
   shop?: DemoItem[]; // 店铺
   orders?: DemoOrder[];
   capsules?: DemoCapsule[]; // 时间胶囊 the visitor sealed
+  giftTxs?: Record<string, { hex: string; height: number }>; // 礼物's pretend signet: every transaction "broadcast", by txid
   capsulePays?: { id: number; ref: string; at: number; settled: boolean; method?: "onchain" | "lightning"; txid?: string | null; amount?: number }[]; // 封存 payments (api/billing.py), paid by the demo wallet or 演示：模拟付款
   dms?: DemoDm[]; // 私信
   dmStrangers?: boolean;
   blocked?: string[]; // addresses the visitor muted (and so won't hear from)
   newcomer?: { birthday_at: string; block: number | null }; // 新手任务 step 1, as the browser reported it (api/newcomer.py)
 };
-type DemoCapsule = Omit<Capsule, "status" | "tip" | "blocks_left" | "open_height" | "key" | "mine" | "payment" | "has_photo"> & {
+type DemoCapsule = Omit<Capsule, "status" | "tip" | "blocks_left" | "open_height" | "key" | "mine" | "payment" | "has_photo" | "gift"> & {
   ref: string; escrow: string; open_height: number | null;
+  giftRec?: DemoGift; // 礼物: then escrow is the demo server's backup half, given out from H
   pending?: boolean; // 封存 waiting for its (simulated) payment
   told?: boolean; // 「信打开了」 written
 };
+type DemoGift = Omit<CapsuleGift, "tip" | "unlocked" | "explorer" | "inscription_id" | "funded" | "capsule_id" | "author">;
 type DemoDm = { id: number; from: string; to: string; body: string; at: number; read?: boolean; removed?: boolean };
 type DemoAgent = Omit<Agent, "posted_today" | "running" | "problem"> & { n: number; message: string; revoked?: boolean; drafts: AgentDraft[] };
 type DemoItem = Omit<ShopItem, "sold" | "left" | "on_sale" | "mine" | "bought"> & { content: string; sold: number; introduced?: boolean };
@@ -1147,18 +1154,75 @@ function capsuleView(c: DemoCapsule, me: string | null, full = true): Capsule {
       created_at: new Date().toISOString(), read: false, snippet: null, capsule_id: c.id, recipient: c.recipient, block_height: c.open_height! }, ...(s.notifications ?? [])];
     save();
   }
-  const { escrow, ref: _ref, ciphertext, photo, signed_message, signature, pending, told: _told, ...rest } = c;
+  const { escrow, ref: _ref, ciphertext, photo, signed_message, signature, pending, told: _told, giftRec, ...rest } = c;
   return {
     ...rest,
+    gift: giftRec ? { network: giftRec.network, sats: giftRec.sats, height: giftRec.height, refund: giftRec.refund, address: giftRec.address, reveal_txid: giftRec.reveal_txid, funded: !!giftRec.reveal_txid } : null,
     ...(full ? { ciphertext, photo: photo ?? null, signed_message, signature } : {}),
     has_photo: !!photo,
     status: pending ? "pending" : open ? "open" : "sealed",
     tip,
     blocks_left: open ? null : Math.max(1, Math.ceil((openMs - now) / DEMO_BLOCK_MS)),
-    key: open ? escrow : null,
+    key: open && !giftRec ? escrow : null, // a gift's half comes from /gift/backup, at H
     mine: me === c.author,
   };
 }
+const giftView = (c: DemoCapsule): CapsuleGift => {
+  const g = c.giftRec!, tip = demoTip();
+  return { ...g, capsule_id: c.id, author: c.author, inscription_id: g.reveal_txid ? `${g.reveal_txid}i0` : null, funded: !!g.reveal_txid, tip, unlocked: tip >= g.height, explorer: "#demo-explorer" };
+};
+
+// ---- 礼物's pretend signet --------------------------------------------------------------
+// The demo's blocks are the gift network's too. Transactions the page "broadcasts" are kept by txid,
+// each counted as mined in the next block; a sweep is refused until its nLockTime has come, as a
+// node would. The demo wallet's coins are made up as it pays (demoChain.fund).
+
+/** The demo wallet's public key, for the refund leaf (secret 0xde * 32; it's only a demo). */
+export const DEMO_GIFT_SENDER_KEY = "038f19ee7677713806c662078a9f2b2c7b930376d22f2d617bce50b5e444839a7c";
+const giftTxs = () => (load().giftTxs ??= {});
+function chainOutputs() {
+  const all = Object.entries(giftTxs()).map(([txid, t]) => ({ txid, d: describeTx(t.hex), height: t.height }));
+  const spent = new Set(all.flatMap((t) => t.d.inputs.map((i) => `${i.txid}:${i.vout}`)));
+  return all.flatMap((t) => t.d.outputs.map((o, vout) => ({ txid: t.txid, vout, value: o.value, address: o.address, height: t.height, spent: spent.has(`${t.txid}:${vout}`) })));
+}
+export const demoChain = {
+  tip: async () => demoTip(),
+  utxos: async (address: string) =>
+    chainOutputs()
+      .filter((o) => o.address === address && !o.spent)
+      .map((o) => ({ txid: o.txid, vout: o.vout, value: o.value, status: { confirmed: o.height <= demoTip(), block_height: o.height } })),
+  txHex: async (txid: string) => {
+    const t = giftTxs()[txid];
+    if (!t) throw new Error("Transaction not found");
+    return t.hex;
+  },
+  broadcast: async (raw: string) => {
+    const d = describeTx(raw), outs = chainOutputs();
+    if (d.lockTime > demoTip() && d.lockTime < 500_000_000) throw new Error(`non-final: locked until block ${d.lockTime}, the tip is ${demoTip()}`);
+    let value = 0;
+    for (const i of d.inputs) {
+      const o = outs.find((x) => x.txid === i.txid && x.vout === i.vout);
+      if (!o) throw new Error("bad-txns-inputs-missingorspent");
+      if (o.spent) throw new Error("txn-mempool-conflict");
+      value += o.value;
+    }
+    if (d.outputs.reduce((n, o) => n + o.value, 0) > value) throw new Error("bad-txns-in-belowout");
+    giftTxs()[d.txid] = { hex: raw, height: demoTip() + 1 };
+    save();
+    return d.txid;
+  },
+  feeRate: async () => 1,
+  /** The demo wallet pays value to address: a made-up transaction from made-up coins. */
+  fund: (address: string, value: number) => {
+    const tx = new btc.Transaction({ allowUnknownInputs: true, allowUnknownOutputs: true });
+    tx.addInput({ txid: crypto.getRandomValues(new Uint8Array(32)), index: 0 });
+    tx.addOutputAddress(address, BigInt(value), btc.TEST_NETWORK);
+    const raw = hex.encode(tx.unsignedTx), txid = describeTx(raw).txid;
+    giftTxs()[txid] = { hex: raw, height: demoTip() + 1 };
+    save();
+    return { txid, vout: 0, value };
+  },
+};
 function capsulePeers(h: number, scope: CapsuleScope, me: string | null) {
   const tip = demoTip();
   if (!Number.isInteger(h) || h < 0 || h > tip) fail(404, "no such block yet");
@@ -1255,7 +1319,8 @@ function capsuleRoute(p: string, q: URLSearchParams, method: string, body: Recor
   if (p === "/v1/billing/products") return ok({ products: [{ product: "capsule", amount_sats: CAPSULE_SATS }], cosmetics: false, methods: ["onchain", "lightning"] });
   if (p === "/v1/capsules/rules")
     return ok({ min_lead_seconds: CAPSULE_LEAD, block_seconds: DEMO_BLOCK_MS / 1000, tags: ["birth", "wedding", "farewell", "start", "other"], tip: demoTip(),
-      billing: true, free_left: me ? !freeUsed(me) : null, free_days: 366, max_years: 100, styles: ["classic", "midnight", "celadon", "dusk"], max_photo_chars: 420_000, inscribe_sats: 20_000 });
+      billing: true, free_left: me ? !freeUsed(me) : null, free_days: 366, max_years: 100, styles: ["classic", "midnight", "celadon", "dusk"], max_photo_chars: 420_000, inscribe_sats: 20_000,
+      gift: { network: "signet", tiers: [...GIFT_TIERS], min_sats: 50_000, max_sats: 1_000_000, refund_blocks: REFUND_BLOCKS, block_seconds: DEMO_BLOCK_MS / 1000, tip: demoTip(), esplora: "demo", explorer: "#demo-explorer" } });
   if (p === "/v1/capsules" && method === "POST") {
     const a = needMe(), openAt = Number(body.open_at), line = String(body.line ?? "").trim() || null;
     const tier = (body.tier as "free" | "paid" | undefined) ?? "free", style = (body.style as Capsule["style"]) ?? "classic", photo = (body.photo as string | null) ?? null;
@@ -1264,11 +1329,25 @@ function capsuleRoute(p: string, q: URLSearchParams, method: string, body: Recor
     if (tier === "free" && openAt > Date.now() / 1000 + 366 * 86400) fail(400, "a free capsule opens within a year; 封存 (paid) can wait up to 100 years");
     if (tier === "free" && freeUsed(a)) fail(409, "this wallet has used its free capsule; 封存 is the paid tier");
     const ciphertext = String(body.ciphertext);
+    const gift = body.gift as (DemoGift & { network: string }) | undefined;
+    if (gift) {
+      // As api/gift.py check_new: the amount, H after the tip, and the address rebuilt from the keys and H.
+      if (tier === "free") fail(403, "a gift comes with 封存, the paid tier");
+      if (gift.network !== "signet") fail(400, "gifts here are on signet");
+      if (!(gift.sats >= 50_000 && gift.sats <= 1_000_000)) fail(400, "a gift is 50000 to 1000000 sats");
+      if (!(gift.height > demoTip())) fail(400, `the gift's block must be after the signet tip (${demoTip()})`);
+      const rk = parseXonly(gift.recipient_key), sk = gift.refund ? parseXonly(gift.sender_key) : null;
+      if (!rk || (gift.refund && !sk)) fail(400, "keys must be x-only public keys");
+      if (giftTaproot({ height: gift.height, recipient: rk!, sender: sk, refund: gift.refund }).address !== gift.address) fail(400, "address isn't the gift address for these keys and block");
+    }
     const c: DemoCapsule = {
       id: Math.random().toString(36).slice(2, 13), ref: `v${Date.now()}`, author: a, recipient: String(body.recipient).trim(), ciphertext,
       fingerprint: String(body.fingerprint ?? ""), escrow: String(body.key), open_at: new Date(openAt * 1000).toISOString(),
       sealed_height: demoTip(), sealed_at: new Date().toISOString(), line, tag: line ? ((body.tag as Capsule["tag"]) ?? null) : null,
       signed_message: "", signature: String(body.signature), open_height: null, tier, style, photo, pending: tier === "paid",
+      ...(gift ? { giftRec: { network: "signet" as const, sats: gift.sats, height: gift.height, refund: gift.refund, refund_height: gift.refund ? gift.height + REFUND_BLOCKS : null,
+        recipient_key: hex.encode(parseXonly(gift.recipient_key)!), sender_key: gift.refund ? hex.encode(parseXonly(gift.sender_key)!) : null, bearer: !!gift.bearer, address: gift.address,
+        drand_round: gift.drand_round, tlock: gift.tlock, commit_txid: null, reveal_txid: null, verified: false } } : {}),
     };
     (s.capsules ??= []).unshift(c);
     if (!c.pending) newcomerAward(s);
@@ -1317,6 +1396,23 @@ function capsuleRoute(p: string, q: URLSearchParams, method: string, body: Recor
     c.tag = null;
     save();
     return ok({ ok: true });
+  }
+  if ((m = p.match(/^\/v1\/capsules\/([^/]+)\/gift(\/backup|\/txs)?$/))) {
+    const c = (s.capsules ?? []).find((x) => x.id === m![1] && !x.pending && x.giftRec) ?? fail(404, "no gift on this capsule");
+    if (m[2] === "/backup") {
+      if (demoTip() < c.giftRec!.height) fail(403, `locked until block ${c.giftRec!.height}; the signet tip is ${demoTip()}`);
+      return ok({ half: c.escrow, height: c.giftRec!.height, tip: demoTip() });
+    }
+    if (m[2] === "/txs" && method === "POST") {
+      if (c.author !== needMe()) fail(404, "no gift of yours on this capsule");
+      const commit = String(body.commit_txid ?? ""), reveal = String(body.reveal_txid ?? "");
+      if (!/^[0-9a-f]{64}$/.test(commit) || !/^[0-9a-f]{64}$/.test(reveal)) fail(422, "txids are 64 hex characters each");
+      const out = giftTxs()[reveal] ? describeTx(giftTxs()[reveal].hex).outputs[0] : null;
+      if (out && (out.address !== c.giftRec!.address || out.value < c.giftRec!.sats)) fail(400, "the reveal's first output doesn't pay the gift address its amount");
+      Object.assign(c.giftRec!, { commit_txid: commit, reveal_txid: reveal, verified: !!out });
+      save();
+    }
+    return ok(giftView(c));
   }
   if ((m = p.match(/^\/v1\/capsules\/([^/]+)$/))) {
     const c = (s.capsules ?? []).find((x) => x.id === m![1] && (!x.pending || x.author === me)) ?? fail(404, "no such capsule");
