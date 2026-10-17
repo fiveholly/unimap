@@ -6546,6 +6546,40 @@ button.me-link.open {
   white-space: nowrap;
   vertical-align: 1px;
 }
+/* The demo site's 真实 Signet (lib/signet.ts): real transactions on a test network, in amber. */
+.gift-net.live {
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+.gift-live {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+}
+.gift-live.on {
+  border: 1px solid var(--accent);
+}
+.gift-live .check {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.gift-live-note {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--accent);
+  border-radius: 4px;
+  background: rgba(242, 165, 65, 0.08);
+  overflow-wrap: anywhere;
+}
+.gift-live-note b {
+  color: var(--accent-text);
+  font-weight: 600;
+}
 .gift-pick .cap-chips {
   margin-top: 4px;
 }

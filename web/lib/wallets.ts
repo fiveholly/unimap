@@ -29,7 +29,7 @@ const toHex = (b64: string) => Array.from(atob(b64), (c) => c.charCodeAt(0).toSt
 const toBase64 = (hex: string) => btoa(String.fromCharCode(...(hex.match(/../g) ?? []).map((h) => parseInt(h, 16))));
 
 /** UniSat and OKX: one address pays and receives; signPsbt takes hex and the inputs to sign. */
-function hexSigner(provider: () => any, account: () => Promise<{ address: string; publicKey: string | null }>): PsbtSigner {
+export function hexSigner(provider: () => any, account: () => Promise<{ address: string; publicKey: string | null }>): PsbtSigner {
   return {
     accounts: async () => {
       const { address, publicKey } = await account();

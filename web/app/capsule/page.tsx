@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useTip } from "@/components/BlockWatch";
 import { CapsulePay, StylePicker, utcMinute } from "@/components/Capsule";
-import { GiftFund, GiftPicker, sats as giftSats, walletPublicKey } from "@/components/Gift";
+import { GiftFund, GiftPicker, sats as giftSats, useLiveSignet, walletPublicKey } from "@/components/Gift";
 import { PageIntro } from "@/components/PageIntro";
 import { useSession } from "@/components/Session";
 import { api, type BillingProducts, type Capsule, type CapsuleRules, type Payment } from "@/lib/api";
@@ -66,11 +66,12 @@ export default function CapsuleWritePage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+  const liveSwitch = useLiveSignet(); // the demo's 真实 Signet (lib/signet.ts): the rules' gift part follows it
 
   useEffect(() => {
     if (!ready) return;
     api<CapsuleRules>("/v1/capsules/rules", { token }).then(setRules, (e) => setError(e.message));
-  }, [ready, token]);
+  }, [ready, token, liveSwitch]);
   useEffect(() => {
     api<BillingProducts>("/v1/billing/products").then((r) => setPaidSats(r.products.find((p) => p.product === "capsule")?.amount_sats ?? 0), () => {});
     const timer = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 15_000);
@@ -91,6 +92,7 @@ export default function CapsuleWritePage() {
   const allows = tierAllows(chosen);
   const giftRules = rules?.gift ?? null;
   const giftOn = !!giftRules && gift.on;
+  const live = giftOn && !!giftRules?.live;
   // A gift comes with 封存: picking one moves off the free tier.
   useEffect(() => {
     if (giftOn && chosen === "free" && options.some((o) => o.tier === "paid" && o.available)) setTier("paid");
@@ -119,9 +121,19 @@ export default function CapsuleWritePage() {
     setDay(dayOf(when));
     setClock(seconds < 86400 ? new Date(when * 1000).toISOString().slice(11, 16) : "00:00");
   };
-  // A demo or test server lets a capsule open in minutes; offer that too.
+  // A demo or test server lets a capsule open in minutes; offer that too. With a gift on the real
+  // signet, that is the next block or the one after (H = tip + 1 or 2, about 10 to 20 minutes).
+  const giftBlock = giftRules?.block_seconds ?? 600;
+  const quick: [string, number][] = live
+    ? [
+        [t("下一个块（约 10 分钟）"), Math.max(lead + 30, Math.floor(giftBlock / 2))],
+        [t("两个块后（约 20 分钟）"), Math.floor(giftBlock * 1.5)],
+      ]
+    : lead < 3600
+      ? [[t("几分钟后"), Math.max(lead, 60) + 120]]
+      : [];
   const presets: [string, number][] = [
-    ...(lead < 3600 ? ([[t("几分钟后"), Math.max(lead, 60) + 120]] as [string, number][]) : []),
+    ...quick,
     [t("一年后"), YEAR],
     [t("十年后"), 10 * YEAR],
     [t("18 年后"), 18 * YEAR],
@@ -161,7 +173,7 @@ export default function CapsuleWritePage() {
       const fresh = giftOn ? (await api<CapsuleRules>("/v1/capsules/rules", { token })).gift : null;
       if (giftOn && !fresh) throw new Error(t("这个站点现在不能附礼物。"));
       const prepared = fresh
-        ? await prepareGift({ rules: fresh, choice: gift, walletKey: await walletPublicKey(wallet), key: sealed.key, ciphertext: sealed.ciphertext, photo: sealed.photo,
+        ? await prepareGift({ rules: fresh, choice: gift, walletKey: await walletPublicKey(wallet, !!fresh.live), key: sealed.key, ciphertext: sealed.ciphertext, photo: sealed.photo,
             fingerprint: sealed.fingerprint, openAt, now: Math.floor(Date.now() / 1000), recipient: to, author: address ?? "" })
         : null;
       const signedAt = Math.floor(Date.now() / 1000);
@@ -297,7 +309,7 @@ export default function CapsuleWritePage() {
           ) : (
             <>
               {options.length > 0 && <TierPicker options={options} value={chosen} onChange={setTier} />}
-              {giftRules && <GiftPicker rules={giftRules} value={gift} onChange={setGift} height={giftHeight} blockSeconds={giftRules.block_seconds} />}
+              {giftRules && <GiftPicker rules={giftRules} value={gift} onChange={setGift} height={giftHeight} blockSeconds={giftRules.block_seconds} live={liveSwitch} />}
               <div className="cap-field">
                 <span>{t("什么时候能打开")}</span>
                 <div className="cap-chips">
@@ -336,7 +348,7 @@ export default function CapsuleWritePage() {
                   <span>{t("钥匙")}</span>
                   <span>{giftOn ? t("一半在 unimap，一半在时间锁") : t("两份都留")}</span>
                 </div>
-                <p className="dim small">{giftOn ? t("区块 {h} 到了，unimap 才交出它那一半；时间锁里是另一半。drand 到点也会公开整把钥匙。", { h: (giftHeight ?? 0).toLocaleString("en-US") }) : t("unimap 到点公开，收信人手里也有一把备用钥匙：封好后的链接里带着它，只显示这一次。")}</p>
+                <p className="dim small">{live ? t("Signet 的区块 {h} 到了，演示站才交出 unimap 那一半（它存在这个浏览器里）；时间锁里是另一半。drand 到点也会公开整把钥匙，换一台设备也能打开。", { h: (giftHeight ?? 0).toLocaleString("en-US") }) : giftOn ? t("区块 {h} 到了，unimap 才交出它那一半；时间锁里是另一半。drand 到点也会公开整把钥匙。", { h: (giftHeight ?? 0).toLocaleString("en-US") }) : t("unimap 到点公开，收信人手里也有一把备用钥匙：封好后的链接里带着它，只显示这一次。")}</p>
                 <div>
                   <span>{t("存在哪")}</span>
                   <span>{t("钱包签名，存在 unimap")}</span>
