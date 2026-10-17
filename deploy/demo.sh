@@ -71,14 +71,16 @@ cd "$DIR/src"
 git fetch --quiet origin "$BRANCH"
 sha=$(git rev-parse --short=12 "origin/$BRANCH")
 live=$(readlink "$DIR/current" 2>/dev/null | xargs -r basename || true)
-[ "$sha" = "$live" ] && [ "${1:-}" != "--force" ] && exit 0
+[ "$sha" = "${live%%-*}" ] && [ "${1:-}" != "--force" ] && exit 0
 echo "building $BRANCH at $sha"
 rel="$DIR/releases/$sha"
+# A forced rebuild of the live commit goes next to it, never over it.
+[ "$sha" = "${live%%-*}" ] && rel="$rel-$(date +%s)"
 rm -rf "$rel" && mkdir -p "$rel"
 git archive "origin/$BRANCH" web | tar -x -C "$rel"
 cd "$rel/web"
 # Reuse the live release's packages when the lockfile didn't change.
-if [ -n "$live" ] && cmp -s package-lock.json "$DIR/releases/$live/web/package-lock.json"; then
+if [ -n "$live" ] && [ -d "$DIR/releases/$live/web/node_modules" ] && cmp -s package-lock.json "$DIR/releases/$live/web/package-lock.json"; then
   cp -a "$DIR/releases/$live/web/node_modules" .
 else
   npm ci --no-audit --no-fund --loglevel=error
