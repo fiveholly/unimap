@@ -23,14 +23,37 @@ letter never is. The author can take the line down, and anyone can report it (ap
 
 Tiers, while the product `capsule` sells (api/billing.py: BILLING_PRICE_CAPSULE_SATS and a way to
 be paid, PLATFORM_BTC_ADDRESS or a Lightning address). With billing off every capsule is tier 'open': everything free, no limits.
+
+上链 (onchain(): 封存 sells and the gift network is set, api/gift.py network(); test networks only,
+never mainnet). Every letter is then inscribed on that network (an Ordinals inscription, commit and
+reveal, made and paid for in the sender's browser and wallet as a gift's is: api/gift.py), and
+there is no centralized letter, nor a free fallback. The tiers are:
+- free (首封, the first letter): one per wallet group (free_used, FREE_PER_WALLET), no service fee
+  (the sender pays only the network fee), text only, the default envelope, no 「信打开了」, and any
+  open_at up to MAX_YEARS.
+- paid: the service fee (product capsule, paid as below before it counts as sealed) and the network
+  fee; one photo of at most MAX_CHAIN_PHOTO bytes as shrunk in the browser (it is inscribed too),
+  any envelope STYLE, and 「信打开了」.
+A letter carries `chain` (api/gift.py LetterIn, checked by check_letter, kept in
+social.capsule_inscriptions) or a `gift` (the letter rides the gift's UTXO, as before; a 首封 may
+carry one). Either way its key is split K = S xor R and timelocked to drand: escrow_key is S, and
+the capsule is marked onchain. A letter's S comes out of view() as "half" once the capsule opens (a
+gift's only from api/gift.py, at H); R is in the share link's #fragment (#r=), or in the 时间锁. The
+txids come back through api/gift.py (POST /v1/capsules/{id}/chain/txs, or /gift/txs); opening, the
+notice and 同块人 work on the capsule row as for any other. The signed text gains the gift's line or
+the letter's (api/gift.py letter_line). unimap still keeps a copy of the ciphertext, which the
+pages read when the chain can't be. The write page shows costs in US dollars at mainnet's price
+and fee rate (rules' usd, api/prices.py): on a test network, what the same letter would cost on mainnet.
+
+Without the gift network (mainnet among them), as before:
 - free (免费体验): one per wallet group, text only, the default envelope, opening at most FREE_DAYS
   after sealing.
 - paid (封存): any open_at up to MAX_YEARS, one photo, any envelope STYLE, and 「信打开了」 told to
-  the sender (and the recipient, when the label is an address that has signed in here). It is
-  stored 'pending' (not listed, not on 同块人, key escrowed) with a payment from the billing flow
-  (sent on-chain from the writer's wallet by default, or a Lightning invoice); billing's
-  on_settled hook (seal_paid) seals it at the tip of that moment. Unpaid ones are deleted once
-  PENDING_MINUTES have passed and their payments are no longer pending (sweep()).
+  the sender (and the recipient, when the label is an address that has signed in here).
+A paid capsule (either way) is stored 'pending' (not listed, not on 同块人, key escrowed) with a
+payment from the billing flow (sent on-chain from the writer's wallet by default, or a Lightning
+invoice); billing's on_settled hook (seal_paid) seals it at the tip of that moment. Unpaid ones are
+deleted once PENDING_MINUTES have passed and their payments are no longer pending (sweep()).
 The photo is encrypted in the browser under the letter's key; fingerprint is the sha256 of the
 letter's bytes followed by the photo's, so a signature covers both (with no photo it is the letter's
 alone, as before). The style is presentation only and isn't signed.
@@ -39,10 +62,10 @@ sweep() runs once per new block, from the background task that draws the block's
 (api/game.py ensure_soon, on the first map request after the tip moves): it opens and tells
 capsules whose time has come, and clears unpaid ones. There is no other scheduler.
 
-礼物 (api/gift.py): a 封存 capsule (or any, with billing off) may carry sats on a test network,
-locked until a block H by Bitcoin itself. Its letter key is then never escrowed whole: escrow_key
-holds unimap's half of a backup key, the capsule is marked gift, and view() never hands that half
-out; api/gift.py does, once the gift network reaches H. The signed text gains a gift line.
+礼物 (api/gift.py): a paid capsule (a 首封 too while onchain(); any, with billing off) may carry sats
+on a test network, locked until a block H by Bitcoin itself. Its letter key is then never escrowed
+whole: escrow_key holds unimap's half of a backup key, the capsule is marked gift, and view() never
+hands that half out; api/gift.py does, once the gift network reaches H. The signed text gains a gift line.
 """
 
 import base64
@@ -58,7 +81,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import billing, bip322, moderation, newcomer, notify
+from api import billing, bip322, moderation, newcomer, notify, prices
 from api import gift as gifts
 from api.auth import current_address, normalize_address, optional_address
 from api.db import cursor
@@ -82,6 +105,7 @@ STYLES = ("classic", "midnight", "celadon", "dusk")  # envelopes; classic is the
 FREE_PER_WALLET = 1
 FREE_DAYS = 366  # a free capsule opens within a year of sealing
 MAX_PHOTO = 420_000  # base64: a ~300 KB image after the browser shrinks it, its iv and tag
+MAX_CHAIN_PHOTO = 50_000  # bytes: an inscribed letter's photo as the browser shrinks it, before its iv and tag
 PENDING_MINUTES = 60  # an unpaid capsule waits this long, as long as its invoice is checked (api/tips.py)
 INSCRIBE_SATS = 20_000  # 刻上链, shown as coming soon; not sold
 
@@ -105,6 +129,11 @@ def selling():
     return billing.price("capsule") > 0
 
 
+def onchain():
+    """True while letters are inscribed (上链): 封存 sells and the gift network is set."""
+    return selling() and gifts.network() is not None
+
+
 def _group(cur, address):
     """wallets.group, for a cursor of either kind of row: address's wallet group, main first."""
     cur.execute(
@@ -126,9 +155,9 @@ def iso(unix):
     return datetime.fromtimestamp(unix, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def capsule_message(recipient, open_at, fingerprint, line, tag, signed_at, gift=None):
-    """The exact text the wallet signs to seal a capsule; a gift (api/gift.py) adds a line before
-    the time. Must match capsuleMessage in web/lib/capsule.ts."""
+def capsule_message(recipient, open_at, fingerprint, line, tag, signed_at, gift=None, letter=None):
+    """The exact text the wallet signs to seal a capsule; a gift or an inscribed letter (api/gift.py)
+    adds a line before the time. Must match capsuleMessage in web/lib/capsule.ts."""
     return "\n".join(
         [
             "unimap time capsule",
@@ -138,6 +167,7 @@ def capsule_message(recipient, open_at, fingerprint, line, tag, signed_at, gift=
             f"public: {line if line else 'none'}",
             f"tag: {tag if tag else 'none'}",
             *([gifts.gift_line(gift)] if gift else []),
+            *([gifts.letter_line(letter)] if letter else []),
             f"time: {signed_at}",
         ]
     )
@@ -236,7 +266,7 @@ def blocks_left(open_at, now=None):
 
 COLUMNS = (
     "id, ref, author, recipient, ciphertext, fingerprint, escrow_key, open_at, sealed_height, sealed_at, "
-    "line, tag, line_removed_by, signed_message, signature, due_tip, open_height, tier, status, photo, style, notified_at, gift"
+    "line, tag, line_removed_by, signed_message, signature, due_tip, open_height, tier, status, photo, style, notified_at, gift, onchain"
 )
 
 
@@ -278,8 +308,12 @@ def view(cur, row, viewer, tip_height, full=True):
         "style": row["style"],
         "has_photo": row["photo"] is not None,
         "open_height": opened,
-        # held back until it opens; a gift's is a backup half, which only api/gift.py releases, at H
-        "key": row["escrow_key"] if opened is not None and not row["gift"] else None,
+        # held back until it opens; a gift's is a backup half, which only api/gift.py releases, at H;
+        # an inscribed letter's is unimap's half S, which opens it with the link's R
+        "key": row["escrow_key"] if opened is not None and not row["gift"] and not row["onchain"] else None,
+        "half": row["escrow_key"] if opened is not None and row["onchain"] and not row["gift"] else None,
+        "onchain": row["onchain"],
+        "chain": gifts.letter(cur, row["id"]) if row["onchain"] and not row["gift"] else None,
         "gift": gifts.public(cur, row["id"]) if row["gift"] else None,
         "line": row["line"],
         "tag": row["tag"],
@@ -296,8 +330,10 @@ def view(cur, row, viewer, tip_height, full=True):
 @router.get("/v1/capsules/rules")
 def rules(viewer: str | None = Depends(optional_address)):
     """What the write page needs: how far ahead open_at must be, the tags, the tip, and the tiers:
-    whether 封存 sells (its price is in /v1/billing/products) and whether the viewer's wallet still
-    has its free capsule (null when not signed in)."""
+    whether 封存 sells (its price is in /v1/billing/products), whether letters are inscribed
+    (onchain, and what an inscription's reveal carries), whether the viewer's wallet still has its
+    free capsule or 首封 (null when not signed in), and mainnet's BTC/USD price and fee rate for
+    showing costs in dollars (null without a price)."""
     with cursor() as cur:
         on = selling()
         return {
@@ -312,6 +348,10 @@ def rules(viewer: str | None = Depends(optional_address)):
             "styles": list(STYLES),
             "max_photo_chars": MAX_PHOTO,
             "inscribe_sats": inscribe_sats(),
+            "onchain": on and gifts.network() is not None,
+            "max_chain_photo_bytes": MAX_CHAIN_PHOTO,
+            "postage_sats": gifts.POSTAGE,
+            "usd": prices.usd(),
             "gift": gifts.rules(),
         }
 
@@ -329,6 +369,7 @@ class NewCapsule(BaseModel):
     photo: str | None = Field(default=None, max_length=MAX_PHOTO)  # base64 of iv || AES-GCM, under the same key
     style: str | None = None  # one of STYLES; left out: classic
     gift: gifts.GiftIn | None = None  # 礼物: key is then unimap's half of the backup key
+    chain: gifts.LetterIn | None = None  # 上链: the letter is inscribed; key is then unimap's half S
 
 
 def _b64(s, urlsafe=False):
@@ -361,8 +402,15 @@ def seal(req: NewCapsule, address: str = Depends(moderation.writer_address)):
     tier = (req.tier or "free") if selling() else "open"
     if tier not in TIERS + ("open",):
         raise HTTPException(400, f"tier is one of {', '.join(TIERS)}")
+    inscribed = tier != "open" and onchain()  # 上链: every letter is inscribed, with a gift or on its own
+    if inscribed and (req.chain is None) == (req.gift is None):
+        raise HTTPException(400, "letters here are inscribed on-chain: send chain, or a gift (not both)")
+    if req.chain is not None and not inscribed:
+        raise HTTPException(403, "letters aren't inscribed on this server")
     if tier == "free" and (req.photo or style != "classic"):
-        raise HTTPException(403, "a photo and the envelope styles come with 封存, the paid tier")
+        raise HTTPException(403, "a photo and the envelope styles come with the paid tier" if inscribed else "a photo and the envelope styles come with 封存, the paid tier")
+    if inscribed and len(photo) > MAX_CHAIN_PHOTO + 12 + 16:
+        raise HTTPException(400, f"an inscribed photo is at most {MAX_CHAIN_PHOTO // 1000} KB")
     key = _b64(req.key, urlsafe=True)
     if key is None or len(key) != 32:
         raise HTTPException(400, "key must be a 256-bit AES key, base64url")
@@ -373,13 +421,14 @@ def seal(req: NewCapsule, address: str = Depends(moderation.writer_address)):
         raise HTTPException(400, f"open_at must be at least {min_lead()} seconds from now")
     if req.open_at > now + MAX_YEARS * 366 * 86400:
         raise HTTPException(400, f"open_at must be within {MAX_YEARS} years")
-    if tier == "free" and req.open_at > now + FREE_DAYS * 86400:
+    if tier == "free" and not inscribed and req.open_at > now + FREE_DAYS * 86400:
         raise HTTPException(400, "a free capsule opens within a year; 封存 (paid) can wait up to 100 years")
-    if req.gift is not None and tier == "free":
+    if req.gift is not None and tier == "free" and not inscribed:
         raise HTTPException(403, "a gift comes with 封存, the paid tier")
     gift = gifts.check_new(req.gift) if req.gift is not None else None
+    letter = gifts.check_letter(req.chain) if req.chain is not None else None
     fingerprint = hashlib.sha256(raw + photo).hexdigest()
-    message = capsule_message(recipient, req.open_at, fingerprint, line, req.tag, req.signed_at, gift)
+    message = capsule_message(recipient, req.open_at, fingerprint, line, req.tag, req.signed_at, gift, letter)
     try:
         if not bip322.verify(address, message, req.signature):
             raise HTTPException(401, "bad capsule signature")
@@ -399,11 +448,13 @@ def seal(req: NewCapsule, address: str = Depends(moderation.writer_address)):
             # One at a time per wallet group, so two tabs can't both take the free one.
             cur.execute("select pg_advisory_xact_lock(hashtext('capsule-free:' || %s));", (_group(cur, address)[0],))
             if free_used(cur, address) >= FREE_PER_WALLET:
+                if inscribed:
+                    raise HTTPException(409, "this wallet has used its first letter; later ones carry the service fee")
                 raise HTTPException(409, "this wallet has used its free capsule; 封存 is the paid tier")
         cur.execute(
             f"insert into social.capsules (id, ref, author, recipient, ciphertext, fingerprint, escrow_key, open_at, "
-            "sealed_height, line, tag, signed_message, signature, tier, status, photo, style, gift) "
-            "values (%s, %s, %s, %s, %s, %s, %s, to_timestamp(%s), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "sealed_height, line, tag, signed_message, signature, tier, status, photo, style, gift, onchain) "
+            "values (%s, %s, %s, %s, %s, %s, %s, to_timestamp(%s), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             f"on conflict (signature) do nothing returning {COLUMNS};",
             (
                 secrets.token_urlsafe(9),
@@ -424,6 +475,7 @@ def seal(req: NewCapsule, address: str = Depends(moderation.writer_address)):
                 req.photo or None,
                 style,
                 gift is not None,
+                inscribed,
             ),
         )
         row = cur.fetchone()
@@ -431,6 +483,8 @@ def seal(req: NewCapsule, address: str = Depends(moderation.writer_address)):
             raise HTTPException(409, "this signature was already used")
         if gift is not None:
             gifts.store(cur, row["id"], gift)
+        if letter is not None:
+            gifts.store_letter(cur, row["id"], letter)
         out = view(cur, row, address, height)
     if row["status"] == "sealed":
         with cursor() as cur:

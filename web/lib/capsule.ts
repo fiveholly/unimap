@@ -22,9 +22,16 @@ export const TAG_NAMES: Record<Tag, string> = { birth: "出生#tag", wedding: "�
 // (text only, the default envelope, opening within a year) and "paid" (封存) is paid for (from the
 // connected wallet on-chain, or over Lightning; lib/billing.ts) before it counts as sealed.
 // "inscribe" (刻上链) is shown as coming soon, never sold.
+//
+// 上链 (rules.onchain: billing on and a gift network set): every letter is inscribed on that test
+// network, made and paid for in the browser and wallet (lib/giftseal.ts prepareLetter, GiftFund).
+// "free" is then the 首封: one per wallet, no service fee (only the network fee), text only, the
+// default envelope, any time up to 100 years. "paid" adds the service fee and unlocks a photo (at
+// most MAX_CHAIN_PHOTO_BYTES, inscribed with the letter), the envelopes and 「信打开了」. Neither the
+// centralized 封存 nor 刻上链 is offered then.
 
 export type Tier = "open" | "free" | "paid";
-export type TierOption = { tier: "free" | "paid" | "inscribe"; sats: number; available: boolean };
+export type TierOption = { tier: "free" | "paid" | "inscribe"; sats: number; available: boolean; onchain?: boolean };
 
 /** The envelopes: paper and wax. classic is the free one. */
 export const STYLES = ["classic", "midnight", "celadon", "dusk"] as const;
@@ -34,11 +41,22 @@ export const STYLE_NAMES: Record<EnvelopeStyle, string> = { classic: "素笺朱�
 /** The photo once shrunk in the browser, before it is encrypted. */
 export const MAX_PHOTO_BYTES = 300_000;
 export const PHOTO_SIDE = 1600;
+/** An inscribed photo: at most 50 KB (api/capsule.py MAX_CHAIN_PHOTO), aimed at ~20 KB and 640 px,
+ * since every byte is paid for in network fees. */
+export const MAX_CHAIN_PHOTO_BYTES = 50_000;
+export const CHAIN_PHOTO_TARGET = 20_000;
+export const CHAIN_PHOTO_SIDE = 640;
 
 /** The options on the write page, in order: 免费体验 while the wallet still has it (or before
- * anyone signs in), 封存 at its price, and 刻上链, never available. None with billing off. */
-export function tierOptions(billing: boolean, freeLeft: boolean | null, paidSats: number, inscribeSats: number): TierOption[] {
+ * anyone signs in), 封存 at its price, and 刻上链, never available. None with billing off. With
+ * onchain: the 首封 while the wallet has it, then the paid letter; both inscribed. */
+export function tierOptions(billing: boolean, freeLeft: boolean | null, paidSats: number, inscribeSats: number, onchain = false): TierOption[] {
   if (!billing) return [];
+  if (onchain)
+    return [
+      ...(freeLeft !== false ? [{ tier: "free" as const, sats: 0, available: true, onchain: true }] : []),
+      { tier: "paid", sats: paidSats, available: paidSats > 0, onchain: true },
+    ];
   return [
     ...(freeLeft !== false ? [{ tier: "free" as const, sats: 0, available: true }] : []),
     { tier: "paid", sats: paidSats, available: paidSats > 0 },
@@ -52,15 +70,17 @@ export function defaultTier(options: TierOption[]): Tier {
   return options.some((o) => o.tier === "free") ? "free" : "paid";
 }
 
-/** What a capsule of this tier may carry: a photo, an envelope style, any time up to 100 years, and 「信打开了」. */
-export function tierAllows(tier: Tier): { photo: boolean; style: boolean; anyTime: boolean; told: boolean } {
+/** What a capsule of this tier may carry: a photo, an envelope style, any time up to 100 years, and
+ * 「信打开了」. An inscribed 首封 (onchain) may wait as long as any. */
+export function tierAllows(tier: Tier, onchain = false): { photo: boolean; style: boolean; anyTime: boolean; told: boolean } {
   const all = tier !== "free";
-  return { photo: all, style: all, anyTime: all, told: all };
+  return { photo: all, style: all, anyTime: all || onchain, told: all };
 }
 
-/** Whether openAt is too far off for the free tier: more than freeDays after now (unix seconds). */
-export function pastFreeLimit(tier: Tier, openAt: number, now: number, freeDays: number): boolean {
-  return tier === "free" && openAt > now + freeDays * 86400;
+/** Whether openAt is too far off for the free tier: more than freeDays after now (unix seconds).
+ * Never for an inscribed 首封 (onchain). */
+export function pastFreeLimit(tier: Tier, openAt: number, now: number, freeDays: number, onchain = false): boolean {
+  return tier === "free" && !onchain && openAt > now + freeDays * 86400;
 }
 
 /** Width and height scaled down (never up) so the longer side is at most side. */
@@ -74,9 +94,13 @@ export function kb(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / 1000))} KB`;
 }
 
-/** Shrink an image in the browser to a JPEG of at most maxBytes: lower quality first, then size. */
-export async function compressImage(file: Blob, maxBytes = MAX_PHOTO_BYTES, side = PHOTO_SIDE): Promise<Uint8Array> {
+/** Shrink an image in the browser to a JPEG of at most maxBytes: lower quality first, then size.
+ * With target (an inscribed photo), a WebP where the browser can make one (else a JPEG), as small as
+ * target if it gets there, else the first try that fits in maxBytes. */
+export async function compressImage(file: Blob, maxBytes = MAX_PHOTO_BYTES, side = PHOTO_SIDE, target?: number): Promise<Uint8Array> {
   const bitmap = await createImageBitmap(file);
+  const type = target ? "image/webp" : "image/jpeg";
+  let fits: Blob | null = null;
   try {
     for (let s = side; s >= 320; s = Math.round(s * 0.75)) {
       const [w, h] = fitWithin(bitmap.width, bitmap.height, s);
@@ -84,15 +108,32 @@ export async function compressImage(file: Blob, maxBytes = MAX_PHOTO_BYTES, side
       canvas.width = w;
       canvas.height = h;
       canvas.getContext("2d")!.drawImage(bitmap, 0, 0, w, h);
-      for (const q of [0.85, 0.72, 0.6, 0.48]) {
-        const blob = await new Promise<Blob | null>((done) => canvas.toBlob(done, "image/jpeg", q));
-        if (blob && blob.size <= maxBytes) return new Uint8Array(await blob.arrayBuffer());
+      for (const q of target ? [0.8, 0.68, 0.56, 0.44] : [0.85, 0.72, 0.6, 0.48]) {
+        let blob = await new Promise<Blob | null>((done) => canvas.toBlob(done, type, q));
+        if (blob && blob.type !== type) blob = await new Promise<Blob | null>((done) => canvas.toBlob(done, "image/jpeg", q)); // no WebP here
+        if (!blob || blob.size > maxBytes) continue;
+        if (!target || blob.size <= target) return new Uint8Array(await blob.arrayBuffer());
+        fits ??= blob;
       }
     }
   } finally {
     bitmap.close();
   }
-  throw new Error(t("这张照片压不到 300 KB 以内，换一张试试。"));
+  if (fits) return new Uint8Array(await fits.arrayBuffer());
+  throw new Error(t("这张照片压不到 {size} 以内，换一张试试。", { size: kb(maxBytes) }));
+}
+
+/** The image type of a photo's bytes (WebP or JPEG), for showing it. */
+export function imageType(bytes: Uint8Array): string {
+  const tag = (i: number, s: string) => s.split("").every((c, j) => bytes[i + j] === c.charCodeAt(0));
+  return bytes.length > 12 && tag(0, "RIFF") && tag(8, "WEBP") ? "image/webp" : "image/jpeg";
+}
+
+/** "$1.20" for sats at btcUsd dollars a bitcoin; "$0.004" below a cent shows as "<$0.01". */
+export function usd(sats: number, btcUsd: number): string {
+  const d = (sats * btcUsd) / 1e8;
+  if (d > 0 && d < 0.01) return "<$0.01";
+  return `$${d.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 /** Unix seconds as the API writes them in the signed text: 2044-10-15T00:00:00Z. */
@@ -100,8 +141,8 @@ export function isoZ(unix: number): string {
   return new Date(unix * 1000).toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
-/** The exact text the wallet signs to seal a capsule; a 礼物 adds its line (lib/gift.ts giftLine)
- * before the time. Must match capsule_message in api/capsule.py. */
+/** The exact text the wallet signs to seal a capsule; a 礼物 or an inscribed letter adds its line
+ * (lib/gift.ts giftLine, letterLine) before the time. Must match capsule_message in api/capsule.py. */
 export function capsuleMessage(recipient: string, openAt: number, fingerprint: string, line: string | null, tag: Tag | null, signedAt: number, giftLine?: string | null): string {
   return [
     "unimap time capsule",
@@ -148,6 +189,12 @@ export function shortHash(hex: string): string {
 /** The spare key in a share link's fragment: #k=<key>. */
 export function keyFromHash(hash: string): string | null {
   const m = hash.replace(/^#/, "").match(/(?:^|&)k=([A-Za-z0-9_-]{43})(?:&|$)/);
+  return m ? m[1] : null;
+}
+
+/** An inscribed letter's half of the key in a share link's fragment: #r=<half> (the other is unimap's). */
+export function halfFromHash(hash: string): string | null {
+  const m = hash.replace(/^#/, "").match(/(?:^|&)r=([A-Za-z0-9_-]{43})(?:&|$)/);
   return m ? m[1] : null;
 }
 

@@ -6,9 +6,9 @@
 import { hex } from "@scure/base";
 import * as btc from "@scure/btc-signer";
 
-import type { Capsule, CapsuleGift, CapsulePeer, CapsuleScope, Conversation, DmMessage, MarketOffer, OfferQuote, Agent, AgentDraft, AgentGrant, AgentInfo, AgentTask, AgentView, Application, Tenant, Badge, CaredPet, Contest, MarketListing, ContestMetric, District, DistrictGame, Draw, Game, Season, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Metrics, ShopBought, ShopItem, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
+import type { Capsule, CapsuleChain, CapsuleGift, CapsulePeer, CapsuleScope, Conversation, DmMessage, MarketOffer, OfferQuote, Agent, AgentDraft, AgentGrant, AgentInfo, AgentTask, AgentView, Application, Tenant, Badge, CaredPet, Contest, MarketListing, ContestMetric, District, DistrictGame, Draw, Game, Season, FeedItem, Land, LandEvent, Me, Notification, Parcel, Park, Poll, Post, Ranking, Recruiting, ReportGroup, Role, Ban, Sale, Metrics, ShopBought, ShopItem, Tip, TipTop, LinkedWallet, Person, SearchResults, Showcase, Tile, XAccount } from "./api";
 import { CLAIM_BLOCKS, pick, rarityOf, ROUND, roundOf, SEASON, seasonOf, sha256, type Rarity } from "./game";
-import { describeTx, GIFT_TIERS, giftTaproot, parseXonly, REFUND_BLOCKS } from "./gift.ts";
+import { describeTx, GIFT_TIERS, giftTaproot, parseXonly, POSTAGE, REFUND_BLOCKS } from "./gift.ts";
 import { connected } from "./parks";
 import { MAX_SHOWN, PET_KEYS, PETS, type Pet, type PetKey } from "./pets";
 import { prosperity, THRESHOLDS, type ProsperityParts } from "./prosperity";
@@ -179,13 +179,15 @@ type State = {
   blocked?: string[]; // addresses the visitor muted (and so won't hear from)
   newcomer?: { birthday_at: string; block: number | null }; // 新手任务 step 1, as the browser reported it (api/newcomer.py)
 };
-type DemoCapsule = Omit<Capsule, "status" | "tip" | "blocks_left" | "open_height" | "key" | "mine" | "payment" | "has_photo" | "gift"> & {
+type DemoCapsule = Omit<Capsule, "status" | "tip" | "blocks_left" | "open_height" | "key" | "mine" | "payment" | "has_photo" | "gift" | "chain" | "half"> & {
   ref: string; escrow: string; open_height: number | null;
   giftRec?: DemoGift; // 礼物: then escrow is the demo server's backup half, given out from H
+  chainRec?: DemoChainRec; // 上链的信: then escrow is the demo server's half S, given out once open
   pending?: boolean; // 封存 waiting for its (simulated) payment
   told?: boolean; // 「信打开了」 written
 };
 type DemoGift = Omit<CapsuleGift, "tip" | "unlocked" | "explorer" | "inscription_id" | "funded" | "capsule_id" | "author">; // live: on the real signet (lib/signet.ts)
+type DemoChainRec = Omit<CapsuleChain, "inscribed" | "inscription_id" | "explorer">;
 /** What the 真实 Signet routes read from the real signet before the (synchronous) route runs. */
 type Live = { tip: number | null; reveal?: EsploraTx | Record<string, never> | null };
 type DemoDm = { id: number; from: string; to: string; body: string; at: number; read?: boolean; removed?: boolean };
@@ -1114,6 +1116,9 @@ function agentView(a: DemoAgent, s: State): AgentView {
 // per block; the visitor's own capsules are kept in localStorage, key and all.
 const CAPSULE_LEAD = 120; // seconds
 const CAPSULE_SATS = 2000; // 封存, as deploy/unimap.env.example suggests
+// api/prices.py, mocked: a fixed mainnet BTC/USD price and a typical mainnet fee rate (sat/vB).
+const DEMO_USD = { btc_usd: 65_000, fee_rate: 4 };
+const MAX_CHAIN_PHOTO = 50_000; // api/capsule.py MAX_CHAIN_PHOTO
 // unimap's address for on-chain payments (PLATFORM_BTC_ADDRESS); the demo wallet only pretends to send to it.
 const DEMO_PAY_ADDRESS = "bc1pxnjyjj0cxauyt5hhmu29qg3yqa2pljnnqtpnjuelzgwqn6f64tnq8rtqhp";
 const demoBlockTime = (h: number) => (load().boot ?? Date.now()) + (h - DEMO_TIP) * DEMO_BLOCK_MS;
@@ -1157,19 +1162,23 @@ function capsuleView(c: DemoCapsule, me: string | null, full = true): Capsule {
       created_at: new Date().toISOString(), read: false, snippet: null, capsule_id: c.id, recipient: c.recipient, block_height: c.open_height! }, ...(s.notifications ?? [])];
     save();
   }
-  const { escrow, ref: _ref, ciphertext, photo, signed_message, signature, pending, told: _told, giftRec, ...rest } = c;
+  const { escrow, ref: _ref, ciphertext, photo, signed_message, signature, pending, told: _told, giftRec, chainRec, ...rest } = c;
   return {
     ...rest,
+    onchain: !!(chainRec || (giftRec && c.onchain)),
+    chain: chainRec ? chainView(chainRec) : null,
+    half: open && chainRec ? escrow : null, // an inscribed letter's half S, once open; the link's #r= is R
     gift: giftRec ? { network: giftRec.network, sats: giftRec.sats, height: giftRec.height, refund: giftRec.refund, address: giftRec.address, reveal_txid: giftRec.reveal_txid, funded: !!giftRec.reveal_txid, ...(giftRec.live ? { live: true } : {}) } : null,
     ...(full ? { ciphertext, photo: photo ?? null, signed_message, signature } : {}),
     has_photo: !!photo,
     status: pending ? "pending" : open ? "open" : "sealed",
     tip,
     blocks_left: open ? null : Math.max(1, Math.ceil((openMs - now) / DEMO_BLOCK_MS)),
-    key: open && !giftRec ? escrow : null, // a gift's half comes from /gift/backup, at H
+    key: open && !giftRec && !chainRec ? escrow : null, // a gift's half comes from /gift/backup, at H
     mine: me === c.author,
   };
 }
+const chainView = (r: DemoChainRec): CapsuleChain => ({ ...r, inscribed: !!r.reveal_txid, inscription_id: r.reveal_txid ? `${r.reveal_txid}i0` : null, explorer: r.live ? SIGNET_EXPLORER : "#demo-explorer" });
 const giftView = (c: DemoCapsule, live?: Live): CapsuleGift => {
   const g = c.giftRec!, tip = g.live ? (live?.tip ?? null) : demoTip();
   return { ...g, capsule_id: c.id, author: c.author, inscription_id: g.reveal_txid ? `${g.reveal_txid}i0` : null, funded: !!g.reveal_txid, tip, unlocked: tip != null && tip >= g.height,
@@ -1183,6 +1192,8 @@ const giftView = (c: DemoCapsule, live?: Live): CapsuleGift => {
 
 /** The demo wallet's public key, for the refund leaf (secret 0xde * 32; it's only a demo). */
 export const DEMO_GIFT_SENDER_KEY = "038f19ee7677713806c662078a9f2b2c7b930376d22f2d617bce50b5e444839a7c";
+/** The demo wallet's own signet address (P2TR of that key), where an inscribed letter's postage comes back to. */
+export const DEMO_TEST_ADDRESS = btc.p2tr(hex.decode(DEMO_GIFT_SENDER_KEY).slice(1), undefined, btc.TEST_NETWORK).address!;
 const giftTxs = () => (load().giftTxs ??= {});
 function chainOutputs() {
   const all = Object.entries(giftTxs()).map(([txid, t]) => ({ txid, d: describeTx(t.hex), height: t.height }));
@@ -1324,6 +1335,8 @@ function capsuleRoute(p: string, q: URLSearchParams, method: string, body: Recor
   if (p === "/v1/capsules/rules")
     return ok({ min_lead_seconds: CAPSULE_LEAD, block_seconds: DEMO_BLOCK_MS / 1000, tags: ["birth", "wedding", "farewell", "start", "other"], tip: demoTip(),
       billing: true, free_left: me ? !freeUsed(me) : null, free_days: 366, max_years: 100, styles: ["classic", "midnight", "celadon", "dusk"], max_photo_chars: 420_000, inscribe_sats: 20_000,
+      // 上链: billing on and a gift network, as on a server with both (api/capsule.py onchain()).
+      onchain: true, max_chain_photo_bytes: MAX_CHAIN_PHOTO, postage_sats: POSTAGE, usd: { ...DEMO_USD, at: Math.floor(Date.now() / 1000) },
       gift: live
         ? // 真实 Signet: the real signet's tip and Esplora, ten-minute blocks.
           { network: "signet", tiers: [...GIFT_TIERS], min_sats: 50_000, max_sats: 1_000_000, refund_blocks: REFUND_BLOCKS, block_seconds: SIGNET_BLOCK_SECONDS, tip: live.tip, esplora: SIGNET_ESPLORA, explorer: SIGNET_EXPLORER, live: true }
@@ -1332,14 +1345,24 @@ function capsuleRoute(p: string, q: URLSearchParams, method: string, body: Recor
     const a = needMe(), openAt = Number(body.open_at), line = String(body.line ?? "").trim() || null;
     const tier = (body.tier as "free" | "paid" | undefined) ?? "free", style = (body.style as Capsule["style"]) ?? "classic", photo = (body.photo as string | null) ?? null;
     if (!(openAt >= Date.now() / 1000 + CAPSULE_LEAD)) fail(400, `open_at must be at least ${CAPSULE_LEAD} seconds from now`);
-    if (tier === "free" && (photo || style !== "classic")) fail(403, "a photo and the envelope styles come with 封存, the paid tier");
-    if (tier === "free" && openAt > Date.now() / 1000 + 366 * 86400) fail(400, "a free capsule opens within a year; 封存 (paid) can wait up to 100 years");
-    if (tier === "free" && freeUsed(a)) fail(409, "this wallet has used its free capsule; 封存 is the paid tier");
-    const ciphertext = String(body.ciphertext);
+    // As api/capsule.py seal() while onchain(): every letter is inscribed, on its own (chain) or with a gift.
     const gift = body.gift as (DemoGift & { network: string }) | undefined;
+    const letter = body.chain as (DemoChainRec & { network: string }) | undefined;
+    if (!gift === !letter) fail(400, "letters here are inscribed on-chain: send chain, or a gift (not both)");
+    if (tier === "free" && (photo || style !== "classic")) fail(403, "a photo and the envelope styles come with the paid tier");
+    if (photo && atob(photo).length > MAX_CHAIN_PHOTO + 28) fail(400, `an inscribed photo is at most ${MAX_CHAIN_PHOTO / 1000} KB`);
+    if (tier === "free" && freeUsed(a)) fail(409, "this wallet has used its first letter; later ones carry the service fee");
+    const ciphertext = String(body.ciphertext);
+    if (letter) {
+      // As api/gift.py check_letter: the network, its block after the tip, the timelock, the postage address.
+      if (letter.network !== "signet") fail(400, "letters here are inscribed on signet");
+      const tipNow = live ? (live.tip ?? fail(503, "can't see the signet tip right now")) : demoTip();
+      if (!(letter.height > tipNow && letter.height <= tipNow + 100 * 52_600)) fail(400, `the letter's block must be after the signet tip (${tipNow}) and within a hundred years`);
+      if (!(letter.drand_round >= 1) || !String(letter.tlock).startsWith("-----BEGIN AGE ENCRYPTED FILE-----")) fail(400, "tlock must be an armored drand timelock ciphertext");
+      if (letter.address != null && !/^tb1(q[02-9ac-hj-np-z]{38}|p[02-9ac-hj-np-z]{58})$/.test(letter.address)) fail(400, "address isn't an address on signet");
+    }
     if (gift) {
       // As api/gift.py check_new: the amount, H after the tip, and the address rebuilt from the keys and H.
-      if (tier === "free") fail(403, "a gift comes with 封存, the paid tier");
       if (gift.network !== "signet") fail(400, "gifts here are on signet");
       if (!(gift.sats >= 50_000 && gift.sats <= 1_000_000)) fail(400, "a gift is 50000 to 1000000 sats");
       // 真实 Signet: H against the real signet's tip, read fresh.
@@ -1354,7 +1377,9 @@ function capsuleRoute(p: string, q: URLSearchParams, method: string, body: Recor
       id: Math.random().toString(36).slice(2, 13), ref: `v${Date.now()}`, author: a, recipient: String(body.recipient).trim(), ciphertext,
       fingerprint: String(body.fingerprint ?? ""), escrow: String(body.key), open_at: new Date(openAt * 1000).toISOString(),
       sealed_height: demoTip(), sealed_at: new Date().toISOString(), line, tag: line ? ((body.tag as Capsule["tag"]) ?? null) : null,
-      signed_message: "", signature: String(body.signature), open_height: null, tier, style, photo, pending: tier === "paid",
+      signed_message: "", signature: String(body.signature), open_height: null, tier, style, photo, pending: tier === "paid", onchain: true,
+      ...(letter ? { chainRec: { network: "signet" as const, height: letter.height, drand_round: letter.drand_round, tlock: letter.tlock, address: letter.address ?? null, sats: POSTAGE,
+        commit_txid: null, reveal_txid: null, verified: false, ...(live ? { live: true } : {}) } } : {}),
       ...(gift ? { giftRec: { network: "signet" as const, sats: gift.sats, height: gift.height, refund: gift.refund, refund_height: gift.refund ? gift.height + REFUND_BLOCKS : null,
         recipient_key: hex.encode(parseXonly(gift.recipient_key)!), sender_key: gift.refund ? hex.encode(parseXonly(gift.sender_key)!) : null, bearer: !!gift.bearer, address: gift.address,
         drand_round: gift.drand_round, tlock: gift.tlock, commit_txid: null, reveal_txid: null, verified: false, ...(live ? { live: true } : {}) } } : {}),
@@ -1406,6 +1431,27 @@ function capsuleRoute(p: string, q: URLSearchParams, method: string, body: Recor
     c.tag = null;
     save();
     return ok({ ok: true });
+  }
+  if ((m = p.match(/^\/v1\/capsules\/([^/]+)\/chain\/txs$/)) && method === "POST") {
+    // As api/gift.py letter_txs: the author's, paid for, and a reveal that pays the postage.
+    const c = (s.capsules ?? []).find((x) => x.id === m![1] && x.chainRec && x.author === needMe()) ?? fail(404, "no inscribed letter of yours here");
+    if (c.pending) fail(402, "pay the service fee first; then the letter is inscribed");
+    const r = c.chainRec!, commit = String(body.commit_txid ?? ""), reveal = String(body.reveal_txid ?? "");
+    if (!/^[0-9a-f]{64}$/.test(commit) || !/^[0-9a-f]{64}$/.test(reveal)) fail(422, "txids are 64 hex characters each");
+    if (r.reveal_txid && r.reveal_txid !== reveal && r.verified) fail(409, "this letter is inscribed already");
+    let verified: boolean;
+    if (r.live) {
+      const said = checkReveal(live?.reveal ?? null, { address: r.address, sats: r.sats, commit });
+      if (typeof said === "string") fail(400, said);
+      verified = said === true;
+    } else {
+      const out = giftTxs()[reveal] ? describeTx(giftTxs()[reveal].hex).outputs[0] : null;
+      if (out && ((r.address && out.address !== r.address) || out.value < r.sats)) fail(400, "the reveal's first output doesn't pay the gift address its amount");
+      verified = !!out;
+    }
+    Object.assign(r, { commit_txid: commit, reveal_txid: reveal, verified });
+    save();
+    return ok(chainView(r));
   }
   if ((m = p.match(/^\/v1\/capsules\/([^/]+)\/gift(\/backup|\/txs)?$/))) {
     const c = (s.capsules ?? []).find((x) => x.id === m![1] && !x.pending && x.giftRec) ?? fail(404, "no gift on this capsule");
@@ -2450,8 +2496,16 @@ function route(path: string, opts: Opts, live?: Live): unknown {
 async function liveFor(path: string, opts: Opts): Promise<Live | undefined> {
   const p = new URL(path, "http://demo").pathname, method = opts.method || "GET";
   if (p === "/v1/capsules/rules") return liveSignet() ? { tip: await cachedSignetTip() } : undefined;
-  // A new gift is live when the page prepared it so (from live rules), whatever the switch says by now.
-  if (p === "/v1/capsules" && method === "POST") return (opts.body as { gift?: { live?: unknown } } | undefined)?.gift?.live === true ? { tip: await signetTip() } : undefined;
+  // A new gift (or inscribed letter) is live when the page prepared it so (from live rules), whatever the switch says by now.
+  if (p === "/v1/capsules" && method === "POST") {
+    const b = opts.body as { gift?: { live?: unknown }; chain?: { live?: unknown } } | undefined;
+    return b?.gift?.live === true || b?.chain?.live === true ? { tip: await signetTip() } : undefined;
+  }
+  const lm = p.match(/^\/v1\/capsules\/([^/]+)\/chain\/txs$/);
+  if (lm && method === "POST" && (load().capsules ?? []).find((x) => x.id === lm[1])?.chainRec?.live) {
+    const reveal = String((opts.body as { reveal_txid?: unknown } | undefined)?.reveal_txid ?? "").toLowerCase();
+    return { tip: await cachedSignetTip(), reveal: /^[0-9a-f]{64}$/.test(reveal) ? await signetTx(reveal) : null };
+  }
   const m = p.match(/^\/v1\/capsules\/([^/]+)\/gift(\/backup|\/txs)?$/);
   const g = m ? (load().capsules ?? []).find((x) => x.id === m[1])?.giftRec : undefined;
   if (!m || !g?.live) return undefined;

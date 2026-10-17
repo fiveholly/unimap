@@ -13,7 +13,8 @@
 | `PLATFORM_BTC_ADDRESS` | unimap 自己产品的链上收款地址（P2TR、P2WPKH 或 P2SH），用户从已连接的钱包直接付到这里；默认的付款方式 | 空：不收链上付款 |
 | `PLATFORM_LIGHTNING_ADDRESS` | unimap 自己产品的收款闪电地址，钱包要支持 LUD-21 verify；没设时用 `AGENT_LIGHTNING_ADDRESS`。作为第二种付款方式 | 空 |
 | `BILLING_PRICE_<产品>_SATS` | 某个产品的价格（聪）。现在有 `STYLE`、`PROMOTION` 和 `CAPSULE`（时间胶囊「封存」，建议 2000）三个产品。有价格、并且上面两种收款方式至少设了一种，才开卖 | 空或 0：不卖 |
-| `CAPSULE_INSCRIBE_SATS` | 时间胶囊「刻上链」在写信页上显示的价格（还没开放，不卖） | 空：20000 |
+| `CAPSULE_INSCRIBE_SATS` | 时间胶囊「刻上链」在写信页上显示的价格（还没开放，不卖）。设了 `GIFT_NETWORK` 又卖 `CAPSULE` 时不用它：每封信都刻上链，首封免服务费，之后每封收 `BILLING_PRICE_CAPSULE_SATS`（见 `docs/social.md`「上链」） | 空：20000 |
+| `PRICE_URL` | 写信页把费用折成美元用的 BTC/USD 和主网费率，从这个 mempool.space 风格的 API 要（`api/prices.py`，缓存 5 分钟）。只用来显示 | 空：https://mempool.space/api；`off`：只显示聪 |
 | `BILLING_COSMETICS` | 设成 `1` 时，外观里标为高级的选项要有权益 `style:<选项>` 才能用；现在没有任何选项标为高级 | 空：全部免费 |
 | `RATE_LIMIT_KEY_WRITES`、`RATE_LIMIT_KEY_WRITES_<档位>` | 带有效 `X-API-Key` 的写操作每分钟上限，按 key 计数而不是按 IP | 空：600 |
 

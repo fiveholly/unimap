@@ -464,6 +464,22 @@ Magic Eden 的接口需要 API key 才能稳定使用，在 `/etc/unimap/unimap.
 - 「信打开了」通知（`api/notify.py` 的 `capsule_open`）：项目里没有后台任务，所以挂在已有的出块路径上——地图请求发现新块时（`game.ensure_soon`，就是抽宝箱的那个后台任务）每个块运行一次 `capsule.sweep()`：找出时间已到、还没通知的 `open`/`paid` 胶囊，算出打开的区块并通知，同时清理没付款的信。有人直接打开信的页面时也会顺便通知。每封只通知一次（`notified_at`）。
 - 演示站（`web/lib/demo.ts`）按收费开着、两种付款方式都有的样子模拟：封存 2000 聪；演示钱包的「用钱包支付」假装发出一笔交易（随机 txid），立刻到账封存；「演示：模拟付款」按钮也还在。
 
+### 上链：每封信都刻成铭文
+
+收费开着、并且设了礼物网络（`GIFT_NETWORK`，只有测试网；主网照旧关着）时，`capsule.onchain()` 为真：信不再只存在 unimap，每封都在寄信人的浏览器和钱包里刻成 Ordinals 铭文（commit / reveal，和礼物同一套代码：`web/lib/giftseal.ts` 的 `prepareLetter`、`components/Gift.tsx` 的 `GiftFund`，服务器的检查在 `api/gift.py`）。上面的「免费体验」「封存」「刻上链」三张卡都不再出现，也没有中心化的免费档。设了礼物网络但没开收费时是 `tier = open`，和以前一样。
+
+| 档 | 费用 | 能做什么 |
+|---|---|---|
+| 首封（`free`） | 没有服务费，只付网络费 | 每个钱包组一封（还是 `free_used` / `FREE_PER_WALLET`）；只有文字、默认信封、打开时不通知；打开时间最长 100 年（没有一年的限制） |
+| 之后每一封（`paid`） | `BILLING_PRICE_CAPSULE_SATS` + 网络费 | 一张照片（浏览器压成 WebP，约 20 KB、最长边 640，最多 50 KB = `MAX_CHAIN_PHOTO`，和信一起刻上链）；四种信封；打开时通知 |
+
+- 写信：浏览器照常加密，钥匙 K 用 drand quicknet 时间锁加密到打开时间的那一轮，并拆成 K = S xor R。`POST /v1/capsules` 带 `chain`（`network`、礼物网络上打开时间附近的高度 `height`、`drand_round`、`tlock`、`address`），`key` 是 S。签名的文字多一行 `inscribed: on <network>, key timelocked to drand round <n>`（`gift.letter_line`）。带礼物的信照旧走礼物（信骑在礼物的 UTXO 上），首封也可以带礼物；`chain` 和 `gift` 必须有且只有一个，否则 400。
+- 服务器检查：首封用完 409；首封带照片或非默认信封 403；照片超过 50 KB 400；没有 `chain` 也没有 `gift` 400；没开上链时带 `chain` 403；`check_letter` 检查网络、高度在礼物网络的 tip 之后、时间锁格式、`address` 是该网络的 P2WPKH / P2TR / P2SH 地址。付费的信照旧先 `pending`，服务费付了才 `sealed`。
+- 刻上链：封好（付费的信付完服务费）后，钱包付 commit（铭文的网络费加随信的 546 聪），浏览器用一次性钥匙签 reveal，reveal 的第一个输出把 546 聪（`gift.POSTAGE`）送到收信人一栏写的测试网地址（tb1…）；写的是名字就回到寄信人钱包自己的地址。txid 交给 `POST /v1/capsules/{id}/chain/txs`（和礼物的 `/gift/txs` 一样核对，服务费没付是 402），记在 `social.capsule_inscriptions`。
+- 打开：胶囊照旧按区块打开、通知、出现在同块人里。打开后 `GET /v1/capsules/{id}` 不给 `key`，给 `half`（S）；分享链接的 `#r=` 是 R，两半合起来读信。没有 R 的人等 drand 公开整把钥匙（铭文里就有时间锁，谁都能从链上读）。信的页面先从链上读铭文，读不到才用 unimap 留的那份密文。
+- 费用：写信页在签名之前显示网络费（commit + reveal 的 vbytes × 费率；铭文在见证里，每字节算 1/4，`web/lib/gift.ts` 的 `inscriptionVbytes` 和真正构造的 reveal 逐字节一致）、服务费、照片多出的部分、随信的 546 聪和合计。金额以美元为主：BTC/USD 和主网常见费率由服务器向 mempool.space 要（`api/prices.py`，`PRICE_URL`，缓存 5 分钟，拿不到就只显示聪），放在 `GET /v1/capsules/rules` 的 `usd` 里。测试网的币没有价值，所以美元按主网的价格和费率算，标明是「同一封信在主网上大约要花的钱」，下面再写一句测试网上实际付多少测试币。
+- 演示站按上链开着模拟（固定 1 BTC = $65,000、4 sat/vB）；「真实 Signet」开关在写信页的费用上面，打开后信用自己的钱包真实地刻在 Signet 上。
+
 ## 私信
 
 一对一的私信，先给同块人打招呼用（`api/dms.py`，表 `social.dms`、`social.dm_settings`；网页 `/messages`）。

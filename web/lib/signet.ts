@@ -93,12 +93,13 @@ export async function signetTx(txid: string, base = SIGNET_ESPLORA): Promise<Esp
   }
 }
 
-/** As api/gift.py _check_reveal: true if the reveal pays the gift address its amount and spends the
- * commit, false if Esplora doesn't know it yet; a reason string if it says otherwise. */
-export function checkReveal(tx: EsploraTx | Record<string, never> | null, o: { address: string; sats: number; commit: string }): true | false | string {
+/** As api/gift.py _check_reveal: true if the reveal pays the gift address (an inscribed letter's
+ * postage address, or any when null) its amount and spends the commit, false if Esplora doesn't
+ * know it yet; a reason string if it says otherwise. */
+export function checkReveal(tx: EsploraTx | Record<string, never> | null, o: { address: string | null; sats: number; commit: string }): true | false | string {
   if (!tx || !("vout" in tx)) return false;
   const out = tx.vout?.[0], input = tx.vin?.[0];
-  if (!out || out.scriptpubkey_address !== o.address || Number(out.value ?? 0) < o.sats) return "the reveal's first output doesn't pay the gift address its amount";
+  if (!out?.scriptpubkey_address || (o.address && out.scriptpubkey_address !== o.address) || Number(out.value ?? 0) < o.sats) return "the reveal's first output doesn't pay the gift address its amount";
   if (!input || input.txid !== o.commit) return "the reveal doesn't spend the commit";
   return true;
 }

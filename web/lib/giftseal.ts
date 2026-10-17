@@ -1,6 +1,8 @@
 // 礼物, from the write page's side: everything made in the browser when a capsule with a gift is
 // sealed (lib/gift.ts has the pieces), and the draft kept in localStorage until the gift is funded,
-// so a reload between paying 封存 and locking the sats loses nothing.
+// so a reload between paying 封存 and locking the sats loses nothing. 上链的信 (a letter inscribed
+// without a gift, api/capsule.py onchain()) is made the same way and funded by the same GiftFund:
+// its reveal sends POSTAGE to the recipient's address, or back to the sender's own.
 
 import { hex } from "@scure/base";
 
@@ -15,7 +17,11 @@ import {
   giftLine,
   giftTaproot,
   inscriptionScript,
+  inscriptionVbytes,
+  isTestAddress,
+  letterLine,
   newSecret,
+  POSTAGE,
   packTimelock,
   parseXonly,
   splitKey,
@@ -30,17 +36,18 @@ import { t } from "./i18n/index.ts";
 export type GiftChoice = { on: boolean; sats: number; custom: string; refund: boolean; recipientKey: string; senderKey: string };
 export const NO_GIFT: GiftChoice = { on: false, sats: 100_000, custom: "", refund: true, recipientKey: "", senderKey: "" };
 
-/** A gift sealed but maybe not yet funded: the reveal's one-time key and the inscription's body stay
- * in this browser until both transactions are out. */
+/** A gift (or an inscribed letter) sealed but maybe not yet funded: the reveal's one-time key and the
+ * inscription's body stay in this browser until both transactions are out. */
 export type GiftDraft = {
   capsuleId: string;
   network: GiftNetwork;
   esplora: string;
-  address: string;
-  sats: number;
+  address: string; // the gift address; a letter's postage address, or "" for the sender's own (their wallet's, when funding)
+  sats: number; // the gift; a letter's postage
   revealSecret: string; // hex
   body: string; // base64url of the inscription's content
-  timelock: Timelock;
+  timelock?: Timelock; // a gift's 时间锁
+  letter?: { half: string; live?: true }; // an inscribed letter: the link's half of its key (base64url); live: 真实 Signet
   commit?: Outpoint; // broadcast already
   reveal?: string; // its txid, broadcast already
   done?: boolean; // the txids reached unimap
@@ -109,11 +116,7 @@ export async function prepareGift(o: {
   const keys = { height, recipient: recipientKey, sender: senderKey, refund: c.refund };
   const address = giftTaproot(keys).address!;
   const round = roundAtOrAfter(timeAtHeight(height, r.tip, o.now, r.block_seconds));
-  const letterKey = b64url.decode(o.key);
-  const tlock = await tlockEncrypt(round, letterKey);
-  const { server, recipient: half } = splitKey(letterKey);
-  const revealSecret = newSecret();
-  const body = encodeContent({ net: r.network, h: height, round, tlock, fingerprint: o.fingerprint, letter: b64ToBytes(o.ciphertext), photo: o.photo ? b64ToBytes(o.photo) : null });
+  const { tlock, server, half, revealSecret, body } = await sealKey(r.network, height, round, o);
   const timelock: Timelock = {
     v: 1, net: r.network, c: "", to: o.recipient, h: height, a: sats, r: c.refund, rk: hex.encode(recipientKey), sk: senderKey ? hex.encode(senderKey) : null,
     gk: giftSecret ? hex.encode(giftSecret) : null, b: b64url.encode(half), d: round, s: o.author, t: null, ct: null,
@@ -130,6 +133,56 @@ export async function prepareGift(o: {
     line: giftLine({ sats, address, height, network: r.network }),
     draft: { network: r.network, esplora: r.esplora, address, sats, revealSecret: hex.encode(revealSecret), body: b64url.encode(body), timelock } satisfies Omit<GiftDraft, "capsuleId">,
   };
+}
+
+/** The key's timelock and split, a one-time reveal key and the inscription's body: what a gift and an
+ * inscribed letter both need. */
+async function sealKey(net: GiftNetwork, height: number, round: number, o: { key: string; ciphertext: string; photo: string | null; fingerprint: string }) {
+  const letterKey = b64url.decode(o.key);
+  const tlock = await tlockEncrypt(round, letterKey);
+  const { server, recipient: half } = splitKey(letterKey);
+  const body = encodeContent({ net, h: height, round, tlock, fingerprint: o.fingerprint, letter: b64ToBytes(o.ciphertext), photo: o.photo ? b64ToBytes(o.photo) : null });
+  return { tlock, server, half, revealSecret: newSecret(), body };
+}
+
+/** The recipient's label as an address the reveal can pay (a test network's P2WPKH or P2TR, as
+ * api/gift.py check_letter takes), else null: the postage then goes back to the sender. */
+export function postageAddress(recipient: string): string | null {
+  const a = recipient.trim().toLowerCase();
+  return isTestAddress(a) && /^tb1(q[02-9ac-hj-np-z]{38}|p[02-9ac-hj-np-z]{58})$/.test(a) ? a : null;
+}
+
+/** Everything an inscribed letter without a gift needs at sealing time (上链的信): the gift network's
+ * block at the opening time (written in the inscription), the key timelocked to drand's round at
+ * the opening time and split in two, the postage address (the recipient's, when the label is an
+ * address on the test network; else "", the sender's own when funding), and the inscription's body.
+ * Returns what goes to the API (the server's half as the key, chain, the signed line), the link's
+ * half, and a draft without its capsule id. */
+export async function prepareLetter(o: { rules: GiftRules; key: string; ciphertext: string; photo: string | null; fingerprint: string; openAt: number; now: number; recipient: string }) {
+  const r = o.rules;
+  if (r.tip == null) throw new Error(t("现在看不到测试网的最新区块，稍后再试。"));
+  const height = r.tip + blocksUntil(o.openAt, o.now, r.block_seconds);
+  const round = roundAtOrAfter(o.openAt);
+  const { tlock, server, half, revealSecret, body } = await sealKey(r.network, height, round, o);
+  const address = postageAddress(o.recipient) ?? "";
+  const chain = { network: r.network, height, drand_round: round, tlock, address: address || null, ...(r.live ? { live: true } : {}) }; // live: only the demo reads it
+  return {
+    serverHalf: b64url.encode(server),
+    half: b64url.encode(half),
+    chain,
+    line: letterLine(chain),
+    draft: { network: r.network, esplora: r.esplora, address, sats: POSTAGE, revealSecret: hex.encode(revealSecret), body: b64url.encode(body),
+      letter: { half: b64url.encode(half), ...(r.live ? { live: true as const } : {}) } } satisfies Omit<GiftDraft, "capsuleId">,
+  };
+}
+
+/** What inscribing a letter costs, before anything is signed: the network fee for commit and reveal
+ * at feeRate sats/vB (vbytes from lib/gift.ts inscriptionVbytes: the witness counts a quarter), and
+ * how much of it the photo is. letterBytes is the letter's UTF-8 length, photoBytes the shrunk photo's (0: none). */
+export function letterCost(letterBytes: number, photoBytes: number, feeRate: number) {
+  const vbytes = inscriptionVbytes(letterBytes, photoBytes);
+  const photoVbytes = photoBytes > 0 ? vbytes - inscriptionVbytes(letterBytes, 0) : 0;
+  return { vbytes, photoVbytes, fee: Math.ceil(vbytes * feeRate), photoFee: Math.ceil(photoVbytes * feeRate) };
 }
 
 /** The 时间锁's link: the page that shows it, with everything in the #fragment (never sent to a server). */

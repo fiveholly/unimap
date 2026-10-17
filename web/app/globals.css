@@ -5184,10 +5184,14 @@ button.cap-tier:disabled {
 }
 .cap-tier-head {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: baseline;
-  gap: 8px;
+  gap: 2px 8px;
   font-size: 14px;
+}
+.cap-tier-head > .mono {
+  margin-left: auto;
 }
 .cap-tier-head b {
   font-weight: 500;
@@ -5220,6 +5224,44 @@ button.cap-tier:disabled .cap-tier-head b {
   inset: 0;
   opacity: 0;
   cursor: pointer;
+}
+/* 上链: the photo is off until asked for; a 首封 shows the switch locked, with why */
+.cap-photo-off,
+.cap-photo-on {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.cap-photo-on {
+  align-items: stretch;
+}
+.cap-photo-on .link-btn {
+  align-self: flex-start;
+}
+button.cap-photo-toggle {
+  height: auto;
+  padding: 7px 14px;
+  border-radius: 999px;
+}
+.cap-photo-off.locked button.cap-photo-toggle {
+  border-style: dashed;
+  color: var(--fg-3);
+  opacity: 1;
+}
+.cap-cost .mono small {
+  margin-left: 4px;
+  font-size: 11px;
+}
+.cap-cost > p {
+  margin: -4px 0 4px;
+}
+.cap-cost > div.cap-cost-total {
+  font-size: 14px;
+  border-top-color: var(--fg-3);
+}
+.cap-cost-total b {
+  font-weight: 500;
 }
 .cap-photo-pick {
   display: flex;

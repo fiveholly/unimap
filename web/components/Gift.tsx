@@ -1,7 +1,8 @@
 "use client";
 
 // 礼物 on the capsule pages (lib/gift.ts, lib/giftseal.ts): picking a gift on the write page,
-// locking its sats once 封存 is paid, and the 时间锁 card the recipient keeps.
+// locking its sats once 封存 is paid, and the 时间锁 card the recipient keeps. GiftFund also
+// inscribes a letter without a gift (上链的信), the same commit and reveal with postage for output 0.
 
 import { hex } from "@scure/base";
 import qrcode from "qrcode-generator";
@@ -10,7 +11,7 @@ import { useMemo, useState, useSyncExternalStore } from "react";
 import { useSession } from "@/components/Session";
 import { api, type CapsuleGift, type GiftRules } from "@/lib/api";
 import { shortHash, spanText } from "@/lib/capsule";
-import { DEMO, DEMO_GIFT_SENDER_KEY, demoChain } from "@/lib/demo";
+import { DEMO, DEMO_GIFT_SENDER_KEY, DEMO_TEST_ADDRESS, demoChain } from "@/lib/demo";
 import { buildReveal, commitPsbt, commitTaproot, finishCommit, GIFT_TIERS, isTestAddress, NETWORK_NAMES, revealFee, type GiftNetwork, type Outpoint, type Timelock } from "@/lib/gift";
 import { chainFor, explorerAddress, explorerTx } from "@/lib/giftchain";
 import { chosenSats, envelopeOf, type GiftChoice, type GiftDraft, saveDraft, timelockLink } from "@/lib/giftseal";
@@ -52,8 +53,9 @@ export function useLiveSignet(): boolean {
   return useSyncExternalStore(onLiveSignet, liveSignet, () => false);
 }
 
-/** The demo site's switch between its pretend chain and the real signet, on the gift step. */
-function LiveSwitch({ live }: { live: boolean }) {
+/** The demo site's switch between its pretend chain and the real signet, on the gift step (and, for
+ * an inscribed letter, by its cost). */
+export function LiveSwitch({ live, letter = false }: { live: boolean; letter?: boolean }) {
   return (
     <div className={`gift-live${live ? " on" : ""}`}>
       <label className="check">
@@ -64,11 +66,15 @@ function LiveSwitch({ live }: { live: boolean }) {
       {live ? (
         <LiveNote>
           <span className="dim">
-            {t("礼物用你自己的钱包在比特币 Signet 测试网上真实交易：先把 UniSat 切到 Signet，准备一点测试币。区块约 10 分钟一个，到点后真的能领走。演示站没有服务器，unimap 那一半钥匙存在这个浏览器里；封存的费用照旧只是模拟。")}
+            {letter
+              ? t("信用你自己的钱包真实地刻在比特币 Signet 测试网上：先把 UniSat 切到 Signet，准备一点测试币。演示站没有服务器，unimap 那一半钥匙存在这个浏览器里；服务费照旧只是模拟。")
+              : t("礼物用你自己的钱包在比特币 Signet 测试网上真实交易：先把 UniSat 切到 Signet，准备一点测试币。区块约 10 分钟一个，到点后真的能领走。演示站没有服务器，unimap 那一半钥匙存在这个浏览器里；封存的费用照旧只是模拟。")}
           </span>
         </LiveNote>
       ) : (
-        <span className="dim small">{t("关着时礼物只在演示站里模拟，不碰任何链。打开后，用你的钱包在 Signet 上发真实的测试网交易。")}</span>
+        <span className="dim small">
+          {letter ? t("关着时信只刻在演示站模拟的链上。打开后，用你的钱包在 Signet 上发真实的测试网交易。") : t("关着时礼物只在演示站里模拟，不碰任何链。打开后，用你的钱包在 Signet 上发真实的测试网交易。")}
+        </span>
       )}
     </div>
   );
@@ -207,8 +213,10 @@ type Step = "idle" | "wallet" | "commit" | "reveal" | "report" | "done";
 /** 锁进礼物: after 封存 is paid, the sats go in. First the 时间锁 is saved (it holds the 礼物钥匙
  * and the recipient's half of the backup key), then the wallet funds the commit, the reveal is
  * signed here with its one-time key, both are broadcast, and the txids go to unimap. Each step is
- * kept in the draft, so a failure can be retried from where it stopped. */
-export function GiftFund({ draft: first, token, done }: { draft: GiftDraft; token: string | null; done: (d: GiftDraft) => void }) {
+ * kept in the draft, so a failure can be retried from where it stopped. A letter without a gift
+ * (draft.letter) goes the same way without the 时间锁: its reveal sends the postage to the
+ * recipient's address, or to the wallet's own, and its link carries the other half of the key. */
+export function GiftFund({ draft: first, token, done, note }: { draft: GiftDraft; token: string | null; done: (d: GiftDraft) => void; note?: React.ReactNode }) {
   const { wallet } = useSession();
   const [draft, setDraft] = useState(first);
   const [saved, setSaved] = useState(false);
@@ -217,8 +225,9 @@ export function GiftFund({ draft: first, token, done }: { draft: GiftDraft; toke
   const [wrongNet, setWrongNet] = useState<SignetWalletId | null>(null);
   const [copied, setCopied] = useState(false);
   const keep = (d: GiftDraft) => (saveDraft(d), setDraft(d), d);
-  const link = timelockLink(SITE_URL, draft.timelock);
-  const live = !!draft.timelock.live; // the demo's 真实 Signet: a real wallet, the real signet
+  const letter = draft.letter ?? null; // an inscribed letter, no gift: no 时间锁
+  const link = draft.timelock ? timelockLink(SITE_URL, draft.timelock) : "";
+  const live = letter ? !!letter.live : !!draft.timelock?.live; // the demo's 真实 Signet: a real wallet, the real signet
   const liveSigner = live ? signetSigner(wallet) : null;
 
   const fund = async () => {
@@ -228,19 +237,32 @@ export function GiftFund({ draft: first, token, done }: { draft: GiftDraft; toke
     try {
       const secret = hex.decode(draft.revealSecret), envelope = envelopeOf(draft);
       let d = draft;
+      const signerOf = () => {
+        if (live && !liveSigner) throw new Error(t("没找到能用的钱包：真实 Signet 要装 UniSat（或 Xverse、OKX 钱包）并切到 Signet。"));
+        const signer = live ? liveSigner : walletById(wallet)?.psbt;
+        if (!signer) throw new Error(t("这个钱包不能签交易。换 UniSat、Xverse 或 OKX 钱包试试。"));
+        return signer;
+      };
+      const testAccounts = async () => {
+        const acc = await signerOf()!.accounts();
+        if (!isTestAddress(acc.payment_address)) throw new Error(t("钱包现在不在测试网上：先在钱包里切到 {net}，再试一次。", { net: NETWORK_NAMES[draft.network] }));
+        return acc;
+      };
+      if (!d.address) {
+        // A letter to a label, not an address: its postage comes back to the wallet that pays.
+        setStep("wallet");
+        d = keep({ ...d, address: DEMO && !live ? DEMO_TEST_ADDRESS : (await testAccounts()).payment_address });
+      }
       if (!d.commit) {
         const feeRate = await chain.feeRate();
-        const amount = draft.sats + revealFee(secret, envelope, draft.address, draft.sats, feeRate);
+        const amount = d.sats + revealFee(secret, envelope, d.address, d.sats, feeRate);
         const commitAddress = commitTaproot(secret, envelope).address!;
         let commit: Outpoint;
         setStep("wallet");
         if (DEMO && !live) commit = demoChain.fund(commitAddress, amount);
         else {
-          if (live && !liveSigner) throw new Error(t("没找到能用的钱包：真实 Signet 要装 UniSat（或 Xverse、OKX 钱包）并切到 Signet。"));
-          const signer = live ? liveSigner : walletById(wallet)?.psbt;
-          if (!signer) throw new Error(t("这个钱包不能签交易。换 UniSat、Xverse 或 OKX 钱包试试。"));
-          const acc = await signer.accounts();
-          if (!isTestAddress(acc.payment_address)) throw new Error(t("钱包现在不在测试网上：先在钱包里切到 {net}，再试一次。", { net: NETWORK_NAMES[draft.network] }));
+          const signer = signerOf()!;
+          const acc = await testAccounts();
           // Coins of 1,000 sats or less are left alone: on a wallet that holds inscriptions they are likely ones.
           const coins = (await chain.utxos(acc.payment_address)).filter((u) => !live || u.value > 1_000).map((u) => ({ ...u, address: acc.payment_address, publicKey: acc.payment_public_key }));
           const short = (have: number, need = amount) =>
@@ -261,16 +283,16 @@ export function GiftFund({ draft: first, token, done }: { draft: GiftDraft; toke
           await broadcast(chain, signed.hex, live);
           commit = { txid: signed.txid, vout: 0, value: amount };
         }
-        d = keep({ ...d, commit, timelock: { ...d.timelock, ct: commit.txid } });
+        d = keep({ ...d, commit, ...(d.timelock ? { timelock: { ...d.timelock, ct: commit.txid } } : {}) });
       }
       if (!d.reveal) {
         setStep("reveal");
         const reveal = buildReveal({ secret, envelope, commit: d.commit!, giftAddress: d.address, giftSats: d.sats });
         await broadcast(chain, reveal.hex, live);
-        d = keep({ ...d, reveal: reveal.txid, timelock: { ...d.timelock, t: reveal.txid } });
+        d = keep({ ...d, reveal: reveal.txid, ...(d.timelock ? { timelock: { ...d.timelock, t: reveal.txid } } : {}) });
       }
       setStep("report");
-      await api<CapsuleGift>(`/v1/capsules/${d.capsuleId}/gift/txs`, { method: "POST", token, body: { commit_txid: d.commit!.txid, reveal_txid: d.reveal } });
+      await api<CapsuleGift>(`/v1/capsules/${d.capsuleId}/${letter ? "chain" : "gift"}/txs`, { method: "POST", token, body: { commit_txid: d.commit!.txid, reveal_txid: d.reveal } });
       d = keep({ ...d, done: true });
       setStep("done");
       done(d);
@@ -302,10 +324,43 @@ export function GiftFund({ draft: first, token, done }: { draft: GiftDraft; toke
     idle: "",
     wallet: t("请在钱包里确认…"),
     commit: t("正在广播第一笔交易（commit）…"),
-    reveal: t("正在刻上铭文，把礼物锁进去（reveal）…"),
+    reveal: letter ? t("正在把信刻成铭文（reveal）…") : t("正在刻上铭文，把礼物锁进去（reveal）…"),
     report: t("告诉 unimap 交易号…"),
     done: "",
   };
+
+  if (letter)
+    return (
+      <div className="gift-fund">
+        <h2 className="cap-side-title">{step === "done" ? t("信刻上链了") : t("把信刻上链")}</h2>
+        <NetBadge network={draft.network} live={live} />
+        {live && <LiveNote />}
+        <p className="muted small">
+          {draft.address
+            ? t("钱包付一笔交易（刻铭文的网络费，加随信的 {n}），浏览器再签第二笔，把信的密文刻成铭文，连同 {n} 送到 {to}。", { n: sats(draft.sats), to: shortHash(draft.address) })
+            : t("钱包付一笔交易（刻铭文的网络费，加随信的 {n}），浏览器再签第二笔，把信的密文刻成铭文；那 {n} 回到你自己的地址。", { n: sats(draft.sats) })}
+        </p>
+        {step !== "done" && !draft.commit && note}
+        {step === "done" ? (
+          draft.reveal && (
+            <a className="mono small" href={explorerTx(draft.network, draft.reveal, live)} target="_blank" rel="noopener">
+              {t("在区块浏览器里看")} {shortHash(draft.reveal)}i0
+            </a>
+          )
+        ) : (
+          <button type="button" className="primary" onClick={fund} disabled={busy}>
+            {busy ? said[step] : draft.commit ? t("继续刻上链") : live ? (liveSigner ? t("用 {wallet} 在 Signet 上刻上链", { wallet: liveSigner.name }) : t("用钱包在 Signet 上刻上链")) : DEMO ? t("用演示钱包刻上链") : t("用钱包刻上链")}
+          </button>
+        )}
+        {live && !draft.commit && step !== "done" && <span className="dim small">{t("会发两笔真实的 Signet 交易：钱包签第一笔，浏览器签第二笔，都广播到 mempool.space。")}</span>}
+        {error && <p className="error small">{error}</p>}
+        {wrongNet && (
+          <button type="button" onClick={switchNet}>
+            {t("让 UniSat 切到 Signet")}
+          </button>
+        )}
+      </div>
+    );
 
   return (
     <div className="gift-fund">
@@ -313,7 +368,7 @@ export function GiftFund({ draft: first, token, done }: { draft: GiftDraft; toke
       <NetBadge network={draft.network} live={live} />
       {live && <LiveNote />}
       <p className="muted small">
-        {t("{n} 会锁在 {addr}，到区块 {h} 才能动。", { n: sats(draft.sats), addr: shortHash(draft.address), h: draft.timelock.h.toLocaleString("en-US") })}
+        {t("{n} 会锁在 {addr}，到区块 {h} 才能动。", { n: sats(draft.sats), addr: shortHash(draft.address), h: (draft.timelock?.h ?? 0).toLocaleString("en-US") })}
       </p>
       <ol className="gift-steps">
         <li className={saved || draft.commit ? "done" : ""}>
