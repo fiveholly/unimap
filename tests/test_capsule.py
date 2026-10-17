@@ -589,6 +589,51 @@ class CapsuleApi(unittest.TestCase):
 
     # --- 私信 ---
 
+    # --- 新手任务 (api/newcomer.py) ---
+
+    def test_newcomer_task(self):
+        w = self.wallet(40)
+        get = lambda who=w: self.client.get("/v1/me/newcomer", headers=self.h(who)).json()
+        try:
+            self.assertEqual(self.client.get("/v1/me/newcomer").status_code, 401)
+            r = get()
+            self.assertEqual((r["steps"], r["done"], r["of"], r["badge"]), ({"birthday": False, "checkin": False, "capsule": False}, 0, 3, None))
+            # Step 1 is the browser's word; the others can't be claimed that way.
+            r = self.client.post("/v1/me/newcomer/birthday", json={"block": 416_500, "checkin": True, "capsule": True}, headers=self.h(w)).json()
+            self.assertEqual((r["steps"], r["badge"]), ({"birthday": True, "checkin": False, "capsule": False}, None))
+            self.assertEqual(self.client.post("/v1/me/newcomer/birthday", json={"block": -1}, headers=self.h(w)).status_code, 400)
+            # Step 2 from a real check-in.
+            self.assertEqual(self.client.post("/v1/districts/100/checkin", headers=self.h(w)).json()["badges"], [])
+            self.assertEqual(get()["steps"], {"birthday": True, "checkin": True, "capsule": False})
+            # A capsule waiting for payment isn't sealed, so it doesn't count.
+            self.billing()
+            self.assertEqual(self.seal(w, tier="paid")[0].status_code, 201)
+            self.assertFalse(get()["steps"]["capsule"])
+            # Sealing finishes the task: the badge, once.
+            self.assertEqual(self.seal(w, tier="free")[0].status_code, 201)
+            r = get()
+            self.assertEqual((r["done"], r["badge"]["kind"], r["badge"]["bitmap_number"], r["badge"]["rarity"]), (3, "newcomer", 100, "common"))
+            self.assertFalse(r["new"])  # sealing awarded it already
+            self.assertFalse(get()["new"])
+            self.assertEqual(self.sql("select count(*) from social.badges where kind = 'newcomer' and address = %s;", (w.address,))[0][0], 1)
+            self.assertIn("newcomer", [b["kind"] for b in self.client.get(f"/v1/people/{w.address}").json()["badges"]])
+            # When the check-in is the last step, the check-in hands the badge back.
+            v = self.wallet(41)
+            self.client.post("/v1/me/newcomer/birthday", json={}, headers=self.h(v))
+            self.assertEqual(self.seal(v, tier="free")[0].status_code, 201)
+            self.assertEqual(get(v)["done"], 2)
+            won = self.client.post("/v1/districts/105/checkin", headers=self.h(v)).json()["badges"]
+            self.assertEqual([(b["kind"], b["bitmap_number"]) for b in won], [("newcomer", 105)])
+            self.assertEqual(self.client.post("/v1/districts/100/checkin", headers=self.h(v)).json()["badges"], [])
+            self.assertFalse(get(v)["new"])
+        finally:
+            addresses = [Wallet(40).address, Wallet(41).address]
+            self.sql(
+                "delete from social.badges where address = any(%s); delete from social.checkins where address = any(%s); "
+                "delete from social.newcomers where address = any(%s); delete from social.capsules where author = any(%s);",
+                (addresses,) * 4,
+            )
+
     def test_dms(self):
         r = self.client.post(f"/v1/dms/{BOB.address}", json={"body": "恭喜！明年这一天来这块报个到？"}, headers=self.h(ALICE))
         self.assertEqual(r.status_code, 201, r.text)

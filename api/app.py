@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from api import agent, auth, billing, capsule, dms, events, game, market, holdings, land, listings, metrics, moderation, nostr, notify, opening, parks, pets, polls, recruit, search, seasons, shop, social, style, tenants, tips, tour, wallets, xlink
+from api import agent, auth, billing, capsule, dms, events, game, market, holdings, land, listings, metrics, moderation, newcomer, nostr, notify, opening, parks, pets, polls, recruit, search, seasons, shop, social, style, tenants, tips, tour, wallets, xlink
 
 WRITES = ("POST", "PUT", "PATCH", "DELETE")
 AUTH_PATHS = ("/v1/auth/nonce", "/v1/auth/login")
@@ -82,5 +82,5 @@ if origins:
 app.include_router(land.router)
 app.include_router(auth.router)
 app.include_router(social.router)
-for extra in (billing, capsule, dms, recruit, polls, style, parks, holdings, pets, notify, xlink, wallets, search, moderation, listings, tips, game, seasons, events, market, agent, shop, metrics, nostr, tour, tenants, opening):
+for extra in (billing, capsule, dms, recruit, polls, style, parks, holdings, pets, notify, xlink, wallets, search, moderation, listings, tips, game, seasons, events, market, agent, shop, metrics, nostr, tour, tenants, opening, newcomer):
     app.include_router(extra.router)

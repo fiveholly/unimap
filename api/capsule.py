@@ -53,7 +53,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api import billing, bip322, moderation, notify
+from api import billing, bip322, moderation, newcomer, notify
 from api.auth import current_address, normalize_address, optional_address
 from api.db import cursor
 
@@ -414,6 +414,9 @@ def seal(req: NewCapsule, address: str = Depends(moderation.writer_address)):
         if row is None:
             raise HTTPException(409, "this signature was already used")
         out = view(cur, row, address, height)
+    if row["status"] == "sealed":
+        with cursor() as cur:
+            newcomer.check(cur, address)  # 新手任务: sealing may finish it
     if tier != "paid":
         return out
     try:
@@ -448,10 +451,13 @@ def seal_paid(cur, p):
     cur.execute(
         "update social.capsules set status = 'sealed', "
         "sealed_height = coalesce((select max(block_height) from bitmap_block_hashes), sealed_height), "
-        "sealed_at = now(), payment_id = %s where id = %s and status = 'pending' returning 1;",
+        "sealed_at = now(), payment_id = %s where id = %s and status = 'pending' returning author;",
         (p["id"], p["ref"]),
     )
-    if cur.fetchone() is None:
+    sealed = cur.fetchone()
+    if sealed is not None:
+        newcomer.check(cur, sealed[0])  # 新手任务: sealing may finish it
+    else:
         cur.execute("select 1 from social.capsules where id = %s;", (p["ref"],))
         if cur.fetchone() is None:
             log.warning("payment %s settled for capsule %s, which is gone; refund by hand", p["id"], p["ref"])

@@ -5,10 +5,11 @@ import { BADGE_NAMES, RARITY_COLORS, RARITY_NAMES, type BadgeKind, type Rarity }
 import { t } from "@/lib/i18n";
 
 const LUCKY_GOLD = "#F2B544";
+const RESIDENT = "#7FC4A4"; // 新居民 wears the residents' green (--resident), whatever its rarity
 
-/** A badge's medal: a chest for a treasure, a star for a lucky round, a flag for a visit, a crown for a season's podium, a pin for a day's tour, an awning for opening a district, ringed in its rarity's colour. */
+/** A badge's medal: a chest for a treasure, a star for a lucky round, a flag for a visit, a crown for a season's podium, a pin for a day's tour, an awning for opening a district, a house with its door open and a spark for 新居民 (the newcomer's task), ringed in its rarity's colour. */
 export function BadgeIcon({ kind, rarity, size = 32 }: { kind: BadgeKind; rarity: Rarity; size?: number }) {
-  const c = kind === "lucky" ? LUCKY_GOLD : RARITY_COLORS[rarity];
+  const c = kind === "lucky" ? LUCKY_GOLD : kind === "newcomer" ? RESIDENT : RARITY_COLORS[rarity];
   return (
     <svg className="badge-icon" width={size} height={size} viewBox="0 0 32 32" aria-hidden>
       <circle cx="16" cy="16" r="14.5" fill="#1d1b17" stroke={c} strokeWidth="2" />
@@ -32,6 +33,13 @@ export function BadgeIcon({ kind, rarity, size = 32 }: { kind: BadgeKind; rarity
             <path d="M9 13.5 10.5 9h11l1.5 4.5z" />
             <path d="M10 13.5V23h12v-9.5" />
             <path d="M14 23v-5h4v5" />
+          </>
+        ) : kind === "newcomer" ? (
+          <>
+            <path d="M8.5 15.5 15 10l6.5 5.5" />
+            <path d="M10.5 14v8.5h9V14" />
+            <path d="M13.5 22.5v-4.5h3v4.5" />
+            <path d="M23 7.5v4M21 9.5h4" strokeWidth="1.4" />
           </>
         ) : kind === "lucky" ? (
           <path d="m16 8.5 2.3 4.8 5.2.7-3.8 3.6.9 5.2-4.6-2.5-4.6 2.5.9-5.2-3.8-3.6 5.2-.7z" />
@@ -69,7 +77,7 @@ export function BadgeList({ badges, onWear }: { badges: Badge[]; onWear?: (id: n
               {b.bitmap_number}.bitmap{b.tx_index != null ? ` #${b.tx_index}` : ""}
             </Link>
             <span className="mono dim block">
-              {b.kind === "tour" || b.kind === "opening" ? new Date(b.kind === "tour" ? b.height * 86_400_000 : b.created_at).toISOString().slice(0, 10) : t("区块 {n}", { n: b.height.toLocaleString("en-US") })}
+              {b.kind === "tour" || b.kind === "opening" || b.kind === "newcomer" ? new Date(b.kind === "tour" ? b.height * 86_400_000 : b.created_at).toISOString().slice(0, 10) : t("区块 {n}", { n: b.height.toLocaleString("en-US") })}
             </span>
             {onWear && b.id != null && (
               <button type="button" className="link-btn small" aria-pressed={!!b.worn} onClick={() => onWear(b.worn ? null : b.id!)}>

@@ -5,6 +5,8 @@ import { useEffect, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
 import { Feed } from "@/components/Feed";
+import { askLogin } from "@/components/Header";
+import { useTour } from "@/components/Tour";
 import { PetCareSection } from "@/components/PetCare";
 import { Delivered } from "@/components/Shop";
 import { useSession } from "@/components/Session";
@@ -13,8 +15,47 @@ import { NostrIcon } from "@/components/Nostr";
 import { XIcon } from "@/components/X";
 import { api, ApiError, type LinkedWallet, type Me, type ShopBought, type XAccount } from "@/lib/api";
 import { LINK_KIND, linkText, nostrExtension, now, profileUrl, shortNpub } from "@/lib/nostr";
-import { LINK_WALLETS, type Wallet } from "@/lib/wallets";
+import { LINK_WALLETS, WALLETS, type Wallet } from "@/lib/wallets";
 import { t } from "@/lib/i18n";
+
+/** 我的, signed out: what connecting a wallet gets you, and what you can do without one. */
+function SignedOut() {
+  const tour = useTour();
+  const stop = tour?.stops.find((s) => !s.visited) ?? tour?.stops[0];
+  const wallets = WALLETS.filter((w) => !["manual", "demo", "demo2"].includes(w.id)).map((w) => w.name);
+  return (
+    <div className="page narrow">
+      <section className="me-empty">
+        <h1>{t("连上钱包，这里就是你在 unimap 的家")}</h1>
+        <ul>
+          <li>{t("你持有的 Bitmap 街区和地块会自动出现在这里")}</li>
+          <li>{t("签到、发帖、关注街区，都用钱包签名，不花钱")}</li>
+          <li>{t("你封存的时间胶囊和收到的私信")}</li>
+        </ul>
+        <div className="row me-empty-cta">
+          <button type="button" className="primary" onClick={askLogin}>
+            {t("连接钱包")}
+          </button>
+          <span className="dim small">{t("支持 {wallets}", { wallets: wallets.join(t("、")) })}</span>
+        </div>
+        <div className="me-empty-free">
+          <p className="dim small">{t("不连钱包也可以")}</p>
+          <div className="row">
+            <Link className="btn small" href="/#birthday">
+              {t("找到你生日的区块")}
+            </Link>
+            <Link className="btn small" href={stop ? `/district/${stop.bitmap_number}` : "/game"}>
+              {t("逛今日巡城")}
+            </Link>
+            <Link className="btn small" href="/rank">
+              {t("看繁荣榜")}
+            </Link>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
 
 export default function MePage() {
   const { token, ready, address } = useSession();
@@ -27,7 +68,7 @@ export default function MePage() {
       .catch((e) => setError(e.message));
   }, [token]);
   if (!ready) return null;
-  if (!token) return <p className="page muted">{t("连接钱包后可以看到你的街区和地块。")}</p>;
+  if (!token) return <SignedOut />;
   if (error) return <p className="page error">{error}</p>;
   if (!me) return <p className="page muted">{t("加载中…")}</p>;
   return (

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useTip } from "@/components/BlockWatch";
 import { CapsulePay, StylePicker, utcMinute } from "@/components/Capsule";
+import { PageIntro } from "@/components/PageIntro";
 import { useSession } from "@/components/Session";
 import { api, type BillingProducts, type Capsule, type CapsuleRules, type Payment } from "@/lib/api";
 import {
@@ -175,6 +176,9 @@ export default function CapsuleWritePage() {
 
   return (
     <div className="page capsule-page">
+      <PageIntro page="capsule" title={t("时间胶囊")}>
+        {t("写一封信，锁在今天的区块里，到你选的那一天才能打开。在浏览器里加密，unimap 看不到内容；封存要用钱包签名。")}
+      </PageIntro>
       <div className="cap-two">
         <div className="cap-main">
           <p className="eyebrow">{forDay ? t("给 {day} 这一天写一封信", { day: forDay }) : t("新的时间胶囊")}</p>
@@ -355,8 +359,12 @@ function MyCapsules({ token, tip }: { token: string; tip: number | null }) {
   useEffect(() => {
     api<{ capsules: Capsule[] }>("/v1/capsules/mine", { token }).then((r) => setList(r.capsules), () => setList([]));
   }, [token]);
+  // From the wallet menu's 我的时间胶囊 (/capsule#mine): bring the list into view once it is here.
+  useEffect(() => {
+    if (list != null && window.location.hash === "#mine") document.getElementById("mine")?.scrollIntoView({ block: "start" });
+  }, [list]);
   return (
-    <section className="cap-mine">
+    <section className="cap-mine" id="mine">
       <h2 className="section-title">
         {t("我封存的信")} <span className="mono">{list?.length ?? ""}</span>
       </h2>

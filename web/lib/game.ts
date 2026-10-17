@@ -15,8 +15,8 @@ export const RARITY_NAMES: Record<Rarity, string> = { common: "普通", rare: "�
 export const RARITY_COLORS: Record<Rarity, string> = { common: "#B8B2A6", rare: "#6FA8DC", epic: "#B48CE0", legendary: "#F2B544" };
 export const RARITY_ODDS: Record<Rarity, string> = { common: "15/16", rare: "1/16", epic: "1/256", legendary: "1/4096" };
 
-export type BadgeKind = "treasure" | "lucky" | "lucky_visit" | "crown" | "tour" | "opening";
-export const BADGE_NAMES: Record<BadgeKind, string> = { treasure: "宝箱徽章", lucky: "幸运街区", lucky_visit: "幸运来访", crown: "赛季王冠", tour: "巡城徽章", opening: "开张徽章" };
+export type BadgeKind = "treasure" | "lucky" | "lucky_visit" | "crown" | "tour" | "opening" | "newcomer";
+export const BADGE_NAMES: Record<BadgeKind, string> = { treasure: "宝箱徽章", lucky: "幸运街区", lucky_visit: "幸运来访", crown: "赛季王冠", tour: "巡城徽章", opening: "开张徽章", newcomer: "新居民" };
 export const CROWN_COLORS = ["#F2B544", "#C9CED6", "#C98A55"] as const; // 1st, 2nd, 3rd
 
 /** Season n covers blocks [since, until]. */

@@ -13,5 +13,6 @@ import { shop } from "./shop.ts";
 import { metrics } from "./metrics.ts";
 import { nostr } from "./nostr.ts";
 import { parcels } from "./parcels.ts";
+import { onboarding } from "./onboarding.ts";
 
-export const EN: Record<string, string> = { ...district, ...map, ...social, ...moderation, ...tips, ...game, ...market, ...agent, ...shop, ...metrics, ...nostr, ...parcels, ...capsule, ...common };
+export const EN: Record<string, string> = { ...district, ...map, ...social, ...moderation, ...tips, ...game, ...market, ...agent, ...shop, ...metrics, ...nostr, ...parcels, ...capsule, ...onboarding, ...common };

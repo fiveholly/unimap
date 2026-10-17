@@ -171,6 +171,7 @@ type State = {
   dms?: DemoDm[]; // 私信
   dmStrangers?: boolean;
   blocked?: string[]; // addresses the visitor muted (and so won't hear from)
+  newcomer?: { birthday_at: string; block: number | null }; // 新手任务 step 1, as the browser reported it (api/newcomer.py)
 };
 type DemoCapsule = Omit<Capsule, "status" | "tip" | "blocks_left" | "open_height" | "key" | "mine" | "payment" | "has_photo"> & {
   ref: string; escrow: string; open_height: number | null;
@@ -1194,6 +1195,33 @@ function demoDms(s: State): DemoDm[] {
 }
 const dmView = (m: DemoDm, me: string): DmMessage => ({ id: m.id, from_me: m.from === me, body: m.removed ? null : m.body, removed: !!m.removed, created_at: new Date(m.at).toISOString(), read: !!m.read });
 
+/** 新手任务, as api/newcomer.py: step 1 as reported, steps 2 and 3 from the visitor's check-ins and sealed capsules. */
+function newcomerSteps(s: State) {
+  return {
+    birthday: !!s.newcomer,
+    checkin: Object.values(s.checkins ?? {}).some((days) => days.length > 0),
+    capsule: (s.capsules ?? []).some((c) => c.author === DEMO_ADDRESS && !c.pending),
+  };
+}
+/** The 新居民 badge once all three are done, awarded once: [it] when this call awarded it. */
+function newcomerAward(s: State): Badge[] {
+  const steps = newcomerSteps(s);
+  if (!(steps.birthday && steps.checkin && steps.capsule) || (s.badges ?? []).some((b) => b.kind === "newcomer")) return [];
+  const first = Object.entries(s.checkins ?? {})
+    .flatMap(([n, days]) => days.map((d) => [d, +n] as const))
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] - b[1]))[0];
+  const badge: Badge = { kind: "newcomer", height: 0, bitmap_number: first[1], tx_index: null, rarity: "common", created_at: new Date().toISOString() };
+  (s.badges ??= []).unshift(badge);
+  return [badge];
+}
+function newcomerView(s: State) {
+  const isNew = newcomerAward(s).length > 0;
+  if (isNew) save();
+  const steps = newcomerSteps(s);
+  const badge = (s.badges ?? []).find((b) => b.kind === "newcomer") ?? null;
+  return { steps, done: Object.values(steps).filter(Boolean).length, of: 3, badge, new: isNew };
+}
+
 function capsuleRoute(p: string, q: URLSearchParams, method: string, body: Record<string, unknown>, me: string | null, s: State): { hit: true; value: unknown } | null {
   const needMe = () => me ?? fail(401, "请先连接钱包");
   const ok = (value: unknown) => ({ hit: true as const, value });
@@ -1221,6 +1249,7 @@ function capsuleRoute(p: string, q: URLSearchParams, method: string, body: Recor
     pay.settled = true;
     const c = (s.capsules ?? []).find((x) => x.id === pay.ref);
     if (c && c.pending) Object.assign(c, { pending: false, sealed_height: demoTip(), sealed_at: new Date().toISOString() });
+    newcomerAward(s);
     save();
   };
   if (p === "/v1/billing/products") return ok({ products: [{ product: "capsule", amount_sats: CAPSULE_SATS }], cosmetics: false, methods: ["onchain", "lightning"] });
@@ -1242,6 +1271,7 @@ function capsuleRoute(p: string, q: URLSearchParams, method: string, body: Recor
       signed_message: "", signature: String(body.signature), open_height: null, tier, style, photo, pending: tier === "paid",
     };
     (s.capsules ??= []).unshift(c);
+    if (!c.pending) newcomerAward(s);
     const payment = tier === "paid" ? invoice(c.id) : undefined;
     save();
     return ok({ ...capsuleView(c, a), ...(payment ? { payment } : {}) });
@@ -1361,6 +1391,14 @@ function route(path: string, opts: Opts): unknown {
   }
   const capsuleHit = p.startsWith("/v1/capsules") || p.startsWith("/v1/billing") || p.startsWith("/v1/dms") || p.startsWith("/v1/me/mutes") || p === "/v1/me/dm-settings" || p === "/v1/admin/item-reports" ? capsuleRoute(p, url.searchParams, method, body, me, s) : null;
   if (capsuleHit) return capsuleHit.value;
+  if (p === "/v1/me/newcomer" || p === "/v1/me/newcomer/birthday") {
+    needMe();
+    if (p.endsWith("/birthday") && method === "POST") {
+      s.newcomer ??= { birthday_at: new Date().toISOString(), block: typeof body.block === "number" ? body.block : null };
+      save();
+    }
+    return newcomerView(s);
+  }
   if (p === "/v1/game") return gameView(me);
   if (p === "/v1/tour") return tourView(me);
   if (p === "/v1/me/badge" && method === "PUT") {
@@ -1681,6 +1719,7 @@ function route(path: string, opts: Opts): unknown {
       badges.push({ ...won, streak: run } as (typeof badges)[number]);
       (s.badges ??= []).unshift({ ...won, tx_index: null, created_at: new Date().toISOString() });
     }
+    badges.push(...newcomerAward(s));
     save();
     return { ok: true, badges };
   }
