@@ -6531,3 +6531,240 @@ button.me-link.open {
     margin-bottom: 18px;
   }
 }
+
+/* 礼物 (components/Gift.tsx, app/capsule/gift): a gift on a test network, its funding steps and
+   the 时间锁 card. The card is the one thing here that prints. */
+.gift-net {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 8px;
+  border: 1px solid var(--sale);
+  border-radius: 999px;
+  color: var(--sale);
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+  vertical-align: 1px;
+}
+.gift-pick .cap-chips {
+  margin-top: 4px;
+}
+.gift-pick > input,
+.gift-more input {
+  width: 100%;
+}
+.gift-note {
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 2px solid var(--sale);
+  background: linear-gradient(90deg, rgba(91, 141, 239, 0.07), transparent);
+}
+.gift-key input {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.gift-more summary {
+  cursor: pointer;
+}
+.gift-more[open] summary {
+  margin-bottom: 6px;
+}
+.gift-howto {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.gift-howto p {
+  margin: 0;
+}
+.gift-howto code {
+  display: block;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 11px;
+}
+.gift-fund {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.gift-fund > .gift-net {
+  align-self: flex-start;
+  margin-left: 0;
+}
+.gift-fund .btn,
+.gift-fund button:not(.link-btn) {
+  height: auto;
+  min-height: 34px;
+  padding-top: 7px;
+  padding-bottom: 7px;
+  white-space: normal;
+  line-height: 1.35;
+}
+.gift-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: gift;
+}
+.gift-steps li {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 30px;
+  counter-increment: gift;
+}
+.gift-steps li::before {
+  content: counter(gift);
+  position: absolute;
+  left: 0;
+  top: 1px;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  color: var(--fg-2);
+}
+.gift-steps li.done::before {
+  content: "✓";
+  border-color: var(--success);
+  color: var(--success);
+}
+.gift-steps li b {
+  font-weight: 500;
+  font-size: 14px;
+}
+.gift-main {
+  gap: 18px;
+}
+.gift-sweep {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 0;
+  border-top: 1px solid var(--rule);
+}
+.gift-sweep input {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.gift-page > .cap-field textarea {
+  font-size: 12px;
+}
+.gift-card-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  margin: 28px auto 0;
+  max-width: 560px;
+}
+.gift-card {
+  width: 100%;
+  padding: 22px 24px;
+  border-radius: 12px;
+  background: var(--paper);
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.gift-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 22px;
+}
+.gift-card .gift-net {
+  border-color: #2f5fc4;
+  color: #2f5fc4;
+}
+.gift-card-body {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+.gift-qr svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #fff;
+}
+.gift-card-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+}
+.gift-card-facts div {
+  display: flex;
+  flex-direction: column;
+}
+.gift-card-facts dt {
+  font-size: 11px;
+  color: var(--ink-2);
+}
+.gift-card-facts dd {
+  margin: 0;
+  min-width: 0;
+}
+.gift-card-warn {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--paper-line);
+  border-radius: 8px;
+  color: var(--ink);
+}
+.gift-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.gift-card-text .dim {
+  color: var(--ink-2);
+}
+.gift-card-text code {
+  font-size: 9.5px;
+  line-height: 1.45;
+  word-break: break-all;
+  color: var(--ink);
+}
+@media (max-width: 640px) {
+  .gift-card {
+    padding: 18px 16px;
+  }
+  .gift-card-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .gift-qr {
+    max-width: 240px;
+    margin: 0 auto;
+    width: 100%;
+  }
+}
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .gift-card,
+  .gift-card * {
+    visibility: visible;
+  }
+  .gift-card {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 17cm;
+    border: 1px solid #999;
+  }
+}

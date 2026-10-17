@@ -38,6 +38,11 @@ alone, as before). The style is presentation only and isn't signed.
 sweep() runs once per new block, from the background task that draws the block's treasure
 (api/game.py ensure_soon, on the first map request after the tip moves): it opens and tells
 capsules whose time has come, and clears unpaid ones. There is no other scheduler.
+
+礼物 (api/gift.py): a 封存 capsule (or any, with billing off) may carry sats on a test network,
+locked until a block H by Bitcoin itself. Its letter key is then never escrowed whole: escrow_key
+holds unimap's half of a backup key, the capsule is marked gift, and view() never hands that half
+out; api/gift.py does, once the gift network reaches H. The signed text gains a gift line.
 """
 
 import base64
@@ -54,6 +59,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from api import billing, bip322, moderation, newcomer, notify
+from api import gift as gifts
 from api.auth import current_address, normalize_address, optional_address
 from api.db import cursor
 
@@ -120,8 +126,9 @@ def iso(unix):
     return datetime.fromtimestamp(unix, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def capsule_message(recipient, open_at, fingerprint, line, tag, signed_at):
-    """The exact text the wallet signs to seal a capsule. Must match capsuleMessage in web/lib/capsule.ts."""
+def capsule_message(recipient, open_at, fingerprint, line, tag, signed_at, gift=None):
+    """The exact text the wallet signs to seal a capsule; a gift (api/gift.py) adds a line before
+    the time. Must match capsuleMessage in web/lib/capsule.ts."""
     return "\n".join(
         [
             "unimap time capsule",
@@ -130,6 +137,7 @@ def capsule_message(recipient, open_at, fingerprint, line, tag, signed_at):
             f"sha256: {fingerprint}",
             f"public: {line if line else 'none'}",
             f"tag: {tag if tag else 'none'}",
+            *([gifts.gift_line(gift)] if gift else []),
             f"time: {signed_at}",
         ]
     )
@@ -228,7 +236,7 @@ def blocks_left(open_at, now=None):
 
 COLUMNS = (
     "id, ref, author, recipient, ciphertext, fingerprint, escrow_key, open_at, sealed_height, sealed_at, "
-    "line, tag, line_removed_by, signed_message, signature, due_tip, open_height, tier, status, photo, style, notified_at"
+    "line, tag, line_removed_by, signed_message, signature, due_tip, open_height, tier, status, photo, style, notified_at, gift"
 )
 
 
@@ -270,7 +278,9 @@ def view(cur, row, viewer, tip_height, full=True):
         "style": row["style"],
         "has_photo": row["photo"] is not None,
         "open_height": opened,
-        "key": row["escrow_key"] if opened is not None else None,  # held back until it opens
+        # held back until it opens; a gift's is a backup half, which only api/gift.py releases, at H
+        "key": row["escrow_key"] if opened is not None and not row["gift"] else None,
+        "gift": gifts.public(cur, row["id"]) if row["gift"] else None,
         "line": row["line"],
         "tag": row["tag"],
         "mine": viewer is not None and viewer == row["author"],
@@ -302,6 +312,7 @@ def rules(viewer: str | None = Depends(optional_address)):
             "styles": list(STYLES),
             "max_photo_chars": MAX_PHOTO,
             "inscribe_sats": inscribe_sats(),
+            "gift": gifts.rules(),
         }
 
 
@@ -317,6 +328,7 @@ class NewCapsule(BaseModel):
     tier: str | None = None  # free | paid, while billing is on; left out: free
     photo: str | None = Field(default=None, max_length=MAX_PHOTO)  # base64 of iv || AES-GCM, under the same key
     style: str | None = None  # one of STYLES; left out: classic
+    gift: gifts.GiftIn | None = None  # 礼物: key is then unimap's half of the backup key
 
 
 def _b64(s, urlsafe=False):
@@ -363,8 +375,11 @@ def seal(req: NewCapsule, address: str = Depends(moderation.writer_address)):
         raise HTTPException(400, f"open_at must be within {MAX_YEARS} years")
     if tier == "free" and req.open_at > now + FREE_DAYS * 86400:
         raise HTTPException(400, "a free capsule opens within a year; 封存 (paid) can wait up to 100 years")
+    if req.gift is not None and tier == "free":
+        raise HTTPException(403, "a gift comes with 封存, the paid tier")
+    gift = gifts.check_new(req.gift) if req.gift is not None else None
     fingerprint = hashlib.sha256(raw + photo).hexdigest()
-    message = capsule_message(recipient, req.open_at, fingerprint, line, req.tag, req.signed_at)
+    message = capsule_message(recipient, req.open_at, fingerprint, line, req.tag, req.signed_at, gift)
     try:
         if not bip322.verify(address, message, req.signature):
             raise HTTPException(401, "bad capsule signature")
@@ -387,8 +402,8 @@ def seal(req: NewCapsule, address: str = Depends(moderation.writer_address)):
                 raise HTTPException(409, "this wallet has used its free capsule; 封存 is the paid tier")
         cur.execute(
             f"insert into social.capsules (id, ref, author, recipient, ciphertext, fingerprint, escrow_key, open_at, "
-            "sealed_height, line, tag, signed_message, signature, tier, status, photo, style) "
-            "values (%s, %s, %s, %s, %s, %s, %s, to_timestamp(%s), %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "sealed_height, line, tag, signed_message, signature, tier, status, photo, style, gift) "
+            "values (%s, %s, %s, %s, %s, %s, %s, to_timestamp(%s), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             f"on conflict (signature) do nothing returning {COLUMNS};",
             (
                 secrets.token_urlsafe(9),
@@ -408,11 +423,14 @@ def seal(req: NewCapsule, address: str = Depends(moderation.writer_address)):
                 "pending" if tier == "paid" else "sealed",
                 req.photo or None,
                 style,
+                gift is not None,
             ),
         )
         row = cur.fetchone()
         if row is None:
             raise HTTPException(409, "this signature was already used")
+        if gift is not None:
+            gifts.store(cur, row["id"], gift)
         out = view(cur, row, address, height)
     if row["status"] == "sealed":
         with cursor() as cur:

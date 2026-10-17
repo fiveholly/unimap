@@ -7,6 +7,7 @@ import type { Pet, PetKey, PublicPet } from "./pets";
 import type { Prosperity } from "./prosperity";
 import type { DistrictStyle } from "./style";
 import type { EnvelopeStyle, Tag, Tier } from "./capsule";
+import type { GiftNetwork } from "./gift";
 
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 // The server (share images) can reach the API without going out through the public origin.
@@ -505,7 +506,34 @@ export type Capsule = {
   signed_message?: string;
   signature?: string;
   payment?: Payment; // POST /v1/capsules for 封存: the invoice that seals it
+  gift?: CapsuleGiftSummary | null; // 礼物 (api/gift.py): then key never comes; the 时间锁 opens it
 };
+export type CapsuleGiftSummary = { network: GiftNetwork; sats: number; height: number; refund: boolean; address: string; reveal_txid: string | null; funded: boolean };
+/** api/gift.py: what anyone with the link may see of a gift. */
+export type CapsuleGift = {
+  capsule_id: string;
+  network: GiftNetwork;
+  sats: number;
+  height: number;
+  refund: boolean;
+  refund_height: number | null;
+  recipient_key: string;
+  sender_key: string | null;
+  bearer: boolean;
+  address: string;
+  author: string;
+  drand_round: number;
+  tlock: string;
+  commit_txid: string | null;
+  reveal_txid: string | null;
+  inscription_id: string | null;
+  verified: boolean;
+  funded: boolean;
+  tip: number | null;
+  unlocked: boolean;
+  explorer: string;
+};
+export type GiftRules = { network: GiftNetwork; tiers: number[]; min_sats: number; max_sats: number; refund_blocks: number; block_seconds: number; tip: number | null; esplora: string; explorer: string };
 export type CapsuleRules = {
   min_lead_seconds: number;
   block_seconds: number;
@@ -518,6 +546,7 @@ export type CapsuleRules = {
   styles?: EnvelopeStyle[];
   max_photo_chars?: number;
   inscribe_sats?: number; // 刻上链, shown as coming soon
+  gift?: GiftRules | null; // 礼物 on a test network; null while off
 };
 /** api/billing.py: one payment for a product, as /v1/billing/pay and /v1/billing/payments/{id} give it.
  * onchain: send amount_sats to address, then post the txid; lightning: pay the invoice. */

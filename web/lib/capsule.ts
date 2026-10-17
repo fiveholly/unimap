@@ -100,8 +100,9 @@ export function isoZ(unix: number): string {
   return new Date(unix * 1000).toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
-/** The exact text the wallet signs to seal a capsule. Must match capsule_message in api/capsule.py. */
-export function capsuleMessage(recipient: string, openAt: number, fingerprint: string, line: string | null, tag: Tag | null, signedAt: number): string {
+/** The exact text the wallet signs to seal a capsule; a 礼物 adds its line (lib/gift.ts giftLine)
+ * before the time. Must match capsule_message in api/capsule.py. */
+export function capsuleMessage(recipient: string, openAt: number, fingerprint: string, line: string | null, tag: Tag | null, signedAt: number, giftLine?: string | null): string {
   return [
     "unimap time capsule",
     `to: ${recipient}`,
@@ -109,6 +110,7 @@ export function capsuleMessage(recipient: string, openAt: number, fingerprint: s
     `sha256: ${fingerprint}`,
     `public: ${line || "none"}`,
     `tag: ${tag || "none"}`,
+    ...(giftLine ? [giftLine] : []),
     `time: ${signedAt}`,
   ].join("\n");
 }

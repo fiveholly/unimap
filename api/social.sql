@@ -856,3 +856,27 @@ CREATE TABLE IF NOT EXISTS social.newcomers (
 	created_at timestamptz NOT NULL DEFAULT now(),
 	CONSTRAINT newcomers_pk PRIMARY KEY (address)
 );
+
+-- 礼物 (api/gift.py): sats sent with a capsule, locked on a test network until block height. unimap
+-- keeps only the public facts and, as the capsule's escrow_key, its half of the backup key, handed
+-- out once that network's tip reaches height. It never holds the sats or the recipient's key.
+ALTER TABLE social.capsules ADD COLUMN IF NOT EXISTS gift bool NOT NULL DEFAULT false; -- escrow_key is a backup half, released by api/gift.py
+CREATE TABLE IF NOT EXISTS social.capsule_gifts (
+	capsule_id text NOT NULL REFERENCES social.capsules (id) ON DELETE CASCADE,
+	network text NOT NULL, -- signet | testnet | testnet4
+	sats int8 NOT NULL,
+	height int4 NOT NULL, -- H: leaf 1 opens at it, the refund leaf at H + 262800
+	refund bool NOT NULL,
+	recipient_key text NOT NULL, -- x-only hex
+	sender_key text NULL, -- x-only hex, with the refund leaf
+	bearer bool NOT NULL, -- the recipient key is a 礼物钥匙 that rides in the 时间锁 card
+	address text NOT NULL, -- rebuilt from the keys and height when stored
+	drand_round int8 NOT NULL,
+	tlock text NOT NULL, -- the letter's key, timelock-encrypted to drand_round
+	commit_txid text NULL,
+	reveal_txid text NULL, -- its first output is the gift; the inscription is <reveal_txid>i0
+	verified bool NOT NULL DEFAULT false, -- the explorer showed the reveal paying address
+	funded_at timestamptz NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT capsule_gifts_pk PRIMARY KEY (capsule_id)
+);
