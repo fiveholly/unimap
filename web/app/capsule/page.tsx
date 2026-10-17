@@ -228,7 +228,7 @@ export default function CapsuleWritePage() {
       <div className="cap-two">
         <div className="cap-main">
           <p className="eyebrow">{forDay ? t("给 {day} 这一天写一封信", { day: forDay }) : t("新的时间胶囊")}</p>
-          <h1 className="cap-title">{t("写一封未来才能打开的信")}</h1>
+          <h1 className="cap-title">{t("给将来的自己，或你爱的人，封存一份礼物")}</h1>
           <label className="cap-field">
             <span>{t("写给谁")}</span>
             <input value={recipient} onChange={(e) => setRecipient(e.target.value.replace(/\n/g, ""))} maxLength={MAX_RECIPIENT} placeholder={t("18 岁的小满")} name="recipient" />

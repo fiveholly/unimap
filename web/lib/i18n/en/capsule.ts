@@ -27,7 +27,7 @@ export const capsule: Record<string, string> = {
   // Writing (app/capsule)
   "新的时间胶囊": "New time capsule",
   "给 {day} 这一天写一封信": "A letter for {day}",
-  "写一封未来才能打开的信": "Write a letter that opens in the future",
+  "给将来的自己，或你爱的人，封存一份礼物": "Seal a gift for your future self, or for someone you love",
   "写给谁": "To",
   "18 岁的小满": "Xiaoman, at 18",
   "信": "Letter",
