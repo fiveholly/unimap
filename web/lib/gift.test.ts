@@ -30,6 +30,13 @@ import {
   unpackTimelock,
   xonlyOf,
   amountProblem,
+  bodyBytes,
+  COMMIT_VBYTES,
+  envelopeLength,
+  HEADER_BYTES,
+  inscriptionVbytes,
+  letterLine,
+  revealVbytes,
   CONTENT_TYPE,
   type Timelock,
 } from "./gift.ts";
@@ -98,6 +105,25 @@ test("the backup key splits in two, and only both open it", () => {
 
 test("the gift line matches api/gift.py", () => {
   assert.equal(giftLine({ sats: 100000, address: WITH_REFUND, height: H, network: "signet" }), `gift: 100000 sats to ${WITH_REFUND} unlocking at block 900000 on signet`);
+});
+
+test("an inscribed letter's line matches api/gift.py", () => {
+  assert.equal(letterLine({ network: "signet", drand_round: 12_345_678 }), "inscribed: on signet, key timelocked to drand round 12345678");
+});
+
+test("the reveal's vsize is worked out byte for byte, before anything is built", () => {
+  const secret = new Uint8Array(32).fill(9);
+  for (const n of [1, 75, 76, 255, 256, 520, 521, 899, 2_800, 30_801, 52_801]) {
+    const body = new Uint8Array(n).fill(0x5a);
+    const envelope = inscriptionScript(xonlyOf(secret), CONTENT_TYPE, body);
+    assert.equal(envelopeLength(n), envelope.length, `envelope for ${n}`);
+    const reveal = buildReveal({ secret, envelope, giftAddress: NO_REFUND, giftSats: 546, commit: { txid: "11".repeat(32), vout: 0, value: 1_000_000 } });
+    assert.equal(revealVbytes(n), reveal.vsize, `reveal for ${n}`);
+  }
+  // The witness weighs a quarter: 4,000 more bytes of letter are about 1,000 vbytes.
+  assert.ok(Math.abs(revealVbytes(bodyBytes(4_000, 0)) - revealVbytes(bodyBytes(0, 0)) - 1_000) < 30);
+  assert.equal(inscriptionVbytes(100, 0), COMMIT_VBYTES + revealVbytes(HEADER_BYTES + 28 + 100));
+  assert.equal(inscriptionVbytes(100, 25_000) - inscriptionVbytes(100, 0), revealVbytes(HEADER_BYTES + 128 + 25_028) - revealVbytes(HEADER_BYTES + 128));
 });
 
 test("the inscription: envelope, content, reveal paying the gift as output 0", () => {

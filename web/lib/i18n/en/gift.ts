@@ -161,4 +161,21 @@ export const gift: Record<string, string> = {
   "连不上 drand（{why}）": "Can't reach drand ({why})",
   "这台设备上没有 unimap 那一半（演示站没有服务器，它只存在封信的那个浏览器里）": "unimap's half isn't on this device (the demo site has no server; it lives only in the browser that sealed the letter)",
   "{drand}；备用钥匙也拿不到：{why}": "{drand}; and the backup key can't be had either: {why}",
+
+  // GiftFund, inscribing a letter without a gift
+  "信用你自己的钱包真实地刻在比特币 Signet 测试网上：先把 UniSat 切到 Signet，准备一点测试币。演示站没有服务器，unimap 那一半钥匙存在这个浏览器里；服务费照旧只是模拟。":
+    "The letter is really inscribed on Bitcoin's Signet test network, from your own wallet: switch UniSat to Signet and get a few test coins first. The demo has no server, so unimap's half of the key is kept in this browser; the service fee is still only simulated.",
+  "关着时信只刻在演示站模拟的链上。打开后，用你的钱包在 Signet 上发真实的测试网交易。": "Off, the letter is inscribed only on the demo's pretend chain. On, your wallet sends real test-network transactions on Signet.",
+  "正在把信刻成铭文（reveal）…": "Inscribing the letter (reveal)…",
+  "信刻上链了": "The letter is inscribed",
+  "把信刻上链": "Inscribe the letter",
+  "钱包付一笔交易（刻铭文的网络费，加随信的 {n}），浏览器再签第二笔，把信的密文刻成铭文，连同 {n} 送到 {to}。":
+    "Your wallet pays one transaction (the inscription's network fee plus the {n} that goes with the letter); the browser signs a second that inscribes the encrypted letter and sends it, with the {n}, to {to}.",
+  "钱包付一笔交易（刻铭文的网络费，加随信的 {n}），浏览器再签第二笔，把信的密文刻成铭文；那 {n} 回到你自己的地址。":
+    "Your wallet pays one transaction (the inscription's network fee plus the {n} that goes with the letter); the browser signs a second that inscribes the encrypted letter, and the {n} comes back to your own address.",
+  "继续刻上链": "Continue inscribing",
+  "用 {wallet} 在 Signet 上刻上链": "Inscribe on Signet with {wallet}",
+  "用钱包在 Signet 上刻上链": "Inscribe on Signet with your wallet",
+  "用演示钱包刻上链": "Inscribe with the demo wallet",
+  "用钱包刻上链": "Inscribe with your wallet",
 };

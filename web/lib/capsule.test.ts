@@ -5,6 +5,11 @@ import {
   barsDone,
   blocksUntil,
   capsuleMessage,
+  CHAIN_PHOTO_TARGET,
+  halfFromHash,
+  imageType,
+  MAX_CHAIN_PHOTO_BYTES,
+  usd,
   decryptLetter,
   decryptPhoto,
   defaultTier,
@@ -103,6 +108,41 @@ test("tier options on the write page", () => {
   const used = tierOptions(true, false, 2000, 20000);
   assert.deepEqual(used.map((o) => o.tier), ["paid", "inscribe"]);
   assert.equal(defaultTier(used), "paid");
+});
+
+test("上链: the 首封 while the wallet has it, then the paid letter; no 封存 or 刻上链 card", () => {
+  const fresh = tierOptions(true, true, 2000, 20000, true);
+  assert.deepEqual(
+    fresh.map((o) => [o.tier, o.sats, o.available, o.onchain]),
+    [["free", 0, true, true], ["paid", 2000, true, true]],
+  );
+  assert.equal(defaultTier(fresh), "free");
+  assert.deepEqual(tierOptions(true, null, 2000, 20000, true).map((o) => o.tier), ["free", "paid"]); // not signed in yet
+  const used = tierOptions(true, false, 2000, 20000, true);
+  assert.deepEqual(used.map((o) => o.tier), ["paid"]); // no free fallback
+  assert.equal(defaultTier(used), "paid");
+  assert.deepEqual(tierOptions(false, true, 2000, 20000, true), []); // billing off: as before
+  // The 首封 is text only, the default envelope, no notice, but any time up to 100 years.
+  assert.deepEqual(tierAllows("free", true), { photo: false, style: false, anyTime: true, told: false });
+  assert.deepEqual(tierAllows("paid", true), tierAllows("paid"));
+  const now = 1_800_000_000;
+  assert.equal(pastFreeLimit("free", now + 50 * 366 * 86400, now, 366, true), false);
+  assert.equal(MAX_CHAIN_PHOTO_BYTES, 50_000);
+  assert.ok(CHAIN_PHOTO_TARGET < MAX_CHAIN_PHOTO_BYTES);
+});
+
+test("costs in dollars, photo types, the link's half", () => {
+  assert.equal(usd(2000, 65_000), "$1.30");
+  assert.equal(usd(1e8, 65_000), "$65,000.00");
+  assert.equal(usd(10, 65_000), "<$0.01");
+  assert.equal(usd(0, 65_000), "$0.00");
+  const webp = new Uint8Array([0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4, 0x57, 0x45, 0x42, 0x50, 0x56]);
+  assert.equal(imageType(webp), "image/webp");
+  assert.equal(imageType(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0, 0])), "image/jpeg");
+  const r = "B".repeat(43);
+  assert.equal(halfFromHash(`#r=${r}`), r);
+  assert.equal(halfFromHash(`#k=${"A".repeat(43)}`), null);
+  assert.equal(keyFromHash(`#r=${r}`), null);
 });
 
 test("what each tier allows", () => {

@@ -23,7 +23,18 @@ be one whose sats are locked to a later block. The tip comes from the operator's
 (GIFT_BITCOIN_RPC_URL, a bitcoind on the gift network, and/or GIFT_ESPLORA_URL); with both, the
 lower answer is used, and with none reachable nothing is released.
 
-Charging is the 封存 fee alone (api/billing.py, product capsule); a gift is never priced.
+Charging is the capsule's own service fee alone (api/billing.py, product capsule; none for a 首封,
+a wallet group's first letter, api/capsule.py); a gift is never priced.
+
+上链的信 (a letter without a gift, while api/capsule.py onchain() is on): the same inscription,
+made the same way in the sender's browser (web/lib/giftseal.ts prepareLetter, then GiftFund), but
+the reveal's first output is POSTAGE sats to the recipient's address on the gift network when the
+recipient's label is one, else back to the sender's own (their wallet's, chosen when funding). The
+key is split the same way, K = S xor R, and timelocked to the drand round at the capsule's open
+time; S is the capsule's escrow_key, and api/capsule.py view() hands it out (as "half") once the
+capsule opens, since no sats wait on H. R rides in the share link's #fragment (#r=). check_letter
+checks the facts before the capsule is stored, store_letter keeps them in social.capsule_inscriptions,
+and POST /v1/capsules/{id}/chain/txs takes the txids, checked as a gift's are.
 """
 
 import logging
@@ -377,13 +388,14 @@ class GiftTxs(BaseModel):
 
 
 def _check_reveal(row, commit, reveal):
-    """True if the reveal is on the network and pays the gift address, False if the explorer can't
-    tell yet; raises if it says otherwise."""
+    """True if the reveal is on the network and pays the gift address (a letter's: its postage
+    address, or any when it has none), False if the explorer can't tell yet; raises if it says otherwise."""
     tx = fetch_tx(row["network"], reveal)
     if not tx:
         return False
     outs, ins = tx.get("vout") or [], tx.get("vin") or []
-    if not outs or outs[0].get("scriptpubkey_address") != row["address"] or int(outs[0].get("value") or 0) < row["sats"]:
+    to = outs[0].get("scriptpubkey_address") if outs else None
+    if not to or (row["address"] and to != row["address"]) or int(outs[0].get("value") or 0) < row["sats"]:
         raise HTTPException(400, "the reveal's first output doesn't pay the gift address its amount")
     if not ins or ins[0].get("txid") != commit:
         raise HTTPException(400, "the reveal doesn't spend the commit")
@@ -411,6 +423,107 @@ def gift_txs(capsule_id: str, req: GiftTxs, address: str = Depends(current_addre
         )
         row.update(commit_txid=commit, reveal_txid=reveal, verified=verified, funded_at=row["funded_at"] or True)
     return _view(row, tip(row["network"]))
+
+
+# --- 上链的信: a letter inscribed without a gift ---------------------------------------------------
+
+POSTAGE = 546  # sats the reveal of a letter without a gift sends on: the inscribed sat's output
+
+
+class LetterIn(BaseModel):
+    network: str
+    height: int  # the gift network's block estimated at the open time, as written in the inscription
+    drand_round: int  # the drand quicknet round at the open time
+    tlock: str = Field(max_length=MAX_TLOCK)  # age-armored: K timelock-encrypted to drand_round
+    address: str | None = Field(default=None, max_length=100)  # the recipient's address on the network; none: the sender's own
+
+
+def letter_line(l):
+    """The line the capsule's signed text gains when its letter is inscribed (api/capsule.py
+    capsule_message). Must match letterLine in web/lib/gift.ts."""
+    return f"inscribed: on {l['network']}, key timelocked to drand round {l['drand_round']}"
+
+
+def check_letter(l: LetterIn):
+    """Check an inscribed letter before its capsule is stored: the network, its block against the
+    tip, the timelock, and the postage address. Returns what to store."""
+    net = network()
+    if net is None:
+        raise HTTPException(403, "letters aren't inscribed on this server")
+    if l.network != net:
+        raise HTTPException(400, f"letters here are inscribed on {net}")
+    current = tip(net)
+    if current is None:
+        raise HTTPException(503, f"can't see the {net} tip right now")
+    if l.height <= current or l.height > current + MAX_BLOCKS:
+        raise HTTPException(400, f"the letter's block must be after the {net} tip ({current}) and within a hundred years")
+    if l.drand_round < 1 or not l.tlock.startswith("-----BEGIN AGE ENCRYPTED FILE-----"):
+        raise HTTPException(400, "tlock must be an armored drand timelock ciphertext")
+    address = (l.address or "").strip() or None
+    if address is not None:
+        try:
+            btc.address_script(address, net)
+        except btc.BadTx:
+            raise HTTPException(400, f"address isn't an address on {net}")
+        if address.lower().startswith("tb1"):
+            address = address.lower()
+    return {"network": net, "height": l.height, "drand_round": l.drand_round, "tlock": l.tlock, "address": address, "sats": POSTAGE}
+
+
+def store_letter(cur, capsule_id, l):
+    cur.execute(
+        "insert into social.capsule_inscriptions (capsule_id, network, height, drand_round, tlock, address, sats) "
+        "values (%s, %s, %s, %s, %s, %s, %s);",
+        (capsule_id, l["network"], l["height"], l["drand_round"], l["tlock"], l["address"], l["sats"]),
+    )
+
+
+LETTER_KEYS = ("network", "height", "drand_round", "tlock", "address", "sats", "commit_txid", "reveal_txid", "verified")
+
+
+def letter(cur, capsule_id):
+    """An inscribed letter's facts for the capsule's own view (api/capsule.py), or None. All of it is
+    public: the inscription carries the same."""
+    cur.execute(f"select {', '.join(LETTER_KEYS)} from social.capsule_inscriptions where capsule_id = %s;", (capsule_id,))
+    r = cur.fetchone()
+    if r is None:
+        return None
+    r = dict(r) if isinstance(r, dict) else dict(zip(LETTER_KEYS, r))
+    return {
+        **r,
+        "inscribed": r["reveal_txid"] is not None,
+        "inscription_id": f"{r['reveal_txid']}i0" if r["reveal_txid"] else None,
+        "explorer": EXPLORER[r["network"]],
+    }
+
+
+@router.post("/v1/capsules/{capsule_id}/chain/txs")
+def letter_txs(capsule_id: str, req: GiftTxs, address: str = Depends(current_address)):
+    """The sender's browser reports the commit and reveal that inscribed the letter, as gift_txs. A
+    paid letter gets here only once its service fee is paid (it is 'sealed' then)."""
+    commit, reveal = req.commit_txid.lower(), req.reveal_txid.lower()
+    if not TXID.match(commit) or not TXID.match(reveal) or commit == reveal:
+        raise HTTPException(422, "txids are 64 hex characters each")
+    with cursor(dict_rows=True) as cur:
+        cur.execute(
+            "select i.network, i.address, i.sats, i.reveal_txid, i.verified, c.author, c.status from social.capsule_inscriptions i "
+            "join social.capsules c on c.id = i.capsule_id where i.capsule_id = %s;",
+            (capsule_id,),
+        )
+        row = cur.fetchone()
+        if row is None or row["author"] != address:
+            raise HTTPException(404, "no inscribed letter of yours here")
+        if row["status"] != "sealed":
+            raise HTTPException(402, "pay the service fee first; then the letter is inscribed")
+        if row["reveal_txid"] and row["reveal_txid"] != reveal and row["verified"]:
+            raise HTTPException(409, "this letter is inscribed already")
+        verified = _check_reveal(row, commit, reveal)
+        cur.execute(
+            "update social.capsule_inscriptions set commit_txid = %s, reveal_txid = %s, verified = %s, "
+            "inscribed_at = coalesce(inscribed_at, now()) where capsule_id = %s;",
+            (commit, reveal, verified, capsule_id),
+        )
+        return letter(cur, capsule_id)
 
 
 def public(cur, capsule_id):

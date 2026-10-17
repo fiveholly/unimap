@@ -90,6 +90,12 @@ export function amountProblem(sats: number, max: number): "min" | "max" | "whole
 export const giftLine = (g: { sats: number; address: string; height: number; network: string }) =>
   `gift: ${g.sats} sats to ${g.address} unlocking at block ${g.height} on ${g.network}`;
 
+/** The line an inscribed letter without a gift (上链的信) adds to the signed text. Must match letter_line in api/gift.py. */
+export const letterLine = (l: { network: string; drand_round: number }) => `inscribed: on ${l.network}, key timelocked to drand round ${l.drand_round}`;
+
+/** What the reveal of a letter without a gift sends on: the inscribed sat's output (api/gift.py POSTAGE). */
+export const POSTAGE = 546;
+
 // ---- the inscription ---------------------------------------------------------------------
 
 /** What is inscribed: who it's for in no way at all; only the network, H, the drand round and the
@@ -191,6 +197,42 @@ export function revealFee(secret: Uint8Array, envelope: Uint8Array, giftAddress:
   const { vsize } = buildReveal({ secret, envelope, giftAddress, giftSats, commit: { txid: "00".repeat(32), vout: 0, value: giftSats + 1_000_000 } });
   return Math.ceil(vsize * feeRate);
 }
+
+// ---- what an inscription costs -----------------------------------------------------------
+// Before anything is signed, the write page shows the network fee: vbytes × fee rate. The envelope
+// sits in the reveal's witness, which weighs a quarter, so the reveal is about body bytes / 4 plus
+// its fixed parts; the commit is an ordinary payment. Both are worked out byte for byte here, as
+// buildReveal and commitPsbt build them (lib/gift.test.ts checks against buildReveal).
+
+/** The inscription's JSON header line (encodeContent), its timelock included: ~800 bytes. */
+export const HEADER_BYTES = 800;
+/** The commit: one wallet input (P2WPKH, the larger kind), the commit output and change. */
+export const COMMIT_VBYTES = 11 + 43 * 2 + 68;
+
+const pushLen = (n: number) => (n <= 75 ? 1 : n <= 255 ? 2 : 3) + n;
+const varintLen = (n: number) => (n < 0xfd ? 1 : n <= 0xffff ? 3 : 5);
+
+/** The envelope's length for a body of n bytes (inscriptionScript, content type CONTENT_TYPE). */
+export function envelopeLength(n: number, contentType = CONTENT_TYPE): number {
+  let pushes = 0;
+  for (let i = 0; i < n; i += MAX_PUSH) pushes += pushLen(Math.min(MAX_PUSH, n - i));
+  return 33 + 1 + 1 + 1 + 4 + 2 + pushLen(contentType.length) + 1 + pushes + 1;
+}
+
+/** The reveal's vsize for a body of n bytes: one script-path input, one P2TR output (43 bytes). */
+export function revealVbytes(n: number): number {
+  const env = envelopeLength(n);
+  const base = 4 + 1 + 41 + 1 + 43 + 4;
+  const witness = 2 + 1 + 65 + varintLen(env) + env + 34;
+  return Math.ceil((base * 4 + witness) / 4);
+}
+
+/** The inscription's body for a letter of letterBytes (UTF-8) and a photo of photoBytes (0: none):
+ * the header, then each as iv || AES-GCM (12 + 16 bytes more). */
+export const bodyBytes = (letterBytes: number, photoBytes: number) => HEADER_BYTES + 28 + letterBytes + (photoBytes > 0 ? 28 + photoBytes : 0);
+
+/** Commit and reveal together, in vbytes, for such a letter. */
+export const inscriptionVbytes = (letterBytes: number, photoBytes: number) => COMMIT_VBYTES + revealVbytes(bodyBytes(letterBytes, photoBytes));
 
 // ---- spending the gift -------------------------------------------------------------------
 

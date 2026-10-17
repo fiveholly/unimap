@@ -880,3 +880,23 @@ CREATE TABLE IF NOT EXISTS social.capsule_gifts (
 	created_at timestamptz NOT NULL DEFAULT now(),
 	CONSTRAINT capsule_gifts_pk PRIMARY KEY (capsule_id)
 );
+
+-- 上链的信 (api/gift.py, api/capsule.py onchain()): a letter inscribed on the gift network without a
+-- gift. The reveal's first output carries sats to address, or to the sender's own when it is null.
+-- escrow_key is then unimap's half of the letter's key, handed out once the capsule opens.
+ALTER TABLE social.capsules ADD COLUMN IF NOT EXISTS onchain bool NOT NULL DEFAULT false; -- inscribed: escrow_key is a half
+CREATE TABLE IF NOT EXISTS social.capsule_inscriptions (
+	capsule_id text NOT NULL REFERENCES social.capsules (id) ON DELETE CASCADE,
+	network text NOT NULL, -- signet | testnet | testnet4
+	height int4 NOT NULL, -- the network's block estimated at the open time, as inscribed
+	drand_round int8 NOT NULL,
+	tlock text NOT NULL, -- the letter's key, timelock-encrypted to drand_round
+	address text NULL, -- the recipient's address on network; null: the sender's own
+	sats int8 NOT NULL, -- what the reveal's first output carries
+	commit_txid text NULL,
+	reveal_txid text NULL, -- the inscription is <reveal_txid>i0
+	verified bool NOT NULL DEFAULT false, -- the explorer showed the reveal
+	inscribed_at timestamptz NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT capsule_inscriptions_pk PRIMARY KEY (capsule_id)
+);

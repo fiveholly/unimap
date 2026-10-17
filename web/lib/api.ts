@@ -507,7 +507,28 @@ export type Capsule = {
   signature?: string;
   payment?: Payment; // POST /v1/capsules for 封存: the invoice that seals it
   gift?: CapsuleGiftSummary | null; // 礼物 (api/gift.py): then key never comes; the 时间锁 opens it
+  onchain?: boolean; // 上链: the letter is inscribed (with its gift, or on its own: chain)
+  chain?: CapsuleChain | null; // an inscribed letter without a gift: then key never comes, half does once open
+  half?: string | null; // unimap's half of an inscribed letter's key, once open; the link's #r= is the other
 };
+/** api/gift.py letter(): an inscribed letter's public facts. address null: the postage went back to the sender. */
+export type CapsuleChain = {
+  network: GiftNetwork;
+  height: number;
+  drand_round: number;
+  tlock: string;
+  address: string | null;
+  sats: number;
+  commit_txid: string | null;
+  reveal_txid: string | null;
+  verified: boolean;
+  inscribed: boolean;
+  inscription_id: string | null;
+  explorer: string;
+  live?: boolean; // the demo's 真实 Signet (lib/signet.ts)
+};
+/** api/prices.py: mainnet's BTC/USD and fee rate (sat/vB), for showing costs in dollars. */
+export type UsdRate = { btc_usd: number; fee_rate: number | null; at: number };
 export type CapsuleGiftSummary = { network: GiftNetwork; sats: number; height: number; refund: boolean; address: string; reveal_txid: string | null; funded: boolean; live?: boolean };
 /** api/gift.py: what anyone with the link may see of a gift. */
 export type CapsuleGift = {
@@ -547,6 +568,10 @@ export type CapsuleRules = {
   styles?: EnvelopeStyle[];
   max_photo_chars?: number;
   inscribe_sats?: number; // 刻上链, shown as coming soon
+  onchain?: boolean; // 上链: billing on and a gift network, so every letter is inscribed (首封 free of the service fee)
+  max_chain_photo_bytes?: number;
+  postage_sats?: number; // what an inscribed letter's reveal sends on
+  usd?: UsdRate | null; // null: no price, show sats
   gift?: GiftRules | null; // 礼物 on a test network; null while off
 };
 /** api/billing.py: one payment for a product, as /v1/billing/pay and /v1/billing/payments/{id} give it.

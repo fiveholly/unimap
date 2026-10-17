@@ -249,11 +249,16 @@ class GiftApi(unittest.TestCase):
         self.assertEqual(ok.status_code, 201, ok.text)
         self.assertEqual(self.sql("select count(*) from social.capsule_gifts g join social.capsules c on c.id = g.capsule_id where c.author = %s;", (w.address,))[0][0], 1)
 
-    def test_free_tier_has_no_gift(self):
+    def test_first_letter_may_carry_a_gift(self):
+        # With billing on and a gift network, letters are inscribed (api/capsule.py onchain()), and
+        # the 首封 has no service fee, gift or not; it is still one per wallet group.
         os.environ.update(BILLING_PRICE_CAPSULE_SATS="2000", PLATFORM_LIGHTNING_ADDRESS="pay@unimap.test")
         self.addCleanup(lambda: [os.environ.pop(k, None) for k in ("BILLING_PRICE_CAPSULE_SATS", "PLATFORM_LIGHTNING_ADDRESS")])
         w = self.wallet(63)
-        self.assertEqual(self.seal(w, self.gift_body(), tier="free")[0].status_code, 403)
+        r = self.seal(w, self.gift_body(), tier="free")[0]
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertEqual((r.json()["tier"], r.json()["status"], r.json()["onchain"], r.json()["chain"]), ("free", "sealed", True, None))
+        self.assertEqual(self.seal(w, self.gift_body(), tier="free")[0].status_code, 409)
 
     def test_funding_txids(self):
         w = self.wallet(64)
@@ -287,3 +292,167 @@ class GiftApi(unittest.TestCase):
         start = self.sql("select max(block_height) from bitmap_block_hashes;")[0][0] + 1
         for i in range(n):
             self.sql("insert into bitmap_block_hashes (block_height, block_hash) values (%s, %s);", (start + i, f"g{start + i}"))
+
+
+class Prices(unittest.TestCase):
+    """api/prices.py: mainnet's BTC/USD and fee rate, cached, and nothing at all when it can't be had."""
+
+    def test_cache_and_failure(self):
+        from api import prices
+
+        calls = []
+        old = prices.fetch
+        self.addCleanup(lambda: (setattr(prices, "fetch", old), prices._cache.update(at=0.0, tried=0.0, value=None), os.environ.update(PRICE_URL="off")))
+        prices._cache.update(at=0.0, tried=0.0, value=None)
+        os.environ["PRICE_URL"] = "https://prices.test/api"
+        prices.fetch = lambda url: calls.append(url) or None
+        self.assertIsNone(prices.usd())  # no price ever: none
+        self.assertIsNone(prices.usd())  # and not asked again within a minute
+        self.assertEqual(calls, ["https://prices.test/api"])
+        prices._cache["tried"] = 0.0
+        prices.fetch = lambda url: calls.append(url) or {"btc_usd": 65_000.0, "fee_rate": 4}
+        got = prices.usd()
+        self.assertEqual((got["btc_usd"], got["fee_rate"]), (65_000.0, 4))
+        prices._cache.update(at=0.0, tried=0.0)
+        prices.fetch = lambda url: None  # stale and the source is down: the last answer stays
+        self.assertEqual(prices.usd()["btc_usd"], 65_000.0)
+        os.environ["PRICE_URL"] = "off"
+        self.assertIsNone(prices.usd())
+
+
+TB_ADDRESS = gift.taproot_address("signet", H, RECIPIENT, None, False)  # any signet address will do
+
+
+@unittest.skipUnless(PGURL, "TEST_PGURL not set")
+class LetterApi(unittest.TestCase):
+    """上链的信: with 封存 selling and a gift network, every letter is inscribed (api/capsule.py onchain())."""
+
+    setUpClass = classmethod(base.SocialApi.setUpClass.__func__)
+    login = classmethod(base.SocialApi.login.__func__)
+    h = base.SocialApi.h
+    wallet, sql, mine = GiftApi.wallet, GiftApi.sql, GiftApi.mine
+
+    def setUp(self):
+        GiftApi.setUp(self)
+        from api import tips
+
+        class Fake:
+            paid, made = set(), []
+
+            @staticmethod
+            def ask_invoice(address, sats, comment):
+                Fake.made.append((address, sats, comment))
+                return f"lnbc{sats * 10}n1letter{len(Fake.made)}", f"https://wallet.test/l/{len(Fake.made)}"
+
+            @staticmethod
+            def settled(url):
+                return url in Fake.paid
+
+        old = tips.lnurl
+        tips.lnurl = self.fake = Fake
+        os.environ.update(BILLING_PRICE_CAPSULE_SATS="2000", PLATFORM_LIGHTNING_ADDRESS="pay@unimap.test")
+
+        def undo():
+            tips.lnurl = old
+            for k in ("BILLING_PRICE_CAPSULE_SATS", "PLATFORM_LIGHTNING_ADDRESS"):
+                os.environ.pop(k, None)
+
+        self.addCleanup(undo)
+
+    def letter(self, **override):
+        return {"network": "signet", "height": self.chain["tip"] + 144, "drand_round": 12_345_678, "tlock": TLOCK, "address": None, **override}
+
+    def seal(self, wallet, letter, tier="free", photo_bytes=0, open_in=3600, sign_letter=None, **override):
+        """Seal a capsule whose letter is inscribed as letter; the wallet signs letter's line (or sign_letter's)."""
+        signed_at = int(time.time())
+        ciphertext = base64.b64encode(os.urandom(12 + 16 + 40)).decode()
+        photo = base64.b64encode(os.urandom(12 + 16 + photo_bytes)).decode() if photo_bytes else None
+        half = b64url(os.urandom(32))
+        fingerprint = hashlib.sha256(base64.b64decode(ciphertext) + (base64.b64decode(photo) if photo else b"")).hexdigest()
+        open_at = signed_at + open_in
+        signed = letter if sign_letter is None else sign_letter
+        message = self.capsule.capsule_message("小满", open_at, fingerprint, None, None, signed_at, None, signed or None)
+        body = {"recipient": "小满", "ciphertext": ciphertext, "key": half, "open_at": open_at, "signed_at": signed_at,
+                "signature": wallet.sign(message), "tier": tier, "chain": letter, "photo": photo, **override}
+        return self.client.post("/v1/capsules", json=body, headers=self.h(wallet)), half
+
+    def test_rules(self):
+        w = self.wallet(70)
+        r = self.client.get("/v1/capsules/rules", headers=self.h(w)).json()
+        self.assertEqual((r["onchain"], r["free_left"], r["postage_sats"], r["max_chain_photo_bytes"], r["usd"]), (True, True, 546, 50_000, None))
+        os.environ.pop("GIFT_NETWORK")
+        self.assertFalse(self.client.get("/v1/capsules/rules").json()["onchain"])  # no gift network: as before
+        os.environ["GIFT_NETWORK"] = "signet"
+        os.environ.pop("BILLING_PRICE_CAPSULE_SATS")
+        self.assertFalse(self.client.get("/v1/capsules/rules").json()["onchain"])  # billing off: tier open
+
+    def test_first_letter(self):
+        w = self.wallet(71)
+        # No centralized letter, free or paid: it is inscribed, or it is a gift's.
+        self.assertEqual(self.seal(w, None)[0].status_code, 400)
+        self.assertEqual(self.seal(w, None, tier="paid")[0].status_code, 400)
+        # Text only and the default envelope, but any time up to a hundred years.
+        self.assertEqual(self.seal(w, self.letter(), photo_bytes=1000)[0].status_code, 403)
+        self.assertEqual(self.seal(w, self.letter(), style="dusk")[0].status_code, 403)
+        # The signature covers the letter's line.
+        self.assertEqual(self.seal(w, self.letter(), sign_letter={})[0].status_code, 401)
+        # Its facts are checked as a gift's are.
+        for bad in (self.letter(network="testnet"), self.letter(height=self.chain["tip"]), self.letter(tlock="nope"),
+                    self.letter(address="bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"), self.letter(address="not an address")):
+            self.assertEqual(self.seal(w, bad)[0].status_code, 400, bad)
+        r, half = self.seal(w, self.letter(address=TB_ADDRESS.upper()), open_in=30 * 365 * 86400)
+        self.assertEqual(r.status_code, 201, r.text)
+        c = r.json()
+        self.assertEqual((c["tier"], c["status"], c["onchain"], c["key"], c["half"], c["gift"]), ("free", "sealed", True, None, None, None))
+        self.assertEqual((c["chain"]["address"], c["chain"]["sats"], c["chain"]["inscribed"], c["chain"]["tlock"]), (TB_ADDRESS, 546, False, TLOCK))
+        self.assertIn(gift.letter_line(self.letter()), self.client.get(f"/v1/capsules/{c['id']}").json()["signed_message"])
+        self.assertFalse("payment" in c)  # no service fee
+        # One per wallet group.
+        self.assertEqual(self.seal(w, self.letter())[0].status_code, 409)
+        self.assertFalse(self.client.get("/v1/capsules/rules", headers=self.h(w)).json()["free_left"])
+        # Without a gift network nothing is inscribed: the old tiers, and chain is refused.
+        os.environ.pop("GIFT_NETWORK")
+        self.assertEqual(self.seal(self.wallet(72), self.letter())[0].status_code, 403)
+        os.environ["GIFT_NETWORK"] = "signet"
+
+    def test_half_comes_out_when_it_opens(self):
+        w = self.wallet(73)
+        r, half = self.seal(w, self.letter())
+        c = r.json()
+        self.sql("update social.capsules set open_at = now() - interval '1 hour' where id = %s;", (c["id"],))
+        self.client.get(f"/v1/capsules/{c['id']}")  # no block times here: it opens on the next block
+        self.mine(1)
+        opened = self.client.get(f"/v1/capsules/{c['id']}").json()
+        self.assertEqual((opened["status"], opened["key"], opened["half"]), ("open", None, half))
+        self.assertEqual(self.sql("select notified_at from social.capsules where id = %s;", (c["id"],))[0][0], None)  # a 首封 isn't told
+
+    def test_paid_letter(self):
+        w = self.wallet(74)
+        self.seal(w, self.letter())  # the first letter, used
+        self.assertEqual(self.seal(w, self.letter(), tier="paid", photo_bytes=50_001)[0].status_code, 400)  # 50 KB at most
+        r = self.seal(w, self.letter(), tier="paid", photo_bytes=50_000, style="celadon", open_in=80 * 365 * 86400)[0]
+        self.assertEqual(r.status_code, 201, r.text)
+        c = r.json()
+        self.assertEqual((c["status"], c["tier"], c["has_photo"], c["onchain"], c["payment"]["amount_sats"]), ("pending", "paid", True, True, 2000))
+        txs = lambda: self.client.post(f"/v1/capsules/{c['id']}/chain/txs", json={"commit_txid": "a" * 64, "reveal_txid": "b" * 64}, headers=self.h(w))
+        self.assertEqual(txs().status_code, 402)  # the service fee comes first
+        self.fake.paid.add(f"https://wallet.test/l/{len(self.fake.made)}")
+        self.assertEqual(self.client.get(f"/v1/billing/payments/{c['payment']['id']}", headers=self.h(w)).json()["status"], "settled")
+        self.assertEqual(self.client.get(f"/v1/capsules/{c['id']}").json()["status"], "sealed")
+        self.assertEqual(self.client.post(f"/v1/capsules/{c['id']}/chain/txs", json={"commit_txid": "a" * 64, "reveal_txid": "b" * 64}, headers=self.h(BOB)).status_code, 404)
+        # The explorer can't see it yet: kept, not verified. One with no output is turned away; any address will do without one.
+        r = txs()
+        self.assertEqual((r.status_code, r.json()["inscribed"], r.json()["verified"], r.json()["inscription_id"]), (200, True, False, "b" * 64 + "i0"))
+        self.chain["txs"]["c" * 64] = {"vin": [{"txid": "a" * 64}], "vout": [{"scriptpubkey_address": TB_ADDRESS, "value": 545}]}
+        self.assertEqual(self.client.post(f"/v1/capsules/{c['id']}/chain/txs", json={"commit_txid": "a" * 64, "reveal_txid": "c" * 64}, headers=self.h(w)).status_code, 400)
+        self.chain["txs"]["b" * 64] = {"vin": [{"txid": "a" * 64}], "vout": [{"scriptpubkey_address": TB_ADDRESS, "value": 546}]}
+        self.assertEqual(txs().json()["verified"], True)
+        self.assertEqual(self.client.post(f"/v1/capsules/{c['id']}/chain/txs", json={"commit_txid": "a" * 64, "reveal_txid": "d" * 64}, headers=self.h(w)).status_code, 409)
+
+    def test_letter_to_an_address_must_pay_it(self):
+        w = self.wallet(75)
+        c = self.seal(w, self.letter(address=TB_ADDRESS))[0].json()
+        other = gift.taproot_address("signet", H + 1, RECIPIENT, None, False)
+        self.chain["txs"]["e" * 64] = {"vin": [{"txid": "a" * 64}], "vout": [{"scriptpubkey_address": other, "value": 546}]}
+        r = self.client.post(f"/v1/capsules/{c['id']}/chain/txs", json={"commit_txid": "a" * 64, "reveal_txid": "e" * 64}, headers=self.h(w))
+        self.assertEqual(r.status_code, 400)

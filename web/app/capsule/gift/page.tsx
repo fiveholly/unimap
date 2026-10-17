@@ -8,7 +8,7 @@ import { LetterPaper } from "@/components/Capsule";
 import { LiveNote, NetBadge, sats, TimelockCard } from "@/components/Gift";
 import { short, useSession } from "@/components/Session";
 import { api, ApiError, type Capsule, type CapsuleGift } from "@/lib/api";
-import { decryptLetter, decryptPhoto, shortHash, spanText } from "@/lib/capsule";
+import { decryptLetter, decryptPhoto, imageType, shortHash, spanText } from "@/lib/capsule";
 import { DEMO } from "@/lib/demo";
 import { roundTime, tlockDecrypt } from "@/lib/drand";
 import { b64url, buildSweep, decodeContent, describeTx, finishSweep, isTestAddress, joinKey, packTimelock, REFUND_BLOCKS, sweepPsbt, timelockAddress, timelockFromHash, timelockKeys, unpackTimelock, type GiftContent, type Timelock } from "@/lib/gift";
@@ -180,7 +180,8 @@ function Timelocked({ x }: { x: Timelock }) {
       }
       const k = b64url.encode(key);
       const text = await decryptLetter(toB64(c.letter), k);
-      const photo = c.photo ? URL.createObjectURL(new Blob([(await decryptPhoto(toB64(c.photo), k)) as BlobPart], { type: "image/jpeg" })) : null;
+      const bytes = c.photo ? await decryptPhoto(toB64(c.photo), k) : null;
+      const photo = bytes ? URL.createObjectURL(new Blob([bytes as BlobPart], { type: imageType(bytes) })) : null;
       setLetter({ text, photo, how });
     } catch (e) {
       setOpenError(t("现在还打不开信：{why}", { why: e instanceof Error ? e.message : String(e) }));

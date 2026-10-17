@@ -8,13 +8,21 @@ import { CapsulePay, Envelope, LetterPaper, utcDay, utcMinute, WaitBars } from "
 import { GiftFund, NetBadge, sats } from "@/components/Gift";
 import { short, useSession } from "@/components/Session";
 import { api, ApiError, type Capsule } from "@/lib/api";
-import { decryptLetter, decryptPhoto, fingerprintOk, keyFromHash, shortHash, spanText, TAG_NAMES } from "@/lib/capsule";
+import { decryptLetter, decryptPhoto, fingerprintOk, halfFromHash, imageType, keyFromHash, shortHash, spanText, TAG_NAMES } from "@/lib/capsule";
 import { DEMO } from "@/lib/demo";
+import { roundTime, tlockDecrypt } from "@/lib/drand";
+import { b64url, decodeContent, describeTx, joinKey } from "@/lib/gift";
+import { chainFor, explorerTx } from "@/lib/giftchain";
 import { type GiftDraft, loadDraft, timelockLink } from "@/lib/giftseal";
 import { t } from "@/lib/i18n";
 import { SITE_URL } from "@/lib/share";
 
 const POLL_MS = DEMO ? 15_000 : 60_000;
+const toB64 = (b: Uint8Array) => {
+  let s = "";
+  for (const x of b) s += String.fromCharCode(x);
+  return btoa(s);
+};
 
 /** One capsule: the sealed envelope with its countdown in blocks, or, once its block has come, the letter. */
 export default function CapsulePage() {
@@ -23,6 +31,7 @@ export default function CapsulePage() {
   const [c, setC] = useState<Capsule | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [spare, setSpare] = useState<string | null>(null);
+  const [linkHalf, setLinkHalf] = useState<string | null>(null); // an inscribed letter's half of the key, from #r=
   const [letter, setLetter] = useState<{ text: string; early: boolean; photo: string | null } | null>(null);
   const [verified, setVerified] = useState<boolean | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
@@ -40,6 +49,7 @@ export default function CapsulePage() {
     if (!ready) return;
     load();
     setSpare(keyFromHash(window.location.hash));
+    setLinkHalf(halfFromHash(window.location.hash));
     setDraft(loadDraft(id));
   }, [load, ready, id]);
   // Watch for the block that opens it.
@@ -50,23 +60,56 @@ export default function CapsulePage() {
   }, [c?.status, load]);
 
   const open = useCallback(
-    async (key: string, early: boolean) => {
-      if (!c?.ciphertext) return;
+    async (key: string, early: boolean, from?: { ciphertext: string; photo: string | null }) => {
+      const ciphertext = from?.ciphertext ?? c?.ciphertext, photo = from ? from.photo : (c?.photo ?? null);
+      if (!ciphertext || !c) return;
       setOpenError(null);
       try {
-        const text = await decryptLetter(c.ciphertext, key);
-        const image = c.photo ? URL.createObjectURL(new Blob([(await decryptPhoto(c.photo, key)) as BlobPart], { type: "image/jpeg" })) : null;
+        const text = await decryptLetter(ciphertext, key);
+        const bytes = photo ? await decryptPhoto(photo, key) : null;
+        const image = bytes ? URL.createObjectURL(new Blob([bytes as BlobPart], { type: imageType(bytes) })) : null;
         setLetter({ text, early, photo: image });
-        setVerified(await fingerprintOk(c.ciphertext, c.fingerprint, c.photo));
+        setVerified(await fingerprintOk(ciphertext, c.fingerprint, photo));
       } catch {
         setOpenError(t("这把钥匙打不开这封信。"));
       }
     },
-    [c?.ciphertext, c?.fingerprint, c?.photo],
+    [c],
   );
   useEffect(() => {
     if (c?.status === "open" && c.key && !letter) open(c.key, false);
   }, [c?.status, c?.key, letter, open]);
+
+  // 上链的信: the letter is read from its inscription (unimap's copy if the chain can't be asked), and
+  // opened with unimap's half and the link's, or with the key drand gives out at the opening time.
+  const openChain = useCallback(async () => {
+    const ch = c?.chain;
+    if (!c || !ch) return;
+    let from = { ciphertext: c.ciphertext ?? "", photo: c.photo ?? null };
+    try {
+      if (ch.reveal_txid) {
+        const ins = describeTx(await chainFor(ch.network, null, !!ch.live).txHex(ch.reveal_txid)).inscription;
+        const got = ins ? decodeContent(ins.body) : null;
+        if (got) from = { ciphertext: toB64(got.letter), photo: got.photo ? toB64(got.photo) : null };
+      }
+    } catch {}
+    const r = linkHalf ?? draft?.letter?.half ?? null;
+    let key: string | null = null;
+    if (c.half && r) key = b64url.encode(joinKey(b64url.decode(c.half), b64url.decode(r)));
+    else if (roundTime(ch.drand_round) <= Date.now() / 1000) {
+      try {
+        key = b64url.encode(await tlockDecrypt(ch.tlock, 8_000));
+      } catch {}
+    }
+    if (!key) {
+      setOpenError(t("到时间了。用带一半钥匙的链接打开，或者等 drand 公开整把钥匙（约 {time}）。", { time: new Date(roundTime(ch.drand_round) * 1000).toLocaleString() }));
+      return;
+    }
+    await open(key, false, from);
+  }, [c, linkHalf, draft, open]);
+  useEffect(() => {
+    if (c?.status === "open" && c.chain && !letter && !openError) openChain();
+  }, [c?.status, c?.chain, letter, openError, openChain]);
 
   if (error) return <p className="page error">{error}</p>;
   if (!c) return <p className="page muted">{t("加载中…")}</p>;
@@ -147,6 +190,8 @@ export default function CapsulePage() {
             </>
           ) : c.gift ? (
             <p className="muted">{t("到时间了。这封信带着礼物，要用收礼人手里的时间锁打开。")}</p>
+          ) : c.chain && openError ? (
+            <p className="muted">{openError}</p>
           ) : (
             <p className="muted">{t("到时间了，正在打开…")}</p>
           )}
@@ -154,7 +199,9 @@ export default function CapsulePage() {
         <aside className="cap-side">
           <h2 className="cap-side-title">{c.mine ? t("封好了") : t("一封还没到时间的信")}</h2>
           <p className="muted small">
-            {t("这封信在浏览器里加密，用钱包签名后存在 unimap，挂在区块 {h} 上。谁都能看到它存在，但到点之前谁也读不到内容。", { h: c.sealed_height.toLocaleString("en-US") })}
+            {c.onchain
+              ? t("这封信在浏览器里加密，用钱包签名，刻成了比特币测试网上的铭文，挂在区块 {h} 上。谁都能看到它存在，但到点之前谁也读不到内容。", { h: c.sealed_height.toLocaleString("en-US") })
+              : t("这封信在浏览器里加密，用钱包签名后存在 unimap，挂在区块 {h} 上。谁都能看到它存在，但到点之前谁也读不到内容。", { h: c.sealed_height.toLocaleString("en-US") })}
           </p>
           <div className="cap-kv">
             <div>
@@ -167,7 +214,7 @@ export default function CapsulePage() {
             </div>
             <div>
               <span>{t("钥匙")}</span>
-              <span>{c.gift ? t("一半在 unimap，一半在时间锁") : t("两份都留")}</span>
+              <span>{c.gift ? t("一半在 unimap，一半在时间锁") : c.chain ? t("一半在 unimap，一半在链接里") : t("两份都留")}</span>
             </div>
             {c.has_photo && (
               <div>
@@ -194,7 +241,9 @@ export default function CapsulePage() {
             {t("密文指纹 sha256: {hash} · 任何人都能核对，内容从封存起没被改过", { hash: shortHash(c.fingerprint) })}
           </p>
           {c.gift ? (
-            <GiftSide c={c} draft={c.mine ? draft : null} token={token} reload={() => (load(), setDraft(loadDraft(c.id)))} />
+            <GiftSide c={c} draft={c.mine && draft?.timelock ? draft : null} token={token} reload={() => (load(), setDraft(loadDraft(c.id)))} />
+          ) : c.chain ? (
+            <ChainSide c={c} draft={c.mine && draft?.letter ? draft : null} half={linkHalf ?? draft?.letter?.half ?? null} token={token} reload={() => (load(), setDraft(loadDraft(c.id)))} />
           ) : spare ? (
             <SpareKey id={c.id} spare={spare} mine={c.mine} open={() => open(spare, true)} />
           ) : (
@@ -235,16 +284,60 @@ function GiftSide({ c, draft, token, reload }: { c: Capsule; draft: GiftDraft | 
         </div>
       </div>
       {draft && !draft.done && <GiftFund draft={draft} token={token} done={reload} />}
-      {draft ? (
+      {draft?.timelock ? (
         <CopyButton text={timelockLink(SITE_URL, draft.timelock)} label={t("复制时间锁链接（交给收礼人）")} primary />
       ) : (
         <p className="dim small">{c.mine ? t("时间锁存在封信的那个浏览器里。") : t("收礼人拿着时间锁，到点就能打开信、领走礼物。")}</p>
       )}
-      {draft && (
+      {draft?.timelock && (
         <a className="btn" href={timelockLink(SITE_URL, draft.timelock)}>
           {t("打开时间锁")}
         </a>
       )}
+    </div>
+  );
+}
+
+/** 上链的信 on the envelope: where it is inscribed; for the sender who sealed it in this browser,
+ * inscribing it if that isn't done; and the link with the other half of the key, for the recipient. */
+function ChainSide({ c, draft, half, token, reload }: { c: Capsule; draft: GiftDraft | null; half: string | null; token: string | null; reload: () => void }) {
+  const ch = c.chain!;
+  const link = half ? `${SITE_URL}/capsule/${c.id}#r=${half}` : null;
+  return (
+    <div className="cap-spare">
+      <span className="small">
+        {t("刻在链上")} <NetBadge network={ch.network} live={!!ch.live} />
+      </span>
+      <div className="cap-kv">
+        <div>
+          <span>{t("铭文")}</span>
+          {ch.reveal_txid ? (
+            <a className="mono" href={explorerTx(ch.network, ch.reveal_txid, !!ch.live)} target="_blank" rel="noopener">
+              {shortHash(ch.reveal_txid)}i0 ↗
+            </a>
+          ) : (
+            <span>{t("还没刻上链")}</span>
+          )}
+        </div>
+        <div>
+          <span>{t("drand 公开钥匙")}</span>
+          <span className="mono">{new Date(roundTime(ch.drand_round) * 1000).toISOString().slice(0, 16).replace("T", " ")} UTC</span>
+        </div>
+      </div>
+      {draft && !draft.done && <GiftFund draft={draft} token={token} done={reload} />}
+      {link ? (
+        <>
+          <p className="dim small">
+            {c.mine
+              ? t("链接里带着钥匙的另一半，只在这一次显示。把它发给收信人：信打开时，unimap 交出它那一半，两半合起来就能读；不给的话，等 drand 公开钥匙也能读。")
+              : t("你手里的链接带着钥匙的一半，信打开时就能读。")}
+          </p>
+          <CopyButton text={link} label={t("复制给收信人的链接（带一半钥匙）")} primary />
+        </>
+      ) : (
+        <p className="dim small">{t("到点后 drand 会公开整把钥匙，谁都能从链上读出这封信。")}</p>
+      )}
+      <CopyButton text={`${SITE_URL}/capsule/${c.id}`} label={t("复制信封链接（现在只能看到信封）")} />
     </div>
   );
 }
