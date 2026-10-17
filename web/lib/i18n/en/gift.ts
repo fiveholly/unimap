@@ -125,4 +125,40 @@ export const gift: Record<string, string> = {
   "礼物钥匙（私钥，十六进制）：": "Gift key (private key, hex):",
   "仓库里的 web/scripts/claim-gift.mjs 用这张时间锁的文字备份做同样的事，也能用 drand 解开信。":
     "web/scripts/claim-gift.mjs in the repository does the same from this time lock's text backup, and can open the letter with drand.",
+
+  // The demo site's 真实 Signet (lib/signet.ts, lib/signetwallets.ts)
+  "真实 Signet": "Real Signet",
+  "（演示站）": "(demo site)",
+  "测试网 · Signet · 真实交易": "Test network · Signet · real transactions",
+  "测试网 · Signet，真实交易，测试币没有价值": "Test network · Signet: real transactions, and test coins are worth nothing",
+  "礼物用你自己的钱包在比特币 Signet 测试网上真实交易：先把 UniSat 切到 Signet，准备一点测试币。区块约 10 分钟一个，到点后真的能领走。演示站没有服务器，unimap 那一半钥匙存在这个浏览器里；封存的费用照旧只是模拟。":
+    "The gift is sent for real on Bitcoin's Signet test network, from your own wallet: switch UniSat to Signet and have some test coins ready. A block comes about every 10 minutes, and once the block is out the gift really can be claimed. The demo site has no server, so unimap's half of the key is kept in this browser; the Seal fee is still only simulated.",
+  "关着时礼物只在演示站里模拟，不碰任何链。打开后，用你的钱包在 Signet 上发真实的测试网交易。":
+    "While this is off, the gift is only simulated on the demo site and touches no chain. Turn it on to send real test-network transactions on Signet from your wallet.",
+  "连不上 Signet 的区块浏览器（mempool.space），看不到最新区块。稍后再试，或者先关掉真实 Signet。":
+    "Can't reach the Signet explorer (mempool.space), so the latest block can't be seen. Try again later, or turn Real Signet off for now.",
+  "下一个块（约 10 分钟）": "Next block (about 10 minutes)",
+  "两个块后（约 20 分钟）": "In two blocks (about 20 minutes)",
+  "Signet 的区块 {h} 到了，演示站才交出 unimap 那一半（它存在这个浏览器里）；时间锁里是另一半。drand 到点也会公开整把钥匙，换一台设备也能打开。":
+    "The demo site hands over unimap's half (kept in this browser) only once Signet block {h} is out; the other half is in the time lock. drand also publishes the whole key when the time comes, so it opens on another device too.",
+  "没找到能用的钱包：真实 Signet 要装 UniSat（或 Xverse、OKX 钱包）并切到 Signet。": "No wallet found to use: Real Signet needs UniSat (or Xverse or OKX Wallet) installed and switched to Signet.",
+  "钱包在 Signet 上的币不够：要 {need}，只有 {have}。先从 Signet 水龙头（比如 signetfaucet.com）领一点测试币，等到账后再试。":
+    "Not enough coins on Signet in your wallet: this needs {need} and there are {have}. Get some test coins from a Signet faucet (signetfaucet.com, for one), wait for them to arrive, and try again.",
+  "用 {wallet} 在 Signet 上锁进去": "Lock it in on Signet with {wallet}",
+  "用钱包在 Signet 上锁进去": "Lock it in on Signet with your wallet",
+  "会发两笔真实的 Signet 交易：钱包签第一笔，浏览器签第二笔，都广播到 mempool.space。":
+    "This sends two real Signet transactions: your wallet signs the first, your browser the second, and both are broadcast through mempool.space.",
+  "让 UniSat 切到 Signet": "Switch UniSat to Signet",
+  "Signet 没有收下这笔交易：{why}": "Signet didn't accept the transaction: {why}",
+  "{wallet} 现在在 {found} 上，不是 Signet：请在 {wallet} 里切到 Signet（测试网），再试一次。": "{wallet} is on {found}, not Signet: switch {wallet} to Signet (a test network) and try again.",
+  "{wallet} 现在不在 Signet 上：请在 {wallet} 里切到 Signet（测试网），再试一次。": "{wallet} isn't on Signet: switch {wallet} to Signet (a test network) and try again.",
+  "请在钱包里手动切到 Signet。": "Switch your wallet to Signet yourself.",
+  "区块高度和金额都直接读 Signet 链上（mempool.space）。到点后先用 drand 打开信，不行再用两半备用钥匙；在别的设备上打开时只有 drand 这条路。":
+    "The block height and the amount are read straight from the Signet chain (mempool.space). When the time comes the letter opens with drand first, or else with both halves of the backup key; on another device only drand can open it.",
+  "这台设备不是封信的那一台：演示站没有服务器，unimap 那一半钥匙只存在封信的浏览器里，所以这里只能等 drand 公开钥匙来打开信（大约 {time}）。领礼物不受影响。":
+    "This isn't the device that sealed the letter: the demo site has no server and unimap's half of the key lives only in the sealing browser, so here the letter opens only once drand publishes the key (around {time}). Claiming the gift works either way.",
+  "drand 要到 {time} 才公开钥匙": "drand publishes the key only at {time}",
+  "连不上 drand（{why}）": "Can't reach drand ({why})",
+  "这台设备上没有 unimap 那一半（演示站没有服务器，它只存在封信的那个浏览器里）": "unimap's half isn't on this device (the demo site has no server; it lives only in the browser that sealed the letter)",
+  "{drand}；备用钥匙也拿不到：{why}": "{drand}; and the backup key can't be had either: {why}",
 };

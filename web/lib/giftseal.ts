@@ -117,10 +117,12 @@ export async function prepareGift(o: {
   const timelock: Timelock = {
     v: 1, net: r.network, c: "", to: o.recipient, h: height, a: sats, r: c.refund, rk: hex.encode(recipientKey), sk: senderKey ? hex.encode(senderKey) : null,
     gk: giftSecret ? hex.encode(giftSecret) : null, b: b64url.encode(half), d: round, s: o.author, t: null, ct: null,
+    ...(r.live ? { live: true as const } : {}),
   };
   const gift = {
     network: r.network, sats, height, refund: c.refund, recipient_key: hex.encode(recipientKey), sender_key: senderKey ? hex.encode(senderKey) : null,
     bearer: giftSecret != null, address, drand_round: round, tlock,
+    ...(r.live ? { live: true } : {}), // only the demo's 真实 Signet sets it (lib/signet.ts); the API has no such field
   };
   return {
     serverHalf: b64url.encode(server),

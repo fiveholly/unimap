@@ -508,7 +508,7 @@ export type Capsule = {
   payment?: Payment; // POST /v1/capsules for 封存: the invoice that seals it
   gift?: CapsuleGiftSummary | null; // 礼物 (api/gift.py): then key never comes; the 时间锁 opens it
 };
-export type CapsuleGiftSummary = { network: GiftNetwork; sats: number; height: number; refund: boolean; address: string; reveal_txid: string | null; funded: boolean };
+export type CapsuleGiftSummary = { network: GiftNetwork; sats: number; height: number; refund: boolean; address: string; reveal_txid: string | null; funded: boolean; live?: boolean };
 /** api/gift.py: what anyone with the link may see of a gift. */
 export type CapsuleGift = {
   capsule_id: string;
@@ -532,8 +532,9 @@ export type CapsuleGift = {
   tip: number | null;
   unlocked: boolean;
   explorer: string;
+  live?: boolean; // the demo's 真实 Signet (lib/signet.ts)
 };
-export type GiftRules = { network: GiftNetwork; tiers: number[]; min_sats: number; max_sats: number; refund_blocks: number; block_seconds: number; tip: number | null; esplora: string; explorer: string };
+export type GiftRules = { network: GiftNetwork; tiers: number[]; min_sats: number; max_sats: number; refund_blocks: number; block_seconds: number; tip: number | null; esplora: string; explorer: string; live?: boolean }; // live: the demo's 真实 Signet (lib/signet.ts)
 export type CapsuleRules = {
   min_lead_seconds: number;
   block_seconds: number;

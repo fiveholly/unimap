@@ -332,6 +332,7 @@ export type Timelock = {
   s: string; // who sealed it (their unimap address)
   t: string | null; // the reveal's txid: the inscription is <t>i0 and the gift is <t>:0
   ct: string | null; // the commit's txid
+  live?: true; // sealed on the demo site in its 真实 Signet mode (lib/signet.ts): the chain is real signet, not the demo's
 };
 
 export const timelockKeys = (x: Timelock): GiftKeys => ({ height: x.h, refund: x.r, recipient: hex.decode(x.rk), sender: x.sk ? hex.decode(x.sk) : null });
@@ -348,6 +349,7 @@ export function unpackTimelock(packed: string): Timelock | null {
     if (x.v !== 1 || !isGiftNetwork(x.net) || !Number.isInteger(x.h) || !Number.isInteger(x.a) || !hex64(x.rk) || (x.r && !hex64(x.sk))) return null;
     if ((x.gk != null && !hex64(x.gk)) || (x.t != null && !hex64(x.t)) || typeof x.b !== "string" || b64url.decode(x.b).length !== 32) return null;
     if (x.gk != null && hex.encode(xonlyOf(hex.decode(x.gk))) !== x.rk) return null; // the key must be the leaf's
+    if (x.live !== undefined && (x.live !== true || x.net !== "signet")) return null;
     return x;
   } catch {
     return null;

@@ -218,7 +218,7 @@ function GiftSide({ c, draft, token, reload }: { c: Capsule; draft: GiftDraft | 
   return (
     <div className="cap-spare">
       <span className="small">
-        {t("随信的礼物")} <NetBadge network={g.network} />
+        {t("随信的礼物")} <NetBadge network={g.network} live={!!g.live} />
       </span>
       <div className="cap-kv">
         <div>

@@ -97,7 +97,8 @@ export function LetterPaper({ text, meta, photo, style = DEFAULT_STYLE }: { text
  * payment when one expires. The demo settles at once. */
 export function CapsulePay({ capsuleId, first, token, done }: { capsuleId: string; first: Payment | null; token: string | null; done: () => void }) {
   const { wallet } = useSession();
-  const sender = walletById(wallet);
+  // On the demo site the fee is only ever simulated: a real wallet signed in there (for 真实 Signet) never pays it.
+  const sender = DEMO && wallet !== "demo" ? undefined : walletById(wallet);
   const [pay, setPay] = useState<Payment | null>(first);
   const [methods, setMethods] = useState<PayMethod[]>([]);
   const [price, setPrice] = useState<number | null>(null);
