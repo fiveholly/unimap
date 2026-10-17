@@ -9,6 +9,7 @@
 #   BRANCH  the branch to follow (default: preview)
 #   DOMAIN  a domain pointing at this machine; empty serves plain http on the IP (default: empty)
 # To change them later, edit /etc/unimap/demo.env and run this script again.
+# To put the site behind a password, run `sudo /opt/unimap-demo/password.sh` afterwards.
 # 2 GB of memory is enough; the script adds swap on smaller machines so the build doesn't run out.
 set -euo pipefail
 
@@ -70,14 +71,16 @@ cd "$DIR/src"
 git fetch --quiet origin "$BRANCH"
 sha=$(git rev-parse --short=12 "origin/$BRANCH")
 live=$(readlink "$DIR/current" 2>/dev/null | xargs -r basename || true)
-[ "$sha" = "$live" ] && [ "${1:-}" != "--force" ] && exit 0
+[ "$sha" = "${live%%-*}" ] && [ "${1:-}" != "--force" ] && exit 0
 echo "building $BRANCH at $sha"
 rel="$DIR/releases/$sha"
+# A forced rebuild of the live commit goes next to it, never over it.
+[ "$sha" = "${live%%-*}" ] && rel="$rel-$(date +%s)"
 rm -rf "$rel" && mkdir -p "$rel"
 git archive "origin/$BRANCH" web | tar -x -C "$rel"
 cd "$rel/web"
 # Reuse the live release's packages when the lockfile didn't change.
-if [ -n "$live" ] && cmp -s package-lock.json "$DIR/releases/$live/web/package-lock.json"; then
+if [ -n "$live" ] && [ -d "$DIR/releases/$live/web/node_modules" ] && cmp -s package-lock.json "$DIR/releases/$live/web/package-lock.json"; then
   cp -a "$DIR/releases/$live/web/node_modules" .
 else
   npm ci --no-audit --no-fund --loglevel=error
@@ -163,10 +166,34 @@ if [ -n "$DOMAIN" ]; then site="$DOMAIN"; else site=":80"; fi
 cat > /etc/caddy/Caddyfile <<EOF
 # Written by deploy/demo.sh. With a domain, Caddy fetches the TLS certificate itself.
 $site {
+	# The password from password.sh, when one is set.
+	import /etc/unimap/demo-auth*.caddy
 	encode zstd gzip
 	reverse_proxy 127.0.0.1:3000
 }
 EOF
+
+# Asks for a password and puts the whole site behind it. --off removes it again.
+cat > "$DIR/password.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "$(id -u)" = 0 ] || { echo "run as root (sudo)" >&2; exit 1; }
+AUTH=/etc/unimap/demo-auth.caddy
+if [ "${1:-}" = --off ]; then
+  rm -f "$AUTH"
+  systemctl reload caddy
+  echo "The password is off; anyone can open the site again."
+  exit 0
+fi
+user=${1:-unimap}
+[[ "$user" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "the user name may only contain letters, digits and . _ -" >&2; exit 1; }
+hash=$(caddy hash-password)  # asks for the password twice and prints only its bcrypt hash
+printf 'basicauth {\n\t%s %s\n}\n' "$user" "$hash" > "$AUTH.new"
+chmod 644 "$AUTH.new" && mv "$AUTH.new" "$AUTH"
+systemctl reload caddy
+echo "Done. The site now asks for user \"$user\" and the password you typed."
+EOF
+chmod 700 "$DIR/password.sh"
 
 touch "$DIR/restart" && chown unimap:unimap "$DIR/restart"
 systemctl daemon-reload
@@ -180,4 +207,5 @@ ip=$(curl -fsS -4 --max-time 5 https://api.ipify.org 2>/dev/null || hostname -I 
 echo
 echo "The demo is up: ${DOMAIN:+https://$DOMAIN}${DOMAIN:-http://$ip}"
 echo "It follows the $BRANCH branch and rebuilds within about 5 minutes of a push."
+echo "Password: sudo $DIR/password.sh    Remove it: sudo $DIR/password.sh --off"
 echo "Logs: journalctl -u unimap-demo-update -n 50    Rebuild now: sudo systemctl start unimap-demo-update"

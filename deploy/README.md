@@ -9,6 +9,8 @@
 > ```
 >
 > 装好后用 `http://<服务器 IP>` 访问。它跟着 `preview` 分支，每 5 分钟检查一次，有新提交就在旁边构建好再切换。有了域名后，把它写进 `/etc/unimap/demo.env` 的 `DOMAIN=`，再跑一次上面的命令，Caddy 会自动申请 HTTPS 证书。
+>
+> 只想自己看，可以加一个密码：运行 `sudo /opt/unimap-demo/password.sh`，按提示输两次密码，之后打开网站会先要用户名 `unimap` 和这个密码。去掉密码运行 `sudo /opt/unimap-demo/password.sh --off`。没有域名时网站走的是 http，密码在网络上不是加密传输的；要更安全就配上域名，用 HTTPS。
 
 ## 机器
 
