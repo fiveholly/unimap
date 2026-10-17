@@ -37,8 +37,8 @@ const room = (w: number) => {
   if (phone()) return { top: 40, right: 14, bottom: 14, left: 14 };
   if (w <= 900) return { top: 34, right: 12, bottom: 40, left: 12 };
   const side = (w - Math.min(w, 1200)) / 2 + 24;
-  // The bottom is kept for the 新手任务 card at the bottom right and the legend.
-  return { top: 120, right: side, bottom: 250, left: side + COLUMN + 32 };
+  // The legend sits under the title column and 新手任务 floats over the page, so the land gets the full height.
+  return { top: 120, right: side, bottom: 48, left: side + COLUMN + 32 };
 };
 
 /** The home page is the map: the whole world first, and the city map of a spot once you pick one
