@@ -230,6 +230,7 @@ export const capsule: Record<string, string> = {
   "随信的比特币": "Bitcoin with the letter",
   "一共约": "About",
   "一共约 {usd}": "About {usd} in total",
+  "约 {usd}": "About {usd}",
   "一共 {usd}": "{usd} in total",
   "包含网络费": "Includes the network fee",
   "第一封免服务费": "First letter: no service fee",

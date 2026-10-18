@@ -604,7 +604,7 @@ export default function CapsuleWritePage() {
                 </Link>
               </>
             ) : pending ? (
-              <CapsulePay capsuleId={pending.id} first={pending.payment} token={token} done={paid} step />
+              <CapsulePay capsuleId={pending.id} first={pending.payment} token={token} done={paid} step btcUsd={rate?.btc_usd ?? null} />
             ) : (
               <>
                 <button type="button" className="primary lg cap-seal-btn" onClick={seal} disabled={busy || !rules || photoBusy}>
