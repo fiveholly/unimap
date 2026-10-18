@@ -98,55 +98,48 @@ export async function walletPublicKey(walletId: Parameters<typeof walletById>[0]
   }
 }
 
-/** 附上一份礼物: on or off, the amount (a tier or at least 50,000), the refund, and whose key it locks to. */
+/** 随信附送比特币, once the write page's add-on is on: the amount (a tier or at least 50,000) and the
+ * refund; whose key it locks to, and the refund's key, under 更多设置. */
 export function GiftPicker({ rules, value, onChange, height, blockSeconds, live = false }: { rules: GiftRules; value: GiftChoice; onChange: (c: GiftChoice) => void; height: number | null; blockSeconds: number; live?: boolean }) {
   const set = (p: Partial<GiftChoice>) => onChange({ ...value, ...p });
   const n = chosenSats(value);
   const low = value.custom.trim() !== "" && !(Number.isInteger(n) && n >= rules.min_sats);
   const high = Number.isInteger(n) && n > rules.max_sats;
   return (
-    <div className="cap-field gift-pick">
-      <span>{t("礼物")}</span>
+    <div className="gift-pick">
+      {live && rules.tip == null && <span className="error small">{t("连不上 Signet 的区块浏览器（mempool.space），看不到最新区块。稍后再试，或者先关掉真实 Signet。")}</span>}
+      <div className="cap-chips" role="radiogroup" aria-label={t("礼物金额")}>
+        {GIFT_TIERS.map((s) => (
+          <button key={s} type="button" role="radio" aria-checked={!value.custom.trim() && value.sats === s} className={`cap-chip${!value.custom.trim() && value.sats === s ? " on" : ""}`} onClick={() => set({ sats: s, custom: "" })}>
+            {tierName(s)}
+          </button>
+        ))}
+      </div>
+      <input value={value.custom} onChange={(e) => set({ custom: e.target.value.replace(/[^\d,]/g, "") })} inputMode="numeric" placeholder={t("自定义金额（至少 {n} 聪）", { n: rules.min_sats.toLocaleString("en-US") })} name="gift-custom" aria-label={t("自定义金额")} />
+      {(low || high) && <span className="error small">{low ? t("礼物至少 {n} 聪。", { n: rules.min_sats.toLocaleString("en-US") }) : t("测试网上的礼物最多 {n} 聪。", { n: rules.max_sats.toLocaleString("en-US") })}</span>}
+      <p className="dim small">
+        {height != null
+          ? t("这笔比特币会一直锁到信打开那天（{span}），之前谁都动不了，包括 unimap。", { span: spanText(Math.max(1, height - (rules.tip ?? height)), blockSeconds) })
+          : t("这笔比特币会一直锁到信打开那天，之前谁都动不了，包括 unimap。")}
+      </p>
       <label className="check">
-        <input type="checkbox" checked={value.on} onChange={(e) => set({ on: e.target.checked })} name="gift" />
-        {t("随信附上一份比特币礼物")} <NetBadge network={rules.network} live={!!rules.live} />
+        <input type="checkbox" checked={value.refund} onChange={(e) => set({ refund: e.target.checked })} name="gift-refund" />
+        {t("约 5 年后还没人领，就退回给我")}
       </label>
-      {value.on && (
-        <>
-          {DEMO && <LiveSwitch live={live} />}
-          {live && rules.tip == null && <span className="error small">{t("连不上 Signet 的区块浏览器（mempool.space），看不到最新区块。稍后再试，或者先关掉真实 Signet。")}</span>}
-          <div className="cap-chips" role="radiogroup" aria-label={t("礼物金额")}>
-            {GIFT_TIERS.map((s) => (
-              <button key={s} type="button" role="radio" aria-checked={!value.custom.trim() && value.sats === s} className={`cap-chip${!value.custom.trim() && value.sats === s ? " on" : ""}`} onClick={() => set({ sats: s, custom: "" })}>
-                {tierName(s)}
-              </button>
-            ))}
-          </div>
-          <input value={value.custom} onChange={(e) => set({ custom: e.target.value.replace(/[^\d,]/g, "") })} inputMode="numeric" placeholder={t("自定义金额（至少 {n} 聪）", { n: rules.min_sats.toLocaleString("en-US") })} name="gift-custom" aria-label={t("自定义金额")} />
-          {(low || high) && <span className="error small">{low ? t("礼物至少 {n} 聪。", { n: rules.min_sats.toLocaleString("en-US") }) : t("测试网上的礼物最多 {n} 聪。", { n: rules.max_sats.toLocaleString("en-US") })}</span>}
-          <p className="dim small gift-note">
-            {height != null
-              ? t("比特币自己把这笔钱锁到区块 {h}（{span}），之前谁都动不了，包括 unimap。收礼人到时用时间锁领走；unimap 不碰这笔钱，也拿不到钥匙。", { h: height.toLocaleString("en-US"), span: spanText(Math.max(1, height - (rules.tip ?? height)), blockSeconds) })
-              : t("比特币自己把这笔钱锁到打开那一块，之前谁都动不了，包括 unimap。")}
-          </p>
-          <label className="check">
-            <input type="checkbox" checked={value.refund} onChange={(e) => set({ refund: e.target.checked })} name="gift-refund" />
-            {t("约 5 年后还没人领，就退回给我")}
-          </label>
+      <details className="gift-more">
+        <summary className="small muted">{t("更多设置")}</summary>
+        <label className="cap-field gift-key">
+          <span>{t("收礼人的钱包公钥（可选）")}</span>
+          <input value={value.recipientKey} onChange={(e) => set({ recipientKey: e.target.value.trim() })} placeholder={t("不填就生成一把礼物钥匙")} spellCheck={false} autoComplete="off" name="gift-recipient-key" />
+          <span className="dim small">{t("不填的话，浏览器会生成一把「礼物钥匙」，放进时间锁交给对方：拿着时间锁的人到时就能领。")}</span>
+        </label>
+        {value.refund && (
           <label className="cap-field gift-key">
-            <span>{t("收礼人的钱包公钥（可选）")}</span>
-            <input value={value.recipientKey} onChange={(e) => set({ recipientKey: e.target.value.trim() })} placeholder={t("不填就生成一把礼物钥匙")} spellCheck={false} autoComplete="off" name="gift-recipient-key" />
-            <span className="dim small">{t("不填的话，浏览器会生成一把「礼物钥匙」，放进时间锁交给对方：拿着时间锁的人到时就能领。")}</span>
+            <span>{t("退回用的公钥")}</span>
+            <input value={value.senderKey} onChange={(e) => set({ senderKey: e.target.value.trim() })} placeholder={t("默认用钱包的公钥")} spellCheck={false} autoComplete="off" name="gift-sender-key" />
           </label>
-          {value.refund && (
-            <details className="gift-more">
-              <summary className="small muted">{t("退回用的公钥")}</summary>
-              <input value={value.senderKey} onChange={(e) => set({ senderKey: e.target.value.trim() })} placeholder={t("默认用钱包的公钥")} spellCheck={false} autoComplete="off" name="gift-sender-key" />
-            </details>
-          )}
-          <p className="dim small">{t("只收「封存」的费用，礼物本身不收一分钱；另付比特币网络的手续费。")}</p>
-        </>
-      )}
+        )}
+      </details>
     </div>
   );
 }
@@ -210,6 +203,9 @@ export function TimelockCard({ timelock, address, packed }: { timelock: Timelock
 
 type Step = "idle" | "wallet" | "commit" | "reveal" | "report" | "done";
 
+/** The wallet has too little to pay for it: the page adds a line on topping it up. */
+class LowFunds extends Error {}
+
 /** 锁进礼物: after 封存 is paid, the sats go in. First the 时间锁 is saved (it holds the 礼物钥匙
  * and the recipient's half of the backup key), then the wallet funds the commit, the reveal is
  * signed here with its one-time key, both are broadcast, and the txids go to unimap. Each step is
@@ -223,6 +219,7 @@ export function GiftFund({ draft: first, token, done, note }: { draft: GiftDraft
   const [step, setStep] = useState<Step>(first.done ? "done" : "idle");
   const [error, setError] = useState<string | null>(null);
   const [wrongNet, setWrongNet] = useState<SignetWalletId | null>(null);
+  const [lowFunds, setLowFunds] = useState(false);
   const [copied, setCopied] = useState(false);
   const keep = (d: GiftDraft) => (saveDraft(d), setDraft(d), d);
   const letter = draft.letter ?? null; // an inscribed letter, no gift: no 时间锁
@@ -233,6 +230,7 @@ export function GiftFund({ draft: first, token, done, note }: { draft: GiftDraft
   const fund = async () => {
     setError(null);
     setWrongNet(null);
+    setLowFunds(false);
     const chain = chainFor(draft.network, draft.esplora, live);
     try {
       const secret = hex.decode(draft.revealSecret), envelope = envelopeOf(draft);
@@ -269,13 +267,13 @@ export function GiftFund({ draft: first, token, done, note }: { draft: GiftDraft
             live
               ? t("钱包在 Signet 上的币不够：要 {need}，只有 {have}。先从 Signet 水龙头（比如 signetfaucet.com）领一点测试币，等到账后再试。", { need: sats(need), have: sats(have) })
               : t("钱包在 {net} 上没有币。先从水龙头领一点测试币。", { net: NETWORK_NAMES[draft.network] });
-          if (!coins.length) throw new Error(short(0));
+          if (!coins.length) throw new LowFunds(short(0));
           let p: ReturnType<typeof commitPsbt>;
           try {
             p = commitPsbt({ utxos: coins, commitAddress, amount, change: acc.payment_address, feeRate });
           } catch (e) {
             const m = e instanceof Error ? e.message.match(/^not enough coins: (\d+) < (\d+)/) : null;
-            if (m) throw new Error(short(+m[1], +m[2]));
+            if (m) throw new LowFunds(short(+m[1], +m[2]));
             throw e;
           }
           const signed = finishCommit(await signer.sign(p.psbt, p.inputs.map((_, i) => ({ index: i, address: acc.payment_address }))));
@@ -299,6 +297,7 @@ export function GiftFund({ draft: first, token, done, note }: { draft: GiftDraft
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (e instanceof WrongNetwork && e.canSwitch && liveSigner) setWrongNet(liveSigner.id);
+      setLowFunds(e instanceof LowFunds);
       setError(msg === "cancelled" ? null : msg);
       setStep("idle");
     }
@@ -323,37 +322,35 @@ export function GiftFund({ draft: first, token, done, note }: { draft: GiftDraft
   const said: Record<Step, string> = {
     idle: "",
     wallet: t("请在钱包里确认…"),
-    commit: t("正在广播第一笔交易（commit）…"),
-    reveal: letter ? t("正在把信刻成铭文（reveal）…") : t("正在刻上铭文，把礼物锁进去（reveal）…"),
-    report: t("告诉 unimap 交易号…"),
+    commit: letter ? t("正在发送（1/2）…") : t("正在广播第一笔交易（commit）…"),
+    reveal: letter ? t("正在保存到比特币（2/2）…") : t("正在刻上铭文，把礼物锁进去（reveal）…"),
+    report: letter ? t("快好了…") : t("告诉 unimap 交易号…"),
     done: "",
   };
 
+  const fundsLine = lowFunds && <p className="small cap-low-funds">{t("钱包里的比特币不够付这一笔。先往钱包里存一点比特币，再回来点「继续」。")}</p>;
+
+  // An inscribed letter, no gift: one wallet confirmation, said plainly.
   if (letter)
     return (
       <div className="gift-fund">
-        <h2 className="cap-side-title">{step === "done" ? t("信刻上链了") : t("把信刻上链")}</h2>
-        <NetBadge network={draft.network} live={live} />
-        {live && <LiveNote />}
-        <p className="muted small">
-          {draft.address
-            ? t("钱包付一笔交易（刻铭文的网络费，加随信的 {n}），浏览器再签第二笔，把信的密文刻成铭文，连同 {n} 送到 {to}。", { n: sats(draft.sats), to: shortHash(draft.address) })
-            : t("钱包付一笔交易（刻铭文的网络费，加随信的 {n}），浏览器再签第二笔，把信的密文刻成铭文；那 {n} 回到你自己的地址。", { n: sats(draft.sats) })}
-        </p>
+        <h2 className="cap-side-title">{step === "done" ? t("已永久保存在比特币上") : t("保存到比特币")}</h2>
+        {step !== "done" && <p className="muted small">{t("钱包会请你确认一笔付款：网络费，加随信寄出的一小笔。")}</p>}
         {step !== "done" && !draft.commit && note}
         {step === "done" ? (
           draft.reveal && (
-            <a className="mono small" href={explorerTx(draft.network, draft.reveal, live)} target="_blank" rel="noopener">
-              {t("在区块浏览器里看")} {shortHash(draft.reveal)}i0
+            <a className="small" href={explorerTx(draft.network, draft.reveal, live)} target="_blank" rel="noopener">
+              {t("在区块浏览器里看")} ↗
             </a>
           )
         ) : (
-          <button type="button" className="primary" onClick={fund} disabled={busy}>
-            {busy ? said[step] : draft.commit ? t("继续刻上链") : live ? (liveSigner ? t("用 {wallet} 在 Signet 上刻上链", { wallet: liveSigner.name }) : t("用钱包在 Signet 上刻上链")) : DEMO ? t("用演示钱包刻上链") : t("用钱包刻上链")}
+          <button type="button" className="primary lg" onClick={fund} disabled={busy}>
+            {busy ? said[step] : draft.commit || error ? t("继续") : t("保存到比特币")}
           </button>
         )}
-        {live && !draft.commit && step !== "done" && <span className="dim small">{t("会发两笔真实的 Signet 交易：钱包签第一笔，浏览器签第二笔，都广播到 mempool.space。")}</span>}
+        {live && !draft.commit && step !== "done" && <span className="dim small">{t("测试设置：会用 {wallet} 在 Signet 测试网上发两笔真实交易。", { wallet: liveSigner?.name ?? t("你的钱包") })}</span>}
         {error && <p className="error small">{error}</p>}
+        {fundsLine}
         {wrongNet && (
           <button type="button" onClick={switchNet}>
             {t("让 UniSat 切到 Signet")}
@@ -409,6 +406,7 @@ export function GiftFund({ draft: first, token, done, note }: { draft: GiftDraft
         </li>
       </ol>
       {error && <p className="error small">{error}</p>}
+      {fundsLine}
       {wrongNet && (
         <button type="button" onClick={switchNet}>
           {t("让 UniSat 切到 Signet")}
