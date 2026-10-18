@@ -221,14 +221,21 @@ const fromB64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 const toB64url = (bytes: Uint8Array) => toB64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const fromB64url = (s: string) => fromB64(s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (s.length % 4)) % 4));
 
+/** The browser's WebCrypto, which it only offers on https or localhost; on plain http (a bare IP)
+ * it is missing, so say that instead of failing on `undefined.importKey`. */
+function subtle(): SubtleCrypto {
+  if (!globalThis.crypto?.subtle) throw new Error(t("浏览器只在 https 或 localhost 下才允许加密，请用 https 地址打开这个页面。"));
+  return globalThis.crypto.subtle;
+}
+
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as BufferSource));
+  const digest = new Uint8Array(await subtle().digest("SHA-256", bytes as BufferSource));
   return Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 async function sealBytes(key: CryptoKey, plain: Uint8Array): Promise<Uint8Array> {
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plain as BufferSource));
+  const sealed = new Uint8Array(await subtle().encrypt({ name: "AES-GCM", iv }, key, plain as BufferSource));
   return concat(iv, sealed);
 }
 
@@ -244,7 +251,7 @@ const concat = (a: Uint8Array, b: Uint8Array) => {
  * the photo's (the letter's alone with no photo). That fingerprint is what the wallet signs. */
 export async function encryptLetter(text: string, photo?: Uint8Array | null): Promise<{ ciphertext: string; photo: string | null; key: string; fingerprint: string }> {
   const raw = crypto.getRandomValues(new Uint8Array(32));
-  const key = await crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt"]);
+  const key = await subtle().importKey("raw", raw, "AES-GCM", false, ["encrypt"]);
   const letter = await sealBytes(key, new TextEncoder().encode(text));
   const image = photo ? await sealBytes(key, photo) : null;
   return { ciphertext: toB64(letter), photo: image ? toB64(image) : null, key: toB64url(raw), fingerprint: await sha256Hex(image ? concat(letter, image) : letter) };
@@ -252,8 +259,8 @@ export async function encryptLetter(text: string, photo?: Uint8Array | null): Pr
 
 async function openBytes(sealed: string, key: string): Promise<Uint8Array> {
   const all = fromB64(sealed);
-  const k = await crypto.subtle.importKey("raw", fromB64url(key) as BufferSource, "AES-GCM", false, ["decrypt"]);
-  return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: all.slice(0, 12) }, k, all.slice(12)));
+  const k = await subtle().importKey("raw", fromB64url(key) as BufferSource, "AES-GCM", false, ["decrypt"]);
+  return new Uint8Array(await subtle().decrypt({ name: "AES-GCM", iv: all.slice(0, 12) }, k, all.slice(12)));
 }
 
 /** The letter back from encryptLetter's ciphertext and key; throws if the key is wrong. */

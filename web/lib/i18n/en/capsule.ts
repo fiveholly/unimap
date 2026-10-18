@@ -255,6 +255,7 @@ export const capsule: Record<string, string> = {
   "会压到 300 KB 以内，和信一起上锁。": "It's shrunk to under 300 KB and locked with the letter.",
   "封存的步骤": "Sealing steps",
   "签名#step": "Sign",
+  "浏览器只在 https 或 localhost 下才允许加密，请用 https 地址打开这个页面。": "Browsers only allow encryption on https or localhost; open this page from an https address.",
   "付服务费": "Pay the service fee",
   "保存到比特币": "Save to Bitcoin",
   "锁好随信的比特币": "Lock the bitcoin gift",
