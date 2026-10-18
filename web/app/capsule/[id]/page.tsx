@@ -200,7 +200,7 @@ export default function CapsulePage() {
           <h2 className="cap-side-title">{c.mine ? t("封好了") : t("一封还没到时间的信")}</h2>
           <p className="muted small">
             {c.onchain
-              ? t("这封信在浏览器里加密，用钱包签名，刻成了比特币测试网上的铭文，挂在区块 {h} 上。谁都能看到它存在，但到点之前谁也读不到内容。", { h: c.sealed_height.toLocaleString("en-US") })
+              ? t("这封信在浏览器里上了锁，永久保存在比特币上（区块 {h}）。谁都能看到它在，但到了打开那天才能读。", { h: c.sealed_height.toLocaleString("en-US") })
               : t("这封信在浏览器里加密，用钱包签名后存在 unimap，挂在区块 {h} 上。谁都能看到它存在，但到点之前谁也读不到内容。", { h: c.sealed_height.toLocaleString("en-US") })}
           </p>
           <div className="cap-kv">
@@ -212,10 +212,12 @@ export default function CapsulePage() {
               <span>{t("打开于")}</span>
               <span className="mono">{t("{date} 后第一块", { date: opens })}</span>
             </div>
-            <div>
-              <span>{t("钥匙")}</span>
-              <span>{c.gift ? t("一半在 unimap，一半在时间锁") : c.chain ? t("一半在 unimap，一半在链接里") : t("两份都留")}</span>
-            </div>
+            {!c.chain && (
+              <div>
+                <span>{t("钥匙")}</span>
+                <span>{c.gift ? t("一半在 unimap，一半在时间锁") : t("两份都留")}</span>
+              </div>
+            )}
             {c.has_photo && (
               <div>
                 <span>{t("照片")}</span>
@@ -306,22 +308,18 @@ function ChainSide({ c, draft, half, token, reload }: { c: Capsule; draft: GiftD
   return (
     <div className="cap-spare">
       <span className="small">
-        {t("刻在链上")} <NetBadge network={ch.network} live={!!ch.live} />
+        {t("永久保存在比特币上")} <NetBadge network={ch.network} live={!!ch.live} />
       </span>
       <div className="cap-kv">
         <div>
-          <span>{t("铭文")}</span>
+          <span>{t("在比特币上")}</span>
           {ch.reveal_txid ? (
-            <a className="mono" href={explorerTx(ch.network, ch.reveal_txid, !!ch.live)} target="_blank" rel="noopener">
-              {shortHash(ch.reveal_txid)}i0 ↗
+            <a href={explorerTx(ch.network, ch.reveal_txid, !!ch.live)} target="_blank" rel="noopener">
+              {t("在区块浏览器里看")} ↗
             </a>
           ) : (
-            <span>{t("还没刻上链")}</span>
+            <span>{t("还没保存")}</span>
           )}
-        </div>
-        <div>
-          <span>{t("drand 公开钥匙")}</span>
-          <span className="mono">{new Date(roundTime(ch.drand_round) * 1000).toISOString().slice(0, 16).replace("T", " ")} UTC</span>
         </div>
       </div>
       {draft && !draft.done && <GiftFund draft={draft} token={token} done={reload} />}
@@ -329,15 +327,22 @@ function ChainSide({ c, draft, half, token, reload }: { c: Capsule; draft: GiftD
         <>
           <p className="dim small">
             {c.mine
-              ? t("链接里带着钥匙的另一半，只在这一次显示。把它发给收信人：信打开时，unimap 交出它那一半，两半合起来就能读；不给的话，等 drand 公开钥匙也能读。")
+              ? t("把这个链接发给收信人：信打开那天，Ta 用它就能读。链接只显示这一次，请存好。")
               : t("你手里的链接带着钥匙的一半，信打开时就能读。")}
           </p>
-          <CopyButton text={link} label={t("复制给收信人的链接（带一半钥匙）")} primary />
+          <CopyButton text={link} label={t("复制给收信人的链接")} primary />
         </>
       ) : (
-        <p className="dim small">{t("到点后 drand 会公开整把钥匙，谁都能从链上读出这封信。")}</p>
+        <p className="dim small">{t("到了打开那天，谁都能从比特币上读出这封信。")}</p>
       )}
       <CopyButton text={`${SITE_URL}/capsule/${c.id}`} label={t("复制信封链接（现在只能看到信封）")} />
+      <details className="cap-more">
+        <summary className="small muted">{t("了解更多")}</summary>
+        <p className="dim small">
+          {t("钥匙分成两半：unimap 留一半，到打开那天才交出；另一半在给收信人的链接里。")}{" "}
+          {t("就算 unimap 不在了，到 {time} UTC 钥匙也会由 drand 自动公开，信照样能打开。", { time: new Date(roundTime(ch.drand_round) * 1000).toISOString().slice(0, 16).replace("T", " ") })}
+        </p>
+      </details>
     </div>
   );
 }

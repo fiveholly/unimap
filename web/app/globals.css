@@ -5157,60 +5157,6 @@ button.cap-style:disabled {
   background: var(--env-wax, var(--seal));
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--env-mark, var(--paper)) 45%, transparent);
 }
-.cap-tiers {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-button.cap-tier {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 2px;
-  height: auto;
-  padding: 11px 14px;
-  text-align: left;
-  white-space: normal;
-  border-radius: var(--radius);
-  background: var(--bg);
-}
-button.cap-tier.on {
-  border-color: var(--fg);
-}
-button.cap-tier:disabled {
-  opacity: 1;
-  color: var(--fg-3);
-  border-style: dashed;
-  cursor: default;
-}
-.cap-tier-head {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 2px 8px;
-  font-size: 14px;
-}
-.cap-tier-head > .mono {
-  margin-left: auto;
-}
-.cap-tier-head b {
-  font-weight: 500;
-}
-button.cap-tier:disabled .cap-tier-head b {
-  color: var(--fg-2);
-}
-.cap-soon {
-  align-self: flex-start;
-  margin-top: 4px;
-  font-size: 11px;
-  line-height: 18px;
-  padding: 0 8px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  color: var(--fg-2);
-}
 .cap-photo-drop {
   position: relative;
   display: flex;
@@ -5226,30 +5172,6 @@ button.cap-tier:disabled .cap-tier-head b {
   inset: 0;
   opacity: 0;
   cursor: pointer;
-}
-/* 上链: the photo is off until asked for; a 首封 shows the switch locked, with why */
-.cap-photo-off,
-.cap-photo-on {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-}
-.cap-photo-on {
-  align-items: stretch;
-}
-.cap-photo-on .link-btn {
-  align-self: flex-start;
-}
-button.cap-photo-toggle {
-  height: auto;
-  padding: 7px 14px;
-  border-radius: 999px;
-}
-.cap-photo-off.locked button.cap-photo-toggle {
-  border-style: dashed;
-  color: var(--fg-3);
-  opacity: 1;
 }
 .cap-cost .mono small {
   margin-left: 4px;
@@ -5573,6 +5495,329 @@ button.cap-demo-pay {
   gap: 8px;
 }
 
+/* 写信, one step at a time (app/capsule/page.tsx): a single column with the steps across the top,
+   Back and Next under each step, and the two folded areas (了解更多, 测试设置) at the bottom.
+   Every button here wraps a long label instead of running past its box. */
+.cap-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 30px 34px;
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  min-width: 0;
+}
+.cap-flow-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cap-flow-head .eyebrow {
+  margin: 0;
+}
+.cap-flow-head .gift-net {
+  letter-spacing: 0;
+}
+.cap-flow button:not(.cap-chip):not(.link-btn),
+.cap-flow .btn {
+  height: auto;
+  min-height: 34px;
+  max-width: 100%;
+  padding-top: 7px;
+  padding-bottom: 7px;
+  line-height: 1.35;
+  white-space: normal;
+  text-wrap: balance;
+}
+.cap-flow button.lg {
+  min-height: 44px;
+}
+.cap-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cap-flow .cap-steps button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-height: 0;
+  padding: 0 0 8px;
+  border: 0;
+  border-bottom: 2px solid var(--line);
+  border-radius: 0;
+  font-size: 12px;
+  color: var(--fg-3);
+  text-align: center;
+}
+.cap-flow .cap-steps button:disabled {
+  opacity: 1;
+}
+.cap-steps i {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  font-style: normal;
+  font-size: 11px;
+}
+.cap-steps li.done button {
+  color: var(--fg-2);
+  border-bottom-color: var(--fg-3);
+}
+.cap-steps li.done i {
+  border-color: var(--success);
+  color: var(--success);
+}
+.cap-steps li.now button {
+  color: var(--fg);
+  border-bottom-color: var(--fg);
+}
+.cap-steps li.now i {
+  border-color: var(--fg);
+}
+.cap-step {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+.cap-nav {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.cap-nav button.primary {
+  min-width: 120px;
+}
+.cap-when-inputs.one {
+  grid-template-columns: minmax(0, 1fr);
+}
+.cap-when b {
+  font-family: var(--font-serif);
+  font-size: 22px;
+}
+.cap-when-block {
+  color: var(--fg-3);
+  font-size: 12px;
+}
+.cap-amt {
+  white-space: nowrap;
+}
+.cap-amt + .cap-amt {
+  margin-left: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+/* 确认: who, when and the total, with the cost details folded inside */
+.cap-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 16px 18px;
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.cap-summary-row,
+.cap-summary-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 14px;
+}
+.cap-summary-row > span,
+.cap-summary-total > span {
+  flex: none;
+  color: var(--fg-2);
+}
+.cap-summary-row > b {
+  min-width: 0;
+  font-weight: 500;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.cap-summary-total {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--rule);
+}
+.cap-summary-total > b {
+  font-size: 24px;
+  font-weight: 500;
+}
+.cap-summary-notes {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px 10px;
+}
+.cap-free {
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(76, 183, 130, 0.14);
+  color: var(--success);
+  font-size: 12px;
+  line-height: 22px;
+  white-space: nowrap;
+}
+.cap-more summary {
+  cursor: pointer;
+}
+.cap-more[open] summary {
+  margin-bottom: 8px;
+}
+.cap-summary .cap-more {
+  margin-top: 6px;
+}
+.cap-howto ul {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+}
+.cap-test .gift-live {
+  margin-top: 4px;
+}
+/* 可选: one row each, the name on one line and what it adds after it (below it when there is no room) */
+.cap-addons {
+  display: flex;
+  flex-direction: column;
+}
+.cap-addons-title {
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--fg-2);
+}
+.cap-addon {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 0;
+  border-top: 1px solid var(--rule);
+}
+.cap-addon-head {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 14px;
+  color: var(--fg);
+  cursor: pointer;
+}
+.cap-addon-head input {
+  flex: none;
+  margin: 0;
+}
+.cap-addon-name {
+  flex: 1 0 auto;
+  max-width: calc(100% - 28px); /* beside the box; what it adds goes below when there's no room */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cap-addon-adds {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--fg-2);
+  white-space: nowrap;
+}
+.cap-addon-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.cap-addon-body > input {
+  width: 100%;
+}
+.cap-addon-body .gift-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cap-addon-body .gift-pick > p {
+  margin: 0;
+}
+/* 封存: one line of what is being sealed, then the short list of where sealing is */
+.cap-seal-line {
+  margin: 0;
+  font-size: 14px;
+  color: var(--fg-2);
+}
+.cap-progress {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  scroll-margin-top: 80px;
+}
+.cap-progress li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--fg-3);
+  white-space: nowrap;
+}
+.cap-progress i {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  font-style: normal;
+  font-size: 11px;
+}
+.cap-progress li.now {
+  color: var(--fg);
+}
+.cap-progress li.now i {
+  border-color: var(--fg);
+}
+.cap-progress li.done {
+  color: var(--fg-2);
+}
+.cap-progress li.done i {
+  border-color: var(--success);
+  color: var(--success);
+}
+.cap-step > .cap-pay,
+.cap-step > .gift-fund {
+  padding: 16px 18px;
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+/* 费用明细: a long label wraps, its amounts never do */
+.cap-summary .cap-kv > div > span:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.cap-summary .cap-kv > div > :last-child {
+  flex: none;
+}
+.cap-low-funds {
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 2px solid var(--accent);
+  background: rgba(242, 165, 65, 0.08);
+}
 @media (max-width: 860px) {
   .cap-two,
   .cap-sealed {
@@ -5593,6 +5838,11 @@ button.cap-demo-pay {
   .cap-side {
     border-left: 0;
     padding: 20px 16px;
+  }
+  .cap-flow {
+    padding: 22px 16px;
+    border: 0;
+    border-radius: 0;
   }
   .cap-mine {
     padding: 0 16px;

@@ -95,7 +95,7 @@ export function LetterPaper({ text, meta, photo, style = DEFAULT_STYLE }: { text
  * wallet that can't (the manual one), or a send that fails, gets the address, the amount and a box
  * to paste the txid. 用闪电网络付款 swaps in a Lightning invoice when the server has one. A new
  * payment when one expires. The demo settles at once. */
-export function CapsulePay({ capsuleId, first, token, done }: { capsuleId: string; first: Payment | null; token: string | null; done: () => void }) {
+export function CapsulePay({ capsuleId, first, token, done, step = false }: { capsuleId: string; first: Payment | null; token: string | null; done: () => void; step?: boolean }) {
   const { wallet } = useSession();
   // On the demo site the fee is only ever simulated: a real wallet signed in there (for 真实 Signet) never pays it.
   const sender = DEMO && wallet !== "demo" ? undefined : walletById(wallet);
@@ -234,7 +234,7 @@ export function CapsulePay({ capsuleId, first, token, done }: { capsuleId: strin
 
   return (
     <div className="cap-pay">
-      <h2 className="cap-side-title">{t("付款后封存")}</h2>
+      <h2 className="cap-side-title">{step ? t("付服务费") : t("付款后封存")}</h2>
       {pay && (
         <p className="cap-pay-sum">
           <span className="mono">{sats}</span> {t("聪")}
@@ -269,7 +269,7 @@ export function CapsulePay({ capsuleId, first, token, done }: { capsuleId: strin
             </>
           ) : (
             <>
-              <p className="muted small">{t("信已经加密交给 unimap，付款到账的那一刻封存，挂在当时最新的区块上。")}</p>
+              <p className="muted small">{step ? t("付好服务费，就接着把信保存到比特币上。") : t("信已经加密交给 unimap，付款到账的那一刻封存，挂在当时最新的区块上。")}</p>
               {sender?.pay && (
                 <button type="button" className="primary" onClick={sendFromWallet} disabled={sending || busy}>
                   {sending ? t("请在钱包里确认…") : t("用钱包支付")}

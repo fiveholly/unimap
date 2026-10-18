@@ -15,15 +15,11 @@ export const gift: Record<string, string> = {
   "礼物地址": "Gift address",
 
   // Picking a gift (app/capsule)
-  "随信附上一份比特币礼物": "Send bitcoin with the letter",
   "礼物金额": "Gift amount",
   "自定义金额": "Custom amount",
   "自定义金额（至少 {n} 聪）": "Custom amount (at least {n} sats)",
   "礼物至少 {n} 聪。": "A gift is at least {n} sats.",
   "测试网上的礼物最多 {n} 聪。": "On the test network a gift is at most {n} sats.",
-  "比特币自己把这笔钱锁到区块 {h}（{span}），之前谁都动不了，包括 unimap。收礼人到时用时间锁领走；unimap 不碰这笔钱，也拿不到钥匙。":
-    "Bitcoin itself locks these sats until block {h} ({span}); nobody can move them before then, unimap included. The recipient claims them with the time lock; unimap never touches the sats or holds a key to them.",
-  "比特币自己把这笔钱锁到打开那一块，之前谁都动不了，包括 unimap。": "Bitcoin itself locks these sats until the opening block; nobody can move them before then, unimap included.",
   "约 5 年后还没人领，就退回给我": "Send it back to me if nobody claims it within about 5 years",
   "收礼人的钱包公钥（可选）": "Recipient's wallet public key (optional)",
   "不填就生成一把礼物钥匙": "Leave empty to make a gift key",
@@ -31,13 +27,7 @@ export const gift: Record<string, string> = {
     "Left empty, your browser makes a \"gift key\" and puts it in the time lock you hand over: whoever holds the time lock can claim the gift when the time comes.",
   "退回用的公钥": "Public key for the refund",
   "默认用钱包的公钥": "Your wallet's public key by default",
-  "只收「封存」的费用，礼物本身不收一分钱；另付比特币网络的手续费。": "Only the Seal fee is charged; nothing is taken from the gift. Bitcoin network fees are extra.",
-  "礼物锁在比特币上，不交给 unimap。打开的钥匙一半在 unimap、一半在时间锁里，到点后 drand 也会公开它。":
-    "The gift is locked on Bitcoin, never handed to unimap. The letter's key is split: half with unimap, half in the time lock, and drand publishes it when the time comes.",
   "一半在 unimap，一半在时间锁": "Half with unimap, half in the time lock",
-  "区块 {h} 到了，unimap 才交出它那一半；时间锁里是另一半。drand 到点也会公开整把钥匙。":
-    "unimap hands over its half only once block {h} is out; the other half is in the time lock. drand also publishes the whole key when the time comes.",
-  "礼物属于「封存」：选「封存」再附礼物。": "A gift comes with Seal: pick Seal to add one.",
   "这个站点现在不能附礼物。": "This site can't add gifts right now.",
   "现在看不到测试网的最新区块，稍后再试。": "Can't see the test network's latest block right now; try again later.",
   "收礼人的公钥不对：要 64 位（或 66 位）十六进制。": "That recipient key isn't right: it should be 64 (or 66) hex characters.",
@@ -139,8 +129,6 @@ export const gift: Record<string, string> = {
     "Can't reach the Signet explorer (mempool.space), so the latest block can't be seen. Try again later, or turn Real Signet off for now.",
   "下一个块（约 10 分钟）": "Next block (about 10 minutes)",
   "两个块后（约 20 分钟）": "In two blocks (about 20 minutes)",
-  "Signet 的区块 {h} 到了，演示站才交出 unimap 那一半（它存在这个浏览器里）；时间锁里是另一半。drand 到点也会公开整把钥匙，换一台设备也能打开。":
-    "The demo site hands over unimap's half (kept in this browser) only once Signet block {h} is out; the other half is in the time lock. drand also publishes the whole key when the time comes, so it opens on another device too.",
   "没找到能用的钱包：真实 Signet 要装 UniSat（或 Xverse、OKX 钱包）并切到 Signet。": "No wallet found to use: Real Signet needs UniSat (or Xverse or OKX Wallet) installed and switched to Signet.",
   "钱包在 Signet 上的币不够：要 {need}，只有 {have}。先从 Signet 水龙头（比如 signetfaucet.com）领一点测试币，等到账后再试。":
     "Not enough coins on Signet in your wallet: this needs {need} and there are {have}. Get some test coins from a Signet faucet (signetfaucet.com, for one), wait for them to arrive, and try again.",
@@ -166,16 +154,4 @@ export const gift: Record<string, string> = {
   "信用你自己的钱包真实地刻在比特币 Signet 测试网上：先把 UniSat 切到 Signet，准备一点测试币。演示站没有服务器，unimap 那一半钥匙存在这个浏览器里；服务费照旧只是模拟。":
     "The letter is really inscribed on Bitcoin's Signet test network, from your own wallet: switch UniSat to Signet and get a few test coins first. The demo has no server, so unimap's half of the key is kept in this browser; the service fee is still only simulated.",
   "关着时信只刻在演示站模拟的链上。打开后，用你的钱包在 Signet 上发真实的测试网交易。": "Off, the letter is inscribed only on the demo's pretend chain. On, your wallet sends real test-network transactions on Signet.",
-  "正在把信刻成铭文（reveal）…": "Inscribing the letter (reveal)…",
-  "信刻上链了": "The letter is inscribed",
-  "把信刻上链": "Inscribe the letter",
-  "钱包付一笔交易（刻铭文的网络费，加随信的 {n}），浏览器再签第二笔，把信的密文刻成铭文，连同 {n} 送到 {to}。":
-    "Your wallet pays one transaction (the inscription's network fee plus the {n} that goes with the letter); the browser signs a second that inscribes the encrypted letter and sends it, with the {n}, to {to}.",
-  "钱包付一笔交易（刻铭文的网络费，加随信的 {n}），浏览器再签第二笔，把信的密文刻成铭文；那 {n} 回到你自己的地址。":
-    "Your wallet pays one transaction (the inscription's network fee plus the {n} that goes with the letter); the browser signs a second that inscribes the encrypted letter, and the {n} comes back to your own address.",
-  "继续刻上链": "Continue inscribing",
-  "用 {wallet} 在 Signet 上刻上链": "Inscribe on Signet with {wallet}",
-  "用钱包在 Signet 上刻上链": "Inscribe on Signet with your wallet",
-  "用演示钱包刻上链": "Inscribe with the demo wallet",
-  "用钱包刻上链": "Inscribe with your wallet",
 };
