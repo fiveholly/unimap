@@ -112,6 +112,9 @@ export default function CapsuleWritePage() {
   const { tip } = useTip();
   const { address, token, sign, ready, wallet } = useSession();
   const [rules, setRules] = useState<CapsuleRules | null>(null);
+  // Plain http on a bare IP has no WebCrypto, so the letter can't be locked; say so up front.
+  const [insecure, setInsecure] = useState(false);
+  useEffect(() => setInsecure(!window.isSecureContext), []);
   const [paidSats, setPaidSats] = useState(0);
   const [step, setStep] = useState<Step>(1);
   const [recipient, setRecipient] = useState("");
@@ -417,6 +420,7 @@ export default function CapsuleWritePage() {
             {forDay ? t("给 {day} 这一天写一封信", { day: forDay }) : t("新的时间胶囊")} {testBadge}
           </p>
           <h1 className="cap-title">{t("给将来的自己，或你爱的人，\n封存一份礼物")}</h1>
+          {insecure && <p className="error small">{t("浏览器只在 https 或 localhost 下才允许加密，请用 https 地址打开这个页面。")}</p>}
         </header>
         <ol className="cap-steps" aria-label={t("步骤")}>
           {STEPS.map((name, i) => {
