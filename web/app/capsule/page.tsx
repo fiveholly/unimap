@@ -416,7 +416,7 @@ export default function CapsuleWritePage() {
           <p className="eyebrow">
             {forDay ? t("给 {day} 这一天写一封信", { day: forDay }) : t("新的时间胶囊")} {testBadge}
           </p>
-          <h1 className="cap-title">{t("给将来的自己，或你爱的人，\n写一封信")}</h1>
+          <h1 className="cap-title">{t("给将来的自己，或你爱的人，\n封存一份礼物")}</h1>
         </header>
         <ol className="cap-steps" aria-label={t("步骤")}>
           {STEPS.map((name, i) => {

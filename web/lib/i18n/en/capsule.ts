@@ -204,7 +204,7 @@ export const capsule: Record<string, string> = {
   "你手里的链接带着钥匙的一半，信打开时就能读。": "Your link carries half the key; you can read the letter when it opens.",
   // The write page, step by step (app/capsule/page.tsx)
   "写一封信，到你选的那一天才能打开。": "Write a letter that can only be opened on the day you pick.",
-  "给将来的自己，或你爱的人，\n写一封信": "Write a letter to your future self,\nor someone you love",
+  "给将来的自己，或你爱的人，\n封存一份礼物": "Seal a gift for your future self,\nor for someone you love",
   "测试网": "Test network",
   "步骤": "Steps",
   "写信": "Write",
